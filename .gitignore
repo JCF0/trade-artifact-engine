@@ -1,0 +1,6 @@
+node_modules/
+target/
+.env
+*.key
+*.json
+.DS_Store
