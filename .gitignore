@@ -4,3 +4,10 @@ target/
 *.key
 *.json
 .DS_Store
+
+# Engine (Node pipeline)
+engine/node_modules/
+engine/data/
+engine/.env
+engine/.env.*
+engine/*.log
