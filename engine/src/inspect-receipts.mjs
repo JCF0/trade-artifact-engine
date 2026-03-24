@@ -92,15 +92,20 @@ for (const r of receipts) {
   console.log(`Dust check:        |${r.remaining_balance}| < max(0.001, 0.1% × ${r.peak_position}) = ${dustThreshold.toFixed(10)}`);
   console.log(`  ${absRemain.toFixed(10)} < ${dustThreshold.toFixed(10)}: ${absRemain < dustThreshold ? '✅' : '❌'}`);
 
-  // 5. Verification hash re-derive
+  // 5. Verification hash re-derive (uses raw doubles + status per frozen spec)
   const entryHashes = r.entry_txs.map(t => t.tx_hash).sort();
   const exitHashes = r.exit_txs.map(t => t.tx_hash).sort();
+  const rawEntry = r._hash_inputs?.raw_entry_price_avg ?? r.avg_entry_price;
+  const rawExit = r._hash_inputs?.raw_exit_price_avg ?? r.avg_exit_price;
   const payload = JSON.stringify([
     r.wallet, r.chain, r.token_mint, entryHashes, exitHashes,
-    r.avg_entry_price, r.avg_exit_price, r.accounting_method, r.receipt_version,
+    rawEntry, rawExit,
+    r.accounting_method, r.receipt_version,
+    r.status,
   ]);
   const reHash = createHash('sha256').update(payload).digest('hex');
   console.log(`Hash re-derive:    ${reHash}`);
+  console.log(`  Uses _hash_inputs: ${r._hash_inputs ? 'yes' : 'no (fallback to display values)'}`);
   console.log(`  Matches receipt: ${reHash === r.verification_hash ? '✅' : '❌'}`);
 
   // Quote currency breakdown for MIXED

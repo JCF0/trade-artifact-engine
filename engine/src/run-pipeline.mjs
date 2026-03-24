@@ -1,10 +1,13 @@
 /**
  * Full Pipeline Runner
  * 
- * Runs: ingest → normalize → reconstruct → pnl → receipts → render
+ * Runs: ingest → normalize → reconstruct → pnl → receipts → render [→ claim]
  * for a given wallet address.
  * 
- * Usage: node src/run-pipeline.mjs <wallet> [maxTxns]
+ * Usage: node src/run-pipeline.mjs <wallet> [maxTxns] [--keypair <path>] [--recipient <pubkey>]
+ *
+ * If --keypair is provided, Phase 7 (claim signing) runs after render.
+ * If --recipient is omitted, claims are self-addressed (trader = recipient).
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -16,16 +19,40 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
 // ---------------------------------------------------------------------------
-// Args
+// Args (positional + flags)
 // ---------------------------------------------------------------------------
-const WALLET = process.argv[2];
-if (!WALLET) { console.error('Usage: node src/run-pipeline.mjs <wallet> [maxTxns]'); process.exit(1); }
-const MAX_TXNS = parseInt(process.argv[3] || '10000', 10);
+const rawArgs = process.argv.slice(2);
+
+// Extract flags
+function getFlag(name) {
+  const idx = rawArgs.indexOf(name);
+  if (idx === -1 || idx + 1 >= rawArgs.length) return null;
+  return rawArgs[idx + 1];
+}
+const KEYPAIR_PATH = getFlag('--keypair');
+const RECIPIENT_OVERRIDE = getFlag('--recipient');
+
+// Positional args (skip flags and their values)
+const flagNames = new Set(['--keypair', '--recipient']);
+const positional = [];
+for (let i = 0; i < rawArgs.length; i++) {
+  if (flagNames.has(rawArgs[i])) { i++; continue; } // skip flag + value
+  positional.push(rawArgs[i]);
+}
+
+const WALLET = positional[0];
+if (!WALLET) {
+  console.error('Usage: node src/run-pipeline.mjs <wallet> [maxTxns] [--keypair <path>] [--recipient <pubkey>]');
+  process.exit(1);
+}
+const MAX_TXNS = parseInt(positional[1] || '10000', 10);
 
 console.log(`\n${'='.repeat(60)}`);
 console.log(`TRADE ARTIFACT ENGINE — Full Pipeline`);
 console.log(`Wallet:  ${WALLET}`);
 console.log(`Max txn: ${MAX_TXNS}`);
+if (KEYPAIR_PATH) console.log(`Keypair: ${KEYPAIR_PATH}`);
+if (RECIPIENT_OVERRIDE) console.log(`Recipient: ${RECIPIENT_OVERRIDE}`);
 console.log(`${'='.repeat(60)}`);
 
 // ---------------------------------------------------------------------------
@@ -260,8 +287,10 @@ const pnlCycles = cyclesOutput.map(c => {
   const exitAvg = totalProceeds / c.total_sold;
   const pnl = totalProceeds - totalCost;
   const pnlPct = totalCost > 0 ? (pnl / totalCost) * 100 : 0;
+  const receipt_status = quoteCurrency === 'MIXED' ? 'verified_mixed_quote' : 'verified';
 
   return { ...c,
+    receipt_status,
     entry_price_avg: parseFloat(entryAvg.toPrecision(12)),
     exit_price_avg: parseFloat(exitAvg.toPrecision(12)),
     total_cost_basis: parseFloat(totalCost.toPrecision(12)),
@@ -270,11 +299,14 @@ const pnlCycles = cyclesOutput.map(c => {
     realized_pnl_pct: parseFloat(pnlPct.toPrecision(6)),
     hold_time_seconds: c.closed_at - c.opened_at,
     quote_currency: quoteCurrency,
+    // Raw doubles for verification hash — no display rounding applied
+    _raw_entry_price_avg: entryAvg,
+    _raw_exit_price_avg: exitAvg,
   };
 });
 
 writeFileSync(resolve(ROOT, 'data/pnl/pnl_cycles.jsonl'), pnlCycles.map(c => JSON.stringify(c)).join('\n') + '\n');
-const pnlClosed = pnlCycles.filter(c => c.status === 'closed');
+const pnlClosed = pnlCycles.filter(c => c.status === 'closed' && c.receipt_status);
 console.log(`PnL computed for ${pnlClosed.length} closed cycles`);
 
 for (const c of pnlClosed) {
@@ -287,10 +319,26 @@ for (const c of pnlClosed) {
 // ===== PHASE 5: RECEIPTS =====
 console.log(`\n--- Phase 5: Receipts ---`);
 const receipts = pnlClosed.map((c, i) => {
-  const r = {
+  const entryTxs = c.entry_txs.map(t => ({ tx_hash: t.tx_hash, timestamp: t.timestamp, amount: t.amount, quote_amount: t.quote_amount }));
+  const exitTxs = c.exit_txs.map(t => ({ tx_hash: t.tx_hash, timestamp: t.timestamp, amount: t.amount, quote_amount: t.quote_amount }));
+  const entryH = entryTxs.map(t => t.tx_hash).sort();
+  const exitH = exitTxs.map(t => t.tx_hash).sort();
+
+  // Use raw doubles for verification hash (frozen spec: no display rounding in hash)
+  const rawEntryAvg = c._raw_entry_price_avg;
+  const rawExitAvg = c._raw_exit_price_avg;
+
+  const verificationHash = createHash('sha256').update(JSON.stringify([
+    WALLET, CHAIN, c.token_mint, entryH, exitH,
+    rawEntryAvg, rawExitAvg,
+    ACCOUNTING_METHOD, RECEIPT_VERSION,
+    c.receipt_status,  // frozen spec: status is part of verification hash
+  ])).digest('hex');
+
+  return {
     receipt_id: `receipt_${String(i + 1).padStart(4, '0')}_${c.token_mint.slice(0, 8)}`,
     receipt_version: RECEIPT_VERSION, cycle_id: c.cycle_id, wallet: WALLET, chain: CHAIN,
-    token_mint: c.token_mint, status: 'verified', accounting_method: ACCOUNTING_METHOD,
+    token_mint: c.token_mint, status: c.receipt_status, accounting_method: ACCOUNTING_METHOD,
     avg_entry_price: c.entry_price_avg, avg_exit_price: c.exit_price_avg,
     quote_currency: c.quote_currency,
     total_cost_basis: c.total_cost_basis, total_exit_proceeds: c.total_exit_proceeds,
@@ -299,17 +347,11 @@ const receipts = pnlClosed.map((c, i) => {
     peak_position: c.peak_position, remaining_balance: c.remaining_balance,
     num_buys: c.num_buys, num_sells: c.num_sells,
     opened_at: c.opened_at, closed_at: c.closed_at, hold_time_seconds: c.hold_time_seconds,
-    entry_txs: c.entry_txs.map(t => ({ tx_hash: t.tx_hash, timestamp: t.timestamp, amount: t.amount, quote_amount: t.quote_amount })),
-    exit_txs: c.exit_txs.map(t => ({ tx_hash: t.tx_hash, timestamp: t.timestamp, amount: t.amount, quote_amount: t.quote_amount })),
+    entry_txs: entryTxs, exit_txs: exitTxs,
+    _hash_inputs: { raw_entry_price_avg: rawEntryAvg, raw_exit_price_avg: rawExitAvg },
     generated_at: Math.floor(Date.now() / 1000),
-    verification_hash: null,
+    verification_hash: verificationHash,
   };
-  const entryH = r.entry_txs.map(t => t.tx_hash).sort();
-  const exitH = r.exit_txs.map(t => t.tx_hash).sort();
-  r.verification_hash = createHash('sha256').update(JSON.stringify([
-    r.wallet, r.chain, r.token_mint, entryH, exitH, r.avg_entry_price, r.avg_exit_price, r.accounting_method, r.receipt_version
-  ])).digest('hex');
-  return r;
 });
 
 writeFileSync(resolve(ROOT, 'data/receipts/receipts.jsonl'), receipts.map(r => JSON.stringify(r)).join('\n') + '\n');
@@ -361,6 +403,242 @@ for (const r of receipts) {
   console.log(`  Rendered: ${fn}`);
 }
 
+// ===== PHASE 7: CLAIM SIGNING (optional) =====
+let claimCount = 0;
+if (KEYPAIR_PATH && receipts.length > 0) {
+  console.log(`\n--- Phase 7: Claim Signing ---`);
+
+  // Dynamic imports for claim signing deps (only loaded when needed)
+  const nacl = (await import('tweetnacl')).default;
+  const bs58 = (await import('bs58')).default;
+  const { Keypair, PublicKey } = await import('@solana/web3.js');
+
+  let keypair;
+  try {
+    const keypairBytes = new Uint8Array(JSON.parse(readFileSync(resolve(KEYPAIR_PATH), 'utf-8')));
+    keypair = Keypair.fromSecretKey(keypairBytes);
+  } catch (e) {
+    console.error(`  ERROR: Failed to load keypair from ${KEYPAIR_PATH}: ${e.message}`);
+    console.log('  Skipping claim signing.');
+    keypair = null;
+  }
+
+  if (keypair) {
+    const signerWallet = keypair.publicKey.toBase58();
+    let recipientPubkey = signerWallet; // default: self-addressed
+
+    if (RECIPIENT_OVERRIDE) {
+      try {
+        new PublicKey(RECIPIENT_OVERRIDE);
+        recipientPubkey = RECIPIENT_OVERRIDE;
+      } catch {
+        console.error(`  ERROR: Invalid --recipient pubkey: ${RECIPIENT_OVERRIDE}`);
+        console.log('  Falling back to self-addressed claims.');
+      }
+    }
+
+    console.log(`  Signer:    ${signerWallet}`);
+    console.log(`  Recipient: ${recipientPubkey}`);
+
+    const claimsDir = resolve(ROOT, 'data/claims');
+    mkdirSync(claimsDir, { recursive: true });
+
+    const claims = [];
+    let skipped = 0;
+
+    for (const receipt of receipts) {
+      if (receipt.wallet !== signerWallet) {
+        skipped++;
+        continue;
+      }
+
+      const claimMessage = `TRADE_RECEIPT_CLAIM_V1\nreceipt:${receipt.verification_hash}\nwallet:${receipt.wallet}\nchain:${receipt.chain}\nclaim_recipient:${recipientPubkey}`;
+      const messageBytes = new TextEncoder().encode(claimMessage);
+      const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
+
+      // Self-verify
+      const verified = nacl.sign.detached.verify(messageBytes, signature, keypair.publicKey.toBytes());
+      if (!verified) {
+        console.error(`  FATAL: Self-verification failed for ${receipt.receipt_id}`);
+        process.exit(1);
+      }
+
+      claims.push({
+        claim_version: '1.0',
+        receipt_id: receipt.receipt_id,
+        verification_hash: receipt.verification_hash,
+        wallet: receipt.wallet,
+        chain: receipt.chain,
+        claim_recipient: recipientPubkey,
+        signature_bs58: bs58.encode(signature),
+        signature_hex: Buffer.from(signature).toString('hex'),
+        signed_message: claimMessage,
+        claimed_at: Math.floor(Date.now() / 1000),
+      });
+    }
+
+    if (claims.length > 0) {
+      writeFileSync(resolve(claimsDir, 'claims.jsonl'), claims.map(c => JSON.stringify(c)).join('\n') + '\n');
+    }
+    claimCount = claims.length;
+    console.log(`  Claims signed: ${claimCount} (skipped: ${skipped} wallet mismatch)`);
+  }
+} else if (!KEYPAIR_PATH && receipts.length > 0) {
+  console.log(`\n--- Phase 7: Claim Signing --- SKIPPED (no --keypair)`);
+}
+
+// ===== PHASE 8: ARWEAVE UPLOAD (optional) =====
+let uploadCount = 0;
+const uploadsMap = new Map();  // verification_hash → upload record (for Phase 9)
+if (KEYPAIR_PATH && receipts.length > 0) {
+  console.log(`\n--- Phase 8: Arweave Upload ---`);
+
+  const { Uploader } = await import('@irys/upload');
+  const { Solana } = await import('@irys/upload-solana');
+
+  const GATEWAY_BASE = 'https://gateway.irys.xyz';
+  const rpcUrl = 'https://api.devnet.solana.com'; // TODO: parameterize for mainnet
+
+  try {
+    const keypairBytes = JSON.parse(readFileSync(resolve(KEYPAIR_PATH), 'utf-8'));
+    let irysBuilder = Uploader(Solana)
+      .withWallet(Buffer.from(keypairBytes))
+      .withRpc(rpcUrl)
+      .devnet();
+    const irys = await irysBuilder;
+    console.log(`  Irys URL: ${irys.url}`);
+
+    const arweaveDir = resolve(ROOT, 'data/arweave');
+    mkdirSync(arweaveDir, { recursive: true });
+    const uploadsPath = resolve(arweaveDir, 'uploads.jsonl');
+
+    // Load existing uploads for idempotency
+    if (existsSync(uploadsPath)) {
+      const lines = readFileSync(uploadsPath, 'utf-8').trim().split('\n').filter(Boolean);
+      for (const l of lines) {
+        const u = JSON.parse(l);
+        uploadsMap.set(u.verification_hash, u);
+      }
+      console.log(`  Existing uploads: ${uploadsMap.size}`);
+    }
+
+    const SOL_MINT_S = 'So11111111111111111111111111111111111111112';
+    const USDC_MINT_S = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const USDT_MINT_S = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+    const SYMS = { [SOL_MINT_S]: 'SOL', [USDC_MINT_S]: 'USDC', [USDT_MINT_S]: 'USDT' };
+
+    const newUploads = [];
+
+    for (const receipt of receipts) {
+      if (uploadsMap.has(receipt.verification_hash)) {
+        console.log(`  ⏭️  SKIP ${receipt.receipt_id}: already uploaded`);
+        continue;
+      }
+
+      const pngPath = resolve(ROOT, 'data/renders', `${receipt.receipt_id}.png`);
+      if (!existsSync(pngPath)) {
+        console.log(`  ⚠️  SKIP ${receipt.receipt_id}: no PNG`);
+        continue;
+      }
+
+      console.log(`  📤 ${receipt.receipt_id}...`);
+
+      // Upload PNG
+      const pngResult = await irys.uploadFile(pngPath, { tags: [
+        { name: 'Content-Type', value: 'image/png' },
+        { name: 'App-Name', value: 'trade-artifact-engine' },
+        { name: 'Receipt-Id', value: receipt.receipt_id },
+        { name: 'Verification-Hash', value: receipt.verification_hash },
+      ]});
+      const pngUri = `${GATEWAY_BASE}/${pngResult.id}`;
+
+      // Upload receipt JSON
+      const receiptJsonStr = JSON.stringify(receipt, null, 2);
+      const tmpReceiptPath = resolve(arweaveDir, `_tmp_${receipt.receipt_id}.json`);
+      writeFileSync(tmpReceiptPath, receiptJsonStr);
+      const receiptJsonResult = await irys.uploadFile(tmpReceiptPath, { tags: [
+        { name: 'Content-Type', value: 'application/json' },
+        { name: 'App-Name', value: 'trade-artifact-engine' },
+        { name: 'File-Type', value: 'receipt-data' },
+        { name: 'Verification-Hash', value: receipt.verification_hash },
+      ]});
+      const receiptJsonUri = `${GATEWAY_BASE}/${receiptJsonResult.id}`;
+
+      // Build + upload NFT metadata
+      const tokenShort = receipt.token_mint.slice(0, 8);
+      const qSym = SYMS[receipt.quote_currency] || (receipt.quote_currency === 'MIXED' ? 'MIXED' : receipt.quote_currency?.slice(0, 8));
+      const nftMetadata = {
+        name: `Trade Receipt ${receipt.receipt_id.replace('receipt_', '#').replace(/_/g, ' ')}`,
+        symbol: 'TREC',
+        description: `Verified trade receipt: ${tokenShort} / ${qSym} on Solana. PnL: ${receipt.realized_pnl_pct >= 0 ? '+' : ''}${receipt.realized_pnl_pct}%`,
+        image: pngUri,
+        external_url: receiptJsonUri,
+        attributes: [
+          { trait_type: 'wallet', value: receipt.wallet },
+          { trait_type: 'token_mint', value: receipt.token_mint },
+          { trait_type: 'chain', value: receipt.chain },
+          { trait_type: 'realized_pnl_pct', value: receipt.realized_pnl_pct, display_type: 'number' },
+          { trait_type: 'status', value: receipt.status },
+          { trait_type: 'quote_currency', value: qSym },
+          { trait_type: 'hold_time_seconds', value: receipt.hold_time_seconds, display_type: 'number' },
+          { trait_type: 'num_buys', value: receipt.num_buys, display_type: 'number' },
+          { trait_type: 'num_sells', value: receipt.num_sells, display_type: 'number' },
+          { trait_type: 'opened_at', value: receipt.opened_at, display_type: 'date' },
+          { trait_type: 'closed_at', value: receipt.closed_at, display_type: 'date' },
+        ],
+        properties: {
+          receipt_version: receipt.receipt_version,
+          verification_hash: receipt.verification_hash,
+          accounting_method: receipt.accounting_method,
+          receipt_json: receiptJsonUri,
+        },
+      };
+      const metadataStr = JSON.stringify(nftMetadata, null, 2);
+      const metadataHash = createHash('sha256').update(metadataStr).digest('hex');
+
+      const tmpMetaPath = resolve(arweaveDir, `_tmp_${receipt.receipt_id}_meta.json`);
+      writeFileSync(tmpMetaPath, metadataStr);
+      const metaResult = await irys.uploadFile(tmpMetaPath, { tags: [
+        { name: 'Content-Type', value: 'application/json' },
+        { name: 'App-Name', value: 'trade-artifact-engine' },
+        { name: 'File-Type', value: 'nft-metadata' },
+        { name: 'Verification-Hash', value: receipt.verification_hash },
+        { name: 'Metadata-Hash', value: metadataHash },
+      ]});
+      const metadataUri = `${GATEWAY_BASE}/${metaResult.id}`;
+
+      // Clean up temp files
+      try { (await import('fs')).unlinkSync(tmpReceiptPath); } catch {}
+      try { (await import('fs')).unlinkSync(tmpMetaPath); } catch {}
+
+      const uploadRecord = {
+        receipt_id: receipt.receipt_id,
+        verification_hash: receipt.verification_hash,
+        png_irys_id: pngResult.id, png_uri: pngUri,
+        receipt_json_irys_id: receiptJsonResult.id, receipt_json_uri: receiptJsonUri,
+        metadata_json_irys_id: metaResult.id, metadata_uri: metadataUri,
+        metadata_hash: metadataHash,
+        uploaded_at: Math.floor(Date.now() / 1000), network: 'devnet',
+      };
+      newUploads.push(uploadRecord);
+      uploadsMap.set(receipt.verification_hash, uploadRecord);
+      console.log(`     ✅ ${metadataUri}`);
+    }
+
+    if (newUploads.length > 0) {
+      const existing = existsSync(uploadsPath) ? readFileSync(uploadsPath, 'utf-8') : '';
+      writeFileSync(uploadsPath, existing + newUploads.map(u => JSON.stringify(u)).join('\n') + '\n');
+    }
+    uploadCount = newUploads.length;
+    console.log(`  Uploads: ${uploadCount} new, ${uploadsMap.size - uploadCount} existing`);
+  } catch (e) {
+    console.error(`  ERROR: Arweave upload failed: ${e.message}`);
+    console.log('  Continuing without uploads.');
+  }
+} else if (!KEYPAIR_PATH && receipts.length > 0) {
+  console.log(`\n--- Phase 8: Arweave Upload --- SKIPPED (no --keypair)`);
+}
+
 // ===== SUMMARY =====
 console.log(`\n${'='.repeat(60)}`);
 console.log(`PIPELINE COMPLETE`);
@@ -371,3 +649,5 @@ console.log(`Swap events:         ${events.length}`);
 console.log(`Trade cycles:        ${cyclesOutput.length} (${closed.length} closed, ${open.length} open, ${partial.length} partial)`);
 console.log(`Receipts:            ${receipts.length}`);
 console.log(`PNGs:                ${receipts.length}`);
+console.log(`Claims:              ${claimCount}`);
+console.log(`Uploads:             ${uploadCount}`);
