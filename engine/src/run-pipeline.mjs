@@ -123,7 +123,12 @@ console.log(`\nIngested: ${totalFetched} transactions in ${pageNum} pages`);
 
 // ===== PHASE 2: NORMALIZE =====
 console.log(`\n--- Phase 2: Normalize ---`);
-const rawLines = readFileSync(txnOutputPath, 'utf-8').trim().split('\n');
+const rawContent = readFileSync(txnOutputPath, 'utf-8').trim();
+if (!rawContent) {
+  console.log('No transactions found. Pipeline complete (nothing to process).');
+  process.exit(0);
+}
+const rawLines = rawContent.split('\n').filter(Boolean);
 const events = [];
 let normSkipped = { notSwap: 0, errored: 0, ambiguous: 0 };
 
