@@ -210,6 +210,29 @@ function guessDecimals(tx, mint, _amount) {
 }
 
 // ---------------------------------------------------------------------------
+// DEX program detection — for non-SWAP tx types that still contain swaps
+// ---------------------------------------------------------------------------
+
+const DEX_PROGRAMS = new Set([
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4', // Jupiter v6
+  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',  // Jupiter v4
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',  // Raydium CPMM
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  // Raydium AMM v4
+]);
+
+/** Check whether a transaction's instructions reference any known DEX program. */
+function txTouchesDex(tx) {
+  for (const ix of (tx.instructions || [])) {
+    if (DEX_PROGRAMS.has(ix.programId)) return true;
+    for (const inner of (ix.innerInstructions || [])) {
+      if (DEX_PROGRAMS.has(inner.programId)) return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -232,12 +255,6 @@ const stats = {
 for (let i = 0; i < lines.length; i++) {
   const tx = JSON.parse(lines[i]);
 
-  // Filter non-SWAPs
-  if (tx.type !== 'SWAP') {
-    stats.filtered_not_swap++;
-    continue;
-  }
-
   // Filter failed transactions
   if (tx.transactionError) {
     stats.filtered_errored++;
@@ -246,18 +263,24 @@ for (let i = 0; i < lines.length; i++) {
 
   let event = null;
 
-  // Primary path
-  if (tx.events?.swap) {
+  // Primary path — only for type=SWAP with structured swap events
+  if (tx.type === 'SWAP' && tx.events?.swap) {
     event = extractFromSwapEvent(tx, i);
   }
 
-  // Fallback path
+  // Fallback path — token transfer analysis for:
+  //   1. SWAP txs without events.swap
+  //   2. Non-SWAP txs that touch a known DEX program (e.g. CLOSE_ACCOUNT
+  //      after Jupiter sells all of a token and closes the ATA)
   if (!event) {
-    event = extractFromTokenTransfers(tx, i);
+    if (tx.type === 'SWAP' || txTouchesDex(tx)) {
+      event = extractFromTokenTransfers(tx, i);
+    }
   }
 
   if (!event) {
-    stats.filtered_ambiguous++;
+    if (tx.type === 'SWAP') { stats.filtered_ambiguous++; }
+    else { stats.filtered_not_swap++; }
     continue;
   }
 

@@ -211,14 +211,78 @@ const rawLines = rawContent.split('\n').filter(Boolean);
 const events = [];
 let normSkipped = { notSwap: 0, errored: 0, ambiguous: 0 };
 
+// Known DEX program IDs — if a non-SWAP tx touches one of these, try to
+// extract a swap from its tokenTransfers / nativeTransfers.
+const DEX_PROGRAMS = new Set([
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4', // Jupiter v6
+  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',  // Jupiter v4
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',  // Raydium CPMM
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  // Raydium AMM v4
+]);
+
+/** Check whether a transaction's instructions reference any known DEX program. */
+function txTouchesDex(tx) {
+  for (const ix of (tx.instructions || [])) {
+    if (DEX_PROGRAMS.has(ix.programId)) return true;
+    for (const inner of (ix.innerInstructions || [])) {
+      if (DEX_PROGRAMS.has(inner.programId)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Try to extract a swap event from tokenTransfers + nativeTransfers.
+ * Works for any tx type as long as the wallet sent one token and received a
+ * different one (the canonical pattern of a DEX swap with ATA close).
+ */
+function extractSwapFromTransfers(tx, idx) {
+  const sent = (tx.tokenTransfers || []).filter(t => t.fromUserAccount === WALLET);
+  const recv = (tx.tokenTransfers || []).filter(t => t.toUserAccount === WALLET);
+
+  // Also tally net native SOL movement (excluding rent refunds < 0.01 SOL)
+  let nativeSent = 0, nativeRecv = 0;
+  for (const nt of (tx.nativeTransfers || [])) {
+    if (nt.fromUserAccount === WALLET) nativeSent += nt.amount;
+    if (nt.toUserAccount === WALLET) nativeRecv += nt.amount;
+  }
+  const netNative = nativeRecv - nativeSent; // positive = wallet received SOL
+
+  // Case 1: token → token (most common for events_swap path, fallback here)
+  if (sent.length === 1 && recv.length === 1 && sent[0].mint !== recv[0].mint) {
+    return { wallet: WALLET, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: sent[0].mint || SOL_MINT, token_in_amount: Math.abs(sent[0].tokenAmount), token_in_decimals: null, token_out_mint: recv[0].mint || SOL_MINT, token_out_amount: Math.abs(recv[0].tokenAmount), token_out_decimals: null, extraction_method: 'token_transfers', raw_index: idx };
+  }
+
+  // Case 2: token sent, SOL received (sell token → unwrapped SOL via ATA close)
+  //         The SOL arrives as a nativeTransfer, not a tokenTransfer.
+  if (sent.length === 1 && recv.length === 0 && netNative > 0) {
+    const solReceived = netNative / 1e9;
+    // Ignore tiny amounts that are just rent refunds (< 0.001 SOL)
+    if (solReceived >= 0.001) {
+      return { wallet: WALLET, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: sent[0].mint, token_in_amount: Math.abs(sent[0].tokenAmount), token_in_decimals: null, token_out_mint: SOL_MINT, token_out_amount: solReceived, token_out_decimals: 9, extraction_method: 'token_transfers_native', raw_index: idx };
+    }
+  }
+
+  // Case 3: SOL sent (as native), token received — unusual but possible
+  if (sent.length === 0 && recv.length === 1 && netNative < 0) {
+    const solSent = Math.abs(netNative) / 1e9;
+    if (solSent >= 0.001) {
+      return { wallet: WALLET, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: SOL_MINT, token_in_amount: solSent, token_in_decimals: 9, token_out_mint: recv[0].mint, token_out_amount: Math.abs(recv[0].tokenAmount), token_out_decimals: null, extraction_method: 'token_transfers_native', raw_index: idx };
+    }
+  }
+
+  return null;
+}
+
 for (let i = 0; i < rawLines.length; i++) {
   const tx = JSON.parse(rawLines[i]);
-  if (tx.type !== 'SWAP') { normSkipped.notSwap++; continue; }
   if (tx.transactionError) { normSkipped.errored++; continue; }
 
   let event = null;
 
-  if (tx.events?.swap) {
+  // ── Primary path: Helius events.swap (only present on type=SWAP) ──
+  if (tx.type === 'SWAP' && tx.events?.swap) {
     const sw = tx.events.swap;
     let inMint, inAmt, inDec, outMint, outAmt, outDec;
     if (sw.nativeInput) { inMint = SOL_MINT; inDec = 9; inAmt = Number(sw.nativeInput.amount) / 1e9; }
@@ -230,14 +294,23 @@ for (let i = 0; i < rawLines.length; i++) {
     else { normSkipped.ambiguous++; continue; }
 
     event = { wallet: WALLET, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: inMint, token_in_amount: inAmt, token_in_decimals: inDec, token_out_mint: outMint, token_out_amount: outAmt, token_out_decimals: outDec, extraction_method: 'events_swap', raw_index: i };
-  } else {
-    const sent = (tx.tokenTransfers || []).filter(t => t.fromUserAccount === WALLET);
-    const recv = (tx.tokenTransfers || []).filter(t => t.toUserAccount === WALLET);
-    if (sent.length === 1 && recv.length === 1 && sent[0].mint !== recv[0].mint) {
-      event = { wallet: WALLET, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: sent[0].mint || SOL_MINT, token_in_amount: Math.abs(sent[0].tokenAmount), token_in_decimals: null, token_out_mint: recv[0].mint || SOL_MINT, token_out_amount: Math.abs(recv[0].tokenAmount), token_out_decimals: null, extraction_method: 'token_transfers', raw_index: i };
-    } else { normSkipped.ambiguous++; }
   }
-  if (event) events.push(event);
+
+  // ── Fallback: token-transfer analysis ──
+  // For SWAP txs without events.swap, AND for non-SWAP txs that touch a DEX
+  // program (e.g. CLOSE_ACCOUNT after a Jupiter swap that closes the ATA).
+  if (!event) {
+    if (tx.type === 'SWAP' || txTouchesDex(tx)) {
+      event = extractSwapFromTransfers(tx, i);
+    }
+  }
+
+  if (!event) {
+    if (tx.type === 'SWAP') { normSkipped.ambiguous++; }
+    else { normSkipped.notSwap++; }
+    continue;
+  }
+  events.push(event);
 }
 
 events.sort((a, b) => a.timestamp - b.timestamp || a.raw_index - b.raw_index);
