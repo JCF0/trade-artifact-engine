@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trade Artifact — Receipt Explorer</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --text-dim: #8b949e; --text-faint: #484f58;
+    --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+    --yellow: #d29922; --orange: #db6d28;
+    --radius: 8px; --font: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Layout */
+  .container { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  .header { text-align: center; padding: 32px 0 24px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+  .header h1 { font-size: 20px; color: var(--accent); letter-spacing: 2px; text-transform: uppercase; }
+  .header p { color: var(--text-dim); font-size: 12px; margin-top: 6px; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .card-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 12px; }
+
+  /* Inputs */
+  .input-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  input[type="text"], input[type="number"] {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 6px; font-family: var(--font); font-size: 13px; flex: 1; min-width: 120px;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  input::placeholder { color: var(--text-faint); }
+  .btn {
+    background: var(--accent); color: var(--bg); border: none; padding: 8px 20px;
+    border-radius: 6px; font-family: var(--font); font-size: 13px; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { opacity: 0.9; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+  .btn-sm { padding: 4px 12px; font-size: 11px; }
+
+  /* Positions list */
+  .pos-item { padding: 12px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s; }
+  .pos-item:hover { border-color: var(--accent); }
+  .pos-item.active { border-color: var(--accent); background: rgba(88,166,255,0.06); }
+  .pos-row { display: flex; justify-content: space-between; align-items: center; }
+  .pos-token { font-weight: 600; font-size: 14px; }
+  .pos-pnl { font-weight: 600; font-size: 14px; }
+  .pos-pnl.profit { color: var(--green); }
+  .pos-pnl.loss { color: var(--red); }
+  .pos-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+  /* Detail */
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .detail-item { font-size: 12px; }
+  .detail-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .detail-value { margin-top: 2px; word-break: break-all; }
+
+  /* Legs table */
+  .legs-table { width: 100%; font-size: 11px; border-collapse: collapse; margin-top: 8px; }
+  .legs-table th { text-align: left; color: var(--text-dim); font-weight: 400; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; }
+  .legs-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .legs-table tr.removable { cursor: pointer; }
+  .legs-table tr.removable:hover { background: rgba(248,81,73,0.08); }
+  .legs-table tr.removed { opacity: 0.35; text-decoration: line-through; }
+  .legs-table .buy { color: var(--green); }
+  .legs-table .sell { color: var(--red); }
+
+  /* Receipt preview */
+  .receipt-card { border: 2px solid var(--green); border-radius: var(--radius); padding: 20px; }
+  .receipt-card.custom { border-color: var(--yellow); }
+  .receipt-badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .badge-verified { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-custom { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .receipt-hash { font-size: 11px; word-break: break-all; padding: 8px; background: var(--bg); border-radius: 4px; margin: 8px 0; }
+  .warning-box { background: rgba(210,153,34,0.1); border: 1px solid var(--yellow); border-radius: 6px; padding: 10px; margin-top: 12px; font-size: 11px; }
+  .warning-box .warn-title { color: var(--yellow); font-weight: 600; margin-bottom: 4px; }
+
+  /* Receipt image */
+  .receipt-img { max-width: 100%; border-radius: 6px; margin-top: 12px; border: 1px solid var(--border); }
+
+  /* Mode toggle */
+  .mode-toggle { display: flex; gap: 0; margin-bottom: 16px; }
+  .mode-btn { flex: 1; padding: 10px; text-align: center; font-size: 12px; font-weight: 600; border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; background: var(--surface); color: var(--text-dim); }
+  .mode-btn:first-child { border-radius: 6px 0 0 6px; }
+  .mode-btn:last-child { border-radius: 0 6px 6px 0; }
+  .mode-btn.active-verified { background: rgba(63,185,80,0.1); border-color: var(--green); color: var(--green); }
+  .mode-btn.active-custom { background: rgba(210,153,34,0.1); border-color: var(--yellow); color: var(--yellow); }
+
+  /* States */
+  .hidden { display: none !important; }
+  .loading { text-align: center; padding: 24px; color: var(--text-dim); font-size: 12px; }
+  .error-msg { color: var(--red); font-size: 12px; padding: 8px; }
+  .empty-msg { color: var(--text-dim); font-size: 12px; padding: 16px; text-align: center; }
+
+  /* Panels */
+  .panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 700px) {
+    .panels { grid-template-columns: 340px 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>Trade Artifact</h1>
+    <p>Receipt Explorer &amp; Proof Tool</p>
+  </div>
+
+  <!-- Wallet / Filters -->
+  <div class="card" id="filters-card">
+    <div class="card-title">Wallet &amp; Filters</div>
+    <div class="input-row">
+      <input type="text" id="inp-wallet" placeholder="Wallet address" />
+      <button class="btn" id="btn-scan" onclick="scanWallet()">Scan</button>
+    </div>
+    <div class="input-row">
+      <input type="text" id="inp-token" placeholder="Token mint (optional)" />
+      <input type="number" id="inp-from" placeholder="From (epoch)" />
+      <input type="number" id="inp-to" placeholder="To (epoch)" />
+    </div>
+    <div id="scan-error" class="error-msg hidden"></div>
+  </div>
+
+  <!-- Main panels -->
+  <div class="panels">
+
+    <!-- Left: Positions list -->
+    <div>
+      <div class="card" id="positions-card" class="hidden">
+        <div class="card-title">Positions</div>
+        <div id="positions-list"><div class="empty-msg">Enter a wallet and click Scan</div></div>
+      </div>
+    </div>
+
+    <!-- Right: Detail + Receipt -->
+    <div>
+      <!-- Position detail -->
+      <div class="card hidden" id="detail-card">
+        <div class="card-title">Position Detail</div>
+        <div id="detail-content"></div>
+      </div>
+
+      <!-- Legs -->
+      <div class="card hidden" id="legs-card">
+        <div class="card-title">Legs <span id="legs-hint" style="font-size:10px;color:var(--text-faint);text-transform:none;letter-spacing:0"></span></div>
+        <table class="legs-table">
+          <thead><tr><th></th><th>Action</th><th>Amount</th><th>Price</th><th>Time</th><th>Tx</th></tr></thead>
+          <tbody id="legs-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Mode + Receipt -->
+      <div class="card hidden" id="receipt-card">
+        <div class="card-title">Receipt</div>
+
+        <div class="mode-toggle">
+          <div class="mode-btn active-verified" id="mode-verified" onclick="setMode('verified')">✅ Verified</div>
+          <div class="mode-btn" id="mode-custom" onclick="setMode('custom')">⚠️ Custom</div>
+        </div>
+
+        <div id="custom-hint" class="hidden" style="font-size:11px;color:var(--yellow);margin-bottom:12px;">
+          Click legs above to remove them. Custom receipts are NOT verified.
+        </div>
+
+        <button class="btn" id="btn-generate" onclick="generateReceipt()" style="width:100%;margin-bottom:16px;">Generate Receipt</button>
+
+        <div id="receipt-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Auto-detect API base: same origin when served by the API server
+const API = window.location.port ? `${window.location.protocol}//${window.location.host}` : 'http://localhost:3000';
+
+let state = {
+  positions: [],
+  selectedPos: null,
+  selectedDetail: null,
+  mode: 'verified',
+  removedLegs: new Set(),
+  receipt: null,
+};
+
+// ── API calls ──
+
+async function api(path, opts = {}) {
+  const res = await fetch(`${API}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ── Scan ──
+
+async function scanWallet() {
+  const wallet = document.getElementById('inp-wallet').value.trim();
+  if (!wallet) return showError('Enter a wallet address');
+  hideError();
+
+  const token = document.getElementById('inp-token').value.trim() || undefined;
+  const from = document.getElementById('inp-from').value || undefined;
+  const to = document.getElementById('inp-to').value || undefined;
+
+  const btn = document.getElementById('btn-scan');
+  btn.disabled = true; btn.textContent = 'Scanning...';
+
+  try {
+    let url = `/positions?wallet=${wallet}`;
+    if (token) url += `&token=${token}`;
+    if (from) url += `&from=${from}`;
+    if (to) url += `&to=${to}`;
+
+    const data = await api(url);
+    state.positions = data.positions;
+    state.selectedPos = null;
+    state.selectedDetail = null;
+    state.receipt = null;
+    renderPositionsList();
+    hide('detail-card'); hide('legs-card'); hide('receipt-card');
+    document.getElementById('receipt-content').innerHTML = '';
+  } catch (e) {
+    showError(e.message);
+    state.positions = [];
+    renderPositionsList();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Scan';
+  }
+}
+
+// ── Select position ──
+
+async function selectPosition(posId) {
+  state.selectedPos = posId;
+  state.removedLegs = new Set();
+  state.receipt = null;
+  document.getElementById('receipt-content').innerHTML = '';
+  renderPositionsList();
+
+  const wallet = document.getElementById('inp-wallet').value.trim();
+  try {
+    const data = await api(`/positions/${posId}?wallet=${wallet}`);
+    state.selectedDetail = data;
+    renderDetail();
+    renderLegs();
+    show('detail-card'); show('legs-card'); show('receipt-card');
+    setMode('verified');
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+// ── Mode toggle ──
+
+function setMode(mode) {
+  state.mode = mode;
+  state.removedLegs = new Set();
+  state.receipt = null;
+  document.getElementById('receipt-content').innerHTML = '';
+
+  const vBtn = document.getElementById('mode-verified');
+  const cBtn = document.getElementById('mode-custom');
+  vBtn.className = mode === 'verified' ? 'mode-btn active-verified' : 'mode-btn';
+  cBtn.className = mode === 'custom' ? 'mode-btn active-custom' : 'mode-btn';
+
+  const hint = document.getElementById('custom-hint');
+  const legsHint = document.getElementById('legs-hint');
+  if (mode === 'custom') {
+    hint.classList.remove('hidden');
+    legsHint.textContent = '— click to toggle removal';
+  } else {
+    hint.classList.add('hidden');
+    legsHint.textContent = '';
+  }
+  renderLegs();
+}
+
+// ── Toggle leg removal ──
+
+function toggleLeg(txHash) {
+  if (state.mode !== 'custom') return;
+  if (state.removedLegs.has(txHash)) {
+    state.removedLegs.delete(txHash);
+  } else {
+    // Don't allow removing ALL legs
+    const d = state.selectedDetail;
+    const totalLegs = d.legs.length;
+    if (state.removedLegs.size + 1 >= totalLegs) return;
+    state.removedLegs.add(txHash);
+  }
+  state.receipt = null;
+  document.getElementById('receipt-content').innerHTML = '';
+  renderLegs();
+}
+
+// ── Generate receipt ──
+
+async function generateReceipt() {
+  const wallet = document.getElementById('inp-wallet').value.trim();
+  const posId = state.selectedPos;
+  if (!posId) return;
+
+  const btn = document.getElementById('btn-generate');
+  btn.disabled = true; btn.textContent = 'Generating...';
+
+  try {
+    const body = { wallet };
+    if (state.mode === 'custom' && state.removedLegs.size > 0) {
+      body.custom = true;
+      body.removed_legs = [...state.removedLegs];
+    }
+
+    const data = await api(`/positions/${posId}/receipt`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    state.receipt = data.receipt;
+    renderReceipt();
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Generate Receipt';
+  }
+}
+
+// ── Renderers ──
+
+function renderPositionsList() {
+  const el = document.getElementById('positions-list');
+  if (state.positions.length === 0) {
+    el.innerHTML = '<div class="empty-msg">No positions found</div>';
+    return;
+  }
+  el.innerHTML = state.positions.map(p => {
+    const pnl = p.realized_pnl_pct;
+    const pnlClass = pnl >= 0 ? 'profit' : 'loss';
+    const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+    const active = state.selectedPos === p.position_id ? 'active' : '';
+    return `
+      <div class="pos-item ${active}" onclick="selectPosition('${p.position_id}')">
+        <div class="pos-row">
+          <span class="pos-token">${p.token.slice(0,8)}...</span>
+          <span class="pos-pnl ${pnlClass}">${pnlStr}</span>
+        </div>
+        <div class="pos-meta">
+          ${p.num_buys}B / ${p.num_sells}S · ${p.num_cycles} cycle(s) · ${p.status}
+        </div>
+        <div class="pos-meta">
+          ${tsShort(p.opened_at)} → ${tsShort(p.closed_at)}
+        </div>
+        <div class="pos-meta" style="font-size:10px;color:var(--text-faint)">
+          ${p.position_id.slice(0,16)}...
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderDetail() {
+  const d = state.selectedDetail;
+  if (!d) return;
+  const pnl = d.realized_pnl_pct;
+  const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+  const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-grid">
+      <div class="detail-item"><div class="detail-label">Token</div><div class="detail-value">${d.token.slice(0,20)}...</div></div>
+      <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value">${d.status}</div></div>
+      <div class="detail-item"><div class="detail-label">PnL</div><div class="detail-value" style="color:${pnlColor};font-weight:600">${pnlStr}</div></div>
+      <div class="detail-item"><div class="detail-label">Cycles</div><div class="detail-value">${d.num_cycles}</div></div>
+      <div class="detail-item"><div class="detail-label">Avg Entry</div><div class="detail-value">${d.avg_entry.toPrecision(6)}</div></div>
+      <div class="detail-item"><div class="detail-label">Avg Exit</div><div class="detail-value">${d.avg_exit.toPrecision(6)}</div></div>
+      <div class="detail-item"><div class="detail-label">Trades</div><div class="detail-value">${d.num_buys}B / ${d.num_sells}S</div></div>
+      <div class="detail-item"><div class="detail-label">Duration</div><div class="detail-value">${(d.duration_sec/3600).toFixed(1)}h</div></div>
+      <div class="detail-item"><div class="detail-label">Opened</div><div class="detail-value">${tsFull(d.from_ts)}</div></div>
+      <div class="detail-item"><div class="detail-label">Closed</div><div class="detail-value">${tsFull(d.to_ts)}</div></div>
+    </div>
+    <div style="margin-top:8px;font-size:10px;color:var(--text-faint);word-break:break-all">ID: ${d.position_id}</div>`;
+}
+
+function renderLegs() {
+  const d = state.selectedDetail;
+  if (!d) return;
+  const isCustom = state.mode === 'custom';
+
+  document.getElementById('legs-body').innerHTML = d.legs.map((leg, i) => {
+    const isRemoved = state.removedLegs.has(leg.tx_hash);
+    const cls = [
+      leg.action === 'buy' ? 'buy' : 'sell',
+      isCustom ? 'removable' : '',
+      isRemoved ? 'removed' : '',
+    ].join(' ');
+    const price = leg.amount > 0 ? (leg.quote_amount / leg.amount).toPrecision(6) : '-';
+    const check = isCustom ? (isRemoved ? '🗑️' : '') : '';
+    return `
+      <tr class="${cls}" onclick="toggleLeg('${leg.tx_hash}')">
+        <td>${check}</td>
+        <td class="${leg.action}">${leg.action.toUpperCase()}</td>
+        <td>${leg.amount.toFixed(4)}</td>
+        <td>${price}</td>
+        <td>${tsShort(leg.timestamp)}</td>
+        <td style="font-size:10px;color:var(--text-faint)">${leg.tx_hash.slice(0,12)}...</td>
+      </tr>`;
+  }).join('');
+}
+
+function renderReceipt() {
+  const r = state.receipt;
+  if (!r) return;
+
+  const isCustom = r.receipt_type === 'custom';
+  const pnl = r.realized_pnl_pct;
+  const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+  const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+  let html = `
+    <div class="receipt-card ${isCustom ? 'custom' : ''}">
+      <span class="receipt-badge ${isCustom ? 'badge-custom' : 'badge-verified'}">
+        ${isCustom ? '⚠️ Custom' : '✅ Verified'}
+      </span>
+
+      <div class="detail-grid" style="margin-bottom:12px">
+        <div class="detail-item"><div class="detail-label">Receipt Type</div><div class="detail-value">${r.receipt_type}</div></div>
+        <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value">${r.status} (byte: ${r.status_byte})</div></div>
+        <div class="detail-item"><div class="detail-label">PnL</div><div class="detail-value" style="color:${pnlColor};font-weight:600">${pnlStr}</div></div>
+        <div class="detail-item"><div class="detail-label">Trades</div><div class="detail-value">${r.num_buys}B / ${r.num_sells}S</div></div>
+        <div class="detail-item"><div class="detail-label">Avg Entry</div><div class="detail-value">${r.avg_entry_price.toPrecision(6)}</div></div>
+        <div class="detail-item"><div class="detail-label">Avg Exit</div><div class="detail-value">${r.avg_exit_price.toPrecision(6)}</div></div>
+        <div class="detail-item"><div class="detail-label">Opened</div><div class="detail-value">${tsFull(r.opened_at)}</div></div>
+        <div class="detail-item"><div class="detail-label">Closed</div><div class="detail-value">${tsFull(r.closed_at)}</div></div>
+      </div>
+
+      <div class="detail-label">Verification Hash</div>
+      <div class="receipt-hash">${r.verification_hash}</div>
+
+      <div style="font-size:10px;color:var(--text-faint);word-break:break-all;margin-bottom:4px">
+        Position: ${r.position_id}
+      </div>`;
+
+  if (isCustom) {
+    html += `
+      <div style="font-size:10px;color:var(--text-faint);word-break:break-all;margin-bottom:4px">
+        Base position: ${r.base_position_id || '-'}
+      </div>
+      <div style="font-size:10px;color:var(--yellow);margin-bottom:4px">
+        Removed legs: ${r.removed_legs ? r.removed_legs.length : 0}
+      </div>`;
+  }
+
+  if (r.integrity_warnings && r.integrity_warnings.length > 0) {
+    html += `
+      <div class="warning-box">
+        <div class="warn-title">⚠️ Integrity Warnings</div>
+        ${r.integrity_warnings.map(w => `<div style="margin-top:4px">• ${escHtml(w)}</div>`).join('')}
+      </div>`;
+  }
+
+  // Receipt image
+  html += `
+    </div>
+    <img class="receipt-img" src="${API}/receipt/${r.verification_hash}/image"
+         onerror="this.style.display='none'" alt="Receipt render" />`;
+
+  document.getElementById('receipt-content').innerHTML = html;
+}
+
+// ── Helpers ──
+
+function tsShort(epoch) {
+  if (!epoch) return '-';
+  const d = new Date(epoch * 1000);
+  return d.toISOString().slice(5,16).replace('T',' ');
+}
+function tsFull(epoch) {
+  if (!epoch) return '-';
+  return new Date(epoch * 1000).toISOString().slice(0,19) + 'Z';
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function showError(msg) { const el = document.getElementById('scan-error'); el.textContent = msg; el.classList.remove('hidden'); }
+function hideError() { document.getElementById('scan-error').classList.add('hidden'); }
+
+// Enter key on wallet input
+document.getElementById('inp-wallet').addEventListener('keydown', e => {
+  if (e.key === 'Enter') scanWallet();
+});
+</script>
+</body>
+</html>

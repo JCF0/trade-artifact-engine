@@ -11,3 +11,5 @@ engine/data/
 engine/.env
 engine/.env.*
 engine/*.log
+
+trade-artifact-build-specs/
