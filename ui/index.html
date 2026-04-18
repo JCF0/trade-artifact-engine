@@ -255,8 +255,24 @@ async function selectPosition(posId) {
     state.selectedDetail = data;
     renderDetail();
     renderLegs();
-    show('detail-card'); show('legs-card'); show('receipt-card');
-    setMode('verified');
+    show('detail-card'); show('legs-card');
+    if (data.pnl_display_type === 'unrealized_unavailable') {
+      // Open position — show receipt card with disabled state
+      show('receipt-card');
+      document.getElementById('btn-generate').disabled = true;
+      document.getElementById('btn-generate').textContent = 'Position is Open — No Receipt Available';
+      document.getElementById('receipt-content').innerHTML = `
+        <div style="padding:16px;text-align:center;color:var(--text-dim);font-size:12px">
+          <div style="font-size:24px;margin-bottom:8px">📂</div>
+          <div>This position has no exit legs yet.</div>
+          <div style="margin-top:4px">Sell the token to close the position, then generate a verified receipt.</div>
+        </div>`;
+    } else {
+      show('receipt-card');
+      document.getElementById('btn-generate').disabled = false;
+      document.getElementById('btn-generate').textContent = 'Generate Receipt';
+      setMode('verified');
+    }
   } catch (e) {
     showError(e.message);
   }
@@ -344,21 +360,32 @@ function renderPositionsList() {
     return;
   }
   el.innerHTML = state.positions.map(p => {
-    const pnl = p.realized_pnl_pct;
-    const pnlClass = pnl >= 0 ? 'profit' : 'loss';
-    const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+    const isOpen = p.pnl_display_type === 'unrealized_unavailable';
+    const isMixed = p.normalization?.mixed_quotes;
     const active = state.selectedPos === p.position_id ? 'active' : '';
+    const mixedBadge = isMixed ? `<span style="font-size:9px;color:var(--yellow);margin-left:6px" title="Mixed quote currencies — PnL normalized to SOL">⚡ NORMALIZED</span>` : '';
+
+    let pnlHtml;
+    if (isOpen) {
+      pnlHtml = `<span class="pos-pnl" style="color:var(--accent)">OPEN</span>`;
+    } else {
+      const pnl = isMixed ? p.normalized_realized_pnl_pct : p.realized_pnl_pct;
+      const pnlClass = pnl >= 0 ? 'profit' : 'loss';
+      const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+      pnlHtml = `<span class="pos-pnl ${pnlClass}">${pnlStr}</span>`;
+    }
+
     return `
       <div class="pos-item ${active}" onclick="selectPosition('${p.position_id}')">
         <div class="pos-row">
-          <span class="pos-token">${p.token.slice(0,8)}...</span>
-          <span class="pos-pnl ${pnlClass}">${pnlStr}</span>
+          <span class="pos-token">${p.token.slice(0,8)}...${mixedBadge}</span>
+          ${pnlHtml}
         </div>
         <div class="pos-meta">
           ${p.num_buys}B / ${p.num_sells}S · ${p.num_cycles} cycle(s) · ${p.status}
         </div>
         <div class="pos-meta">
-          ${tsShort(p.opened_at)} → ${tsShort(p.closed_at)}
+          ${tsShort(p.opened_at)} → ${p.closed_at ? tsShort(p.closed_at) : 'now'}
         </div>
         <div class="pos-meta" style="font-size:10px;color:var(--text-faint)">
           ${p.position_id.slice(0,16)}...
@@ -370,18 +397,46 @@ function renderPositionsList() {
 function renderDetail() {
   const d = state.selectedDetail;
   if (!d) return;
-  const pnl = d.realized_pnl_pct;
-  const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
-  const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  const isOpen = d.pnl_display_type === 'unrealized_unavailable';
+  const isMixed = d.normalization?.mixed_quotes;
+
+  let displayPnlStr, displayPnlColor;
+  if (isOpen) {
+    displayPnlStr = 'N/A (Open)';
+    displayPnlColor = 'var(--accent)';
+  } else {
+    const displayPnl = isMixed ? d.normalized_realized_pnl_pct : d.realized_pnl_pct;
+    displayPnlStr = (displayPnl >= 0 ? '+' : '') + displayPnl.toFixed(2) + '%';
+    displayPnlColor = displayPnl >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+  const displayAvgEntry = isMixed ? d.normalized_avg_entry : d.avg_entry;
+  const displayAvgExit = isOpen ? null : (isMixed ? d.normalized_avg_exit : d.avg_exit);
+  const pnlDenom = isMixed ? ' (SOL)' : '';
+
+  let normBanner = '';
+  if (isMixed) {
+    const n = d.normalization;
+    const conf = n.confidence === 'estimated' ? '⚡ Estimated' : n.confidence === 'low' ? '⚠️ Low confidence' : '✅ High';
+    const usdPnl = d.normalized_realized_pnl_usd != null ? ` · $${d.normalized_realized_pnl_usd.toFixed(2)} USD` : '';
+    normBanner = `
+      <div class="warning-box" style="margin-bottom:12px;border-color:var(--accent);background:rgba(88,166,255,0.08)">
+        <div style="color:var(--accent);font-weight:600;margin-bottom:4px">⚡ Mixed Quote Position — Normalized to SOL</div>
+        <div>Quote mints: ${n.quote_mint_syms.join(', ')}</div>
+        <div>Confidence: ${conf}${usdPnl}</div>
+        ${n.sol_usd_rate ? `<div>SOL/USD: $${n.sol_usd_rate}</div>` : ''}
+        ${n.warnings?.length > 0 ? n.warnings.map(w => `<div style="color:var(--yellow)">• ${escHtml(w.message)}</div>`).join('') : ''}
+      </div>`;
+  }
 
   document.getElementById('detail-content').innerHTML = `
+    ${normBanner}
     <div class="detail-grid">
       <div class="detail-item"><div class="detail-label">Token</div><div class="detail-value">${d.token.slice(0,20)}...</div></div>
       <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value">${d.status}</div></div>
-      <div class="detail-item"><div class="detail-label">PnL</div><div class="detail-value" style="color:${pnlColor};font-weight:600">${pnlStr}</div></div>
+      <div class="detail-item"><div class="detail-label">PnL${pnlDenom}</div><div class="detail-value" style="color:${displayPnlColor};font-weight:600">${displayPnlStr}</div></div>
       <div class="detail-item"><div class="detail-label">Cycles</div><div class="detail-value">${d.num_cycles}</div></div>
-      <div class="detail-item"><div class="detail-label">Avg Entry</div><div class="detail-value">${d.avg_entry.toPrecision(6)}</div></div>
-      <div class="detail-item"><div class="detail-label">Avg Exit</div><div class="detail-value">${d.avg_exit.toPrecision(6)}</div></div>
+      <div class="detail-item"><div class="detail-label">Avg Entry${pnlDenom}</div><div class="detail-value">${displayAvgEntry != null ? displayAvgEntry.toPrecision(6) : '-'}</div></div>
+      <div class="detail-item"><div class="detail-label">Avg Exit${pnlDenom}</div><div class="detail-value">${displayAvgExit != null ? displayAvgExit.toPrecision(6) : 'No exit yet'}</div></div>
       <div class="detail-item"><div class="detail-label">Trades</div><div class="detail-value">${d.num_buys}B / ${d.num_sells}S</div></div>
       <div class="detail-item"><div class="detail-label">Duration</div><div class="detail-value">${(d.duration_sec/3600).toFixed(1)}h</div></div>
       <div class="detail-item"><div class="detail-label">Opened</div><div class="detail-value">${tsFull(d.from_ts)}</div></div>
@@ -395,6 +450,13 @@ function renderLegs() {
   if (!d) return;
   const isCustom = state.mode === 'custom';
 
+  const QUOTE_SYMS = {
+    'So11111111111111111111111111111111111111112': 'SOL',
+    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
+    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 'USDT',
+  };
+  const isMixedLegs = d.normalization?.mixed_quotes;
+
   document.getElementById('legs-body').innerHTML = d.legs.map((leg, i) => {
     const isRemoved = state.removedLegs.has(leg.tx_hash);
     const cls = [
@@ -402,14 +464,19 @@ function renderLegs() {
       isCustom ? 'removable' : '',
       isRemoved ? 'removed' : '',
     ].join(' ');
-    const price = leg.amount > 0 ? (leg.quote_amount / leg.amount).toPrecision(6) : '-';
+    // Show raw quote amount and mint for mixed positions
+    const rawQuoteMint = leg.raw_quote_mint || leg.quote_mint;
+    const rawQuoteAmt = leg.raw_quote_amount != null ? leg.raw_quote_amount : leg.quote_amount;
+    const quoteSym = QUOTE_SYMS[rawQuoteMint] || (rawQuoteMint || '').slice(0,6);
+    const price = leg.amount > 0 ? (rawQuoteAmt / leg.amount).toPrecision(6) : '-';
+    const priceLabel = isMixedLegs ? `${price} ${quoteSym}` : price;
     const check = isCustom ? (isRemoved ? '🗑️' : '') : '';
     return `
       <tr class="${cls}" onclick="toggleLeg('${leg.tx_hash}')">
         <td>${check}</td>
         <td class="${leg.action}">${leg.action.toUpperCase()}</td>
         <td>${leg.amount.toFixed(4)}</td>
-        <td>${price}</td>
+        <td>${priceLabel}</td>
         <td>${tsShort(leg.timestamp)}</td>
         <td style="font-size:10px;color:var(--text-faint)">${leg.tx_hash.slice(0,12)}...</td>
       </tr>`;

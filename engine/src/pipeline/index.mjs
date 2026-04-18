@@ -10,6 +10,7 @@ export {
   STATUS_BYTE, statusToByte,
 } from './receipt.mjs';
 export { renderReceipt } from './render.mjs';
+export { detectMixedQuotes, normalizePosition, normalizePositions } from './quote-normalizer.mjs';
 export { signClaim } from './sign.mjs';
 export { uploadToArweave } from './upload.mjs';
 export { mintOnChain } from './mint.mjs';

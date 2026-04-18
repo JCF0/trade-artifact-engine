@@ -165,28 +165,55 @@ export function buildReceipts(closedCycles, wallet) {
  * @returns {object} Verified receipt
  */
 export function buildPositionReceipt(position, { receiptNum = 1 } = {}) {
-  const totalBought = position.entries.reduce((s, t) => s + t.amount, 0);
-  const totalSold = position.exits.reduce((s, t) => s + t.amount, 0);
-  const costBasis = position.entries.reduce((s, t) => s + t.quote_amount, 0);
-  const exitProceeds = position.exits.reduce((s, t) => s + t.quote_amount, 0);
-  const entryAvg = totalBought > 0 ? costBasis / totalBought : 0;
-  const exitAvg = totalSold > 0 ? exitProceeds / totalSold : 0;
-  const pnl = exitProceeds - costBasis;
-  const pnlPct = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+  // ── Raw values (always computed from legs) ──
+  const rawTotalBought = position.entries.reduce((s, t) => s + t.amount, 0);
+  const rawTotalSold = position.exits.reduce((s, t) => s + t.amount, 0);
+  const rawCostBasis = position.entries.reduce((s, t) => s + t.quote_amount, 0);
+  const rawExitProceeds = position.exits.reduce((s, t) => s + t.quote_amount, 0);
+  const rawEntryAvg = rawTotalBought > 0 ? rawCostBasis / rawTotalBought : 0;
+  const rawExitAvg = rawTotalSold > 0 ? rawExitProceeds / rawTotalSold : 0;
 
   // Derive quote currency from all legs
   const quoteMintSet = new Set();
   for (const tx of [...position.entries, ...position.exits]) {
-    if (tx.quote_mint) quoteMintSet.add(tx.quote_mint);
+    const qm = tx.raw_quote_mint || tx.quote_mint;
+    if (qm) quoteMintSet.add(qm);
   }
   const quoteMints = [...quoteMintSet];
   const quoteCurrency = quoteMints.length === 1 ? quoteMints[0] : 'MIXED';
-  const receiptStatus = quoteMints.length === 1 ? 'verified' : 'verified_mixed_quote';
+
+  // ── Detect normalization ──
+  const isNormalized = position.normalization?.mixed_quotes === true;
+
+  // Display values: use normalized if available, otherwise raw
+  let costBasis, exitProceeds, entryAvg, exitAvg, pnl, pnlPct, totalBought, totalSold;
+  if (isNormalized) {
+    costBasis    = position.normalized_cost_basis;
+    exitProceeds = position.normalized_proceeds;
+    entryAvg     = position.normalized_avg_entry;
+    exitAvg      = position.normalized_avg_exit;
+    pnl          = position.normalized_realized_pnl;
+    pnlPct       = position.normalized_realized_pnl_pct;
+    totalBought  = rawTotalBought;
+    totalSold    = rawTotalSold;
+  } else {
+    costBasis    = rawCostBasis;
+    exitProceeds = rawExitProceeds;
+    entryAvg     = rawEntryAvg;
+    exitAvg      = rawExitAvg;
+    pnl          = exitProceeds - costBasis;
+    pnlPct       = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+    totalBought  = rawTotalBought;
+    totalSold    = rawTotalSold;
+  }
+
+  const receiptStatus = isNormalized ? 'verified_mixed_quote' : (quoteMints.length === 1 ? 'verified' : 'verified_mixed_quote');
 
   const stripTx = t => ({ tx_hash: t.tx_hash, timestamp: t.timestamp, amount: t.amount, quote_amount: t.quote_amount });
   const entryTxs = position.entries.map(stripTx);
   const exitTxs = position.exits.map(stripTx);
 
+  // Hash uses the display values (normalized if applicable)
   const verificationHash = computeVerificationHash({
     wallet: position.wallet, chain: CHAIN, token_mint: position.token,
     entry_txs: entryTxs, exit_txs: exitTxs,
@@ -197,7 +224,7 @@ export function buildPositionReceipt(position, { receiptNum = 1 } = {}) {
 
   const receiptId = `receipt_${String(receiptNum).padStart(4, '0')}_${position.token.slice(0, 8)}`;
 
-  return {
+  const receipt = {
     receipt_id: receiptId, receipt_version: RECEIPT_VERSION,
     position_id: position.position_id,
     wallet: position.wallet, chain: CHAIN, token_mint: position.token,
@@ -208,7 +235,7 @@ export function buildPositionReceipt(position, { receiptNum = 1 } = {}) {
     accounting_method: ACCOUNTING_METHOD,
     avg_entry_price: parseFloat(entryAvg.toPrecision(12)),
     avg_exit_price: parseFloat(exitAvg.toPrecision(12)),
-    quote_currency: quoteCurrency,
+    quote_currency: isNormalized ? 'SOL (normalized)' : quoteCurrency,
     total_cost_basis: parseFloat(costBasis.toPrecision(12)),
     total_exit_proceeds: parseFloat(exitProceeds.toPrecision(12)),
     realized_pnl: parseFloat(pnl.toPrecision(12)),
@@ -226,6 +253,29 @@ export function buildPositionReceipt(position, { receiptNum = 1 } = {}) {
     generated_at: Math.floor(Date.now() / 1000),
     verification_hash: verificationHash,
   };
+
+  // ── Normalization metadata ──
+  if (isNormalized) {
+    const norm = position.normalization;
+    receipt.pnl_type = 'normalized';
+    receipt.normalization_source = norm.rates?.USDC?.source === 'jupiter_swap_quote' ? 'Jupiter current price' : 'external';
+    receipt.normalization_confidence = norm.confidence;
+    receipt.normalization_fetched_at = norm.fetched_at;
+    receipt.normalization_sol_usd = norm.sol_usd_rate;
+    receipt.normalization_quote_mints = norm.quote_mint_syms;
+    // Preserve raw (pre-normalization) values for audit trail
+    receipt.raw_cost_basis = parseFloat(rawCostBasis.toPrecision(12));
+    receipt.raw_exit_proceeds = parseFloat(rawExitProceeds.toPrecision(12));
+    receipt.raw_avg_entry_price = parseFloat(rawEntryAvg.toPrecision(12));
+    receipt.raw_avg_exit_price = parseFloat(rawExitAvg.toPrecision(12));
+    receipt.raw_realized_pnl_pct = parseFloat(((rawExitProceeds - rawCostBasis) / rawCostBasis * 100).toPrecision(6));
+    // USD equivalents
+    if (position.normalized_realized_pnl_usd != null) {
+      receipt.realized_pnl_usd = position.normalized_realized_pnl_usd;
+    }
+  }
+
+  return receipt;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -249,23 +299,48 @@ export function buildPositionReceipt(position, { receiptNum = 1 } = {}) {
  * @returns {object} Custom receipt
  */
 export function buildCustomReceipt(customPosition, baseVerifiedHash, { receiptNum = 1 } = {}) {
-  const totalBought = customPosition.entries.reduce((s, t) => s + t.amount, 0);
-  const totalSold = customPosition.exits.reduce((s, t) => s + t.amount, 0);
-  const costBasis = customPosition.entries.reduce((s, t) => s + t.quote_amount, 0);
-  const exitProceeds = customPosition.exits.reduce((s, t) => s + t.quote_amount, 0);
-  const entryAvg = totalBought > 0 ? costBasis / totalBought : 0;
-  const exitAvg = totalSold > 0 ? exitProceeds / totalSold : 0;
-  const pnl = exitProceeds - costBasis;
-  const pnlPct = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+  // ── Raw values ──
+  const rawTotalBought = customPosition.entries.reduce((s, t) => s + t.amount, 0);
+  const rawTotalSold = customPosition.exits.reduce((s, t) => s + t.amount, 0);
+  const rawCostBasis = customPosition.entries.reduce((s, t) => s + t.quote_amount, 0);
+  const rawExitProceeds = customPosition.exits.reduce((s, t) => s + t.quote_amount, 0);
+  const rawEntryAvg = rawTotalBought > 0 ? rawCostBasis / rawTotalBought : 0;
+  const rawExitAvg = rawTotalSold > 0 ? rawExitProceeds / rawTotalSold : 0;
 
   // Derive quote currency
   const quoteMintSet = new Set();
   for (const tx of [...customPosition.entries, ...customPosition.exits]) {
-    if (tx.quote_mint) quoteMintSet.add(tx.quote_mint);
+    const qm = tx.raw_quote_mint || tx.quote_mint;
+    if (qm) quoteMintSet.add(qm);
   }
   const quoteMints = [...quoteMintSet];
   const quoteCurrency = quoteMints.length === 1 ? quoteMints[0] : 'MIXED';
-  const isMixed = quoteMints.length !== 1;
+
+  // ── Detect normalization ──
+  const isNormalized = customPosition.normalization?.mixed_quotes === true;
+  const isMixed = quoteMints.length !== 1 || isNormalized;
+
+  let totalBought, totalSold, costBasis, exitProceeds, entryAvg, exitAvg, pnl, pnlPct;
+  if (isNormalized) {
+    totalBought  = rawTotalBought;
+    totalSold    = rawTotalSold;
+    costBasis    = customPosition.normalized_cost_basis;
+    exitProceeds = customPosition.normalized_proceeds;
+    entryAvg     = customPosition.normalized_avg_entry;
+    exitAvg      = customPosition.normalized_avg_exit;
+    pnl          = customPosition.normalized_realized_pnl;
+    pnlPct       = customPosition.normalized_realized_pnl_pct;
+  } else {
+    totalBought  = rawTotalBought;
+    totalSold    = rawTotalSold;
+    costBasis    = rawCostBasis;
+    exitProceeds = rawExitProceeds;
+    entryAvg     = rawEntryAvg;
+    exitAvg      = rawExitAvg;
+    pnl          = exitProceeds - costBasis;
+    pnlPct       = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+  }
+
   const receiptStatus = isMixed ? 'custom_mixed_quote' : 'custom';
 
   const stripTx = t => ({ tx_hash: t.tx_hash, timestamp: t.timestamp, amount: t.amount, quote_amount: t.quote_amount });
@@ -347,6 +422,25 @@ export function buildCustomReceipt(customPosition, baseVerifiedHash, { receiptNu
   // Only include warnings if there are any
   if (warnings.length > 0) {
     receipt.integrity_warnings = warnings;
+  }
+
+  // ── Normalization metadata ──
+  if (isNormalized) {
+    const norm = customPosition.normalization;
+    receipt.pnl_type = 'normalized';
+    receipt.normalization_source = norm.rates?.USDC?.source === 'jupiter_swap_quote' ? 'Jupiter current price' : 'external';
+    receipt.normalization_confidence = norm.confidence;
+    receipt.normalization_fetched_at = norm.fetched_at;
+    receipt.normalization_sol_usd = norm.sol_usd_rate;
+    receipt.normalization_quote_mints = norm.quote_mint_syms;
+    receipt.quote_currency = 'SOL (normalized)';
+    receipt.raw_cost_basis = parseFloat(rawCostBasis.toPrecision(12));
+    receipt.raw_exit_proceeds = parseFloat(rawExitProceeds.toPrecision(12));
+    receipt.raw_avg_entry_price = parseFloat(rawEntryAvg.toPrecision(12));
+    receipt.raw_avg_exit_price = parseFloat(rawExitAvg.toPrecision(12));
+    if (customPosition.normalized_realized_pnl_usd != null) {
+      receipt.realized_pnl_usd = customPosition.normalized_realized_pnl_usd;
+    }
   }
 
   return receipt;

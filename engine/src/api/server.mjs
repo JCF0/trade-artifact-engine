@@ -25,6 +25,7 @@ import { reconstructCycles } from '../pipeline/reconstruct.mjs';
 import { buildPositionReceipt, buildCustomReceipt } from '../pipeline/receipt.mjs';
 import { renderReceipt } from '../pipeline/render.mjs';
 import { buildPositions, buildCustomPosition } from '../position/position-builder.mjs';
+import { normalizePositions, detectMixedQuotes } from '../pipeline/quote-normalizer.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
@@ -61,11 +62,18 @@ async function runPipeline(wallet, { token, from, to, maxTxns = 5000 } = {}) {
     if (events.length === 0) throw { status: 404, message: 'No swap events found for this wallet' };
 
     const { cycles } = reconstructCycles(events);
-    const closed = cycles.filter(c => c.status === 'closed');
-    if (closed.length === 0) throw { status: 404, message: 'No closed trade cycles found' };
+    if (cycles.length === 0) throw { status: 404, message: 'No trade cycles found' };
 
-    cached = { cycles, events, fetchedAt: Date.now() };
+    cached = { cycles, events, normalizedPositions: new Map(), fetchedAt: Date.now() };
     pipelineCache.set(cacheKey, cached);
+  }
+
+  // Build filter key for position cache
+  const filterKey = `${token || ''}:${from || ''}:${to || ''}`;
+
+  // Return cached normalized positions for same filter set
+  if (cached.normalizedPositions.has(filterKey)) {
+    return { positions: cached.normalizedPositions.get(filterKey), cycles: cached.cycles };
   }
 
   // Build positions with optional filters
@@ -76,7 +84,11 @@ async function runPipeline(wallet, { token, from, to, maxTxns = 5000 } = {}) {
     to_ts: to ? parseInt(to) : undefined,
   });
 
-  return { positions, cycles: cached.cycles };
+  // Normalize mixed-quote positions (single API call, then cached)
+  const normalized = await normalizePositions(positions);
+  cached.normalizedPositions.set(filterKey, normalized);
+
+  return { positions: normalized, cycles: cached.cycles };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -116,23 +128,33 @@ app.get('/positions', asyncHandler(async (req, res) => {
   }
 
   // Return list-view fields only (no legs)
-  const result = positions.map(p => ({
-    position_id: p.position_id,
-    token: p.token,
-    status: p.status,
-    avg_entry: p.avg_entry,
-    avg_exit: p.avg_exit,
-    realized_pnl: p.realized_pnl,
-    realized_pnl_pct: p.realized_pnl_pct,
-    total_bought: p.total_bought,
-    total_sold: p.total_sold,
-    opened_at: p.start_time,
-    closed_at: p.end_time,
-    duration_sec: p.duration_sec,
-    num_buys: p.num_buys,
-    num_sells: p.num_sells,
-    num_cycles: p.num_cycles,
-  }));
+  const result = positions.map(p => {
+    const base = {
+      position_id: p.position_id,
+      token: p.token,
+      status: p.status,
+      pnl_display_type: p.pnl_display_type,
+      avg_entry: p.avg_entry,
+      avg_exit: p.avg_exit,
+      realized_pnl: p.realized_pnl,
+      realized_pnl_pct: p.realized_pnl_pct,
+      total_bought: p.total_bought,
+      total_sold: p.total_sold,
+      opened_at: p.start_time,
+      closed_at: p.end_time,
+      duration_sec: p.duration_sec,
+      num_buys: p.num_buys,
+      num_sells: p.num_sells,
+      num_cycles: p.num_cycles,
+    };
+    // Include normalization data if mixed-quote
+    if (p.normalization?.mixed_quotes) {
+      base.normalization = p.normalization;
+      base.normalized_realized_pnl_pct = p.normalized_realized_pnl_pct;
+      base.normalized_realized_pnl = p.normalized_realized_pnl;
+    }
+    return base;
+  });
 
   res.json({ count: result.length, positions: result });
 }));
@@ -153,13 +175,14 @@ app.get('/positions/:id', asyncHandler(async (req, res) => {
     });
   }
 
-  res.json({
+  const detail = {
     position_id: match.position_id,
     wallet: match.wallet,
     token: match.token,
     from_ts: match.from_ts,
     to_ts: match.to_ts,
     status: match.status,
+    pnl_display_type: match.pnl_display_type,
     avg_entry: match.avg_entry,
     avg_exit: match.avg_exit,
     realized_pnl: match.realized_pnl,
@@ -174,7 +197,21 @@ app.get('/positions/:id', asyncHandler(async (req, res) => {
     legs: match.legs,
     entries: match.entries,
     exits: match.exits,
-  });
+  };
+  // Include normalization data if present
+  if (match.normalization) {
+    detail.normalization = match.normalization;
+    if (match.normalization.mixed_quotes) {
+      detail.normalized_avg_entry = match.normalized_avg_entry;
+      detail.normalized_avg_exit = match.normalized_avg_exit;
+      detail.normalized_cost_basis = match.normalized_cost_basis;
+      detail.normalized_proceeds = match.normalized_proceeds;
+      detail.normalized_realized_pnl = match.normalized_realized_pnl;
+      detail.normalized_realized_pnl_pct = match.normalized_realized_pnl_pct;
+      detail.normalized_realized_pnl_usd = match.normalized_realized_pnl_usd;
+    }
+  }
+  res.json(detail);
 }));
 
 // ── POST /positions/:id/receipt ──
@@ -190,6 +227,16 @@ app.post('/positions/:id/receipt', asyncHandler(async (req, res) => {
     return res.status(404).json({
       error: `No position found matching id: ${posId}`,
       available: positions.map(p => ({ position_id: p.position_id, token: p.token.slice(0, 8) })),
+    });
+  }
+
+  // Reject receipt generation for open positions
+  if (match.pnl_display_type === 'unrealized_unavailable') {
+    return res.status(400).json({
+      error: 'Cannot generate a realized-PnL receipt for an open position. The position has no exit legs.',
+      position_status: match.status,
+      pnl_display_type: match.pnl_display_type,
+      hint: 'Close the position by selling the token, then retry.',
     });
   }
 
@@ -352,7 +399,7 @@ export default app;
 
 // Listen when run directly. Tests set TRADE_ARTIFACT_TEST=1 to skip.
 if (!process.env.TRADE_ARTIFACT_TEST) {
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`\n╔════════════════════════════════════════════════════════════╗`);
     console.log(`║  Trade Artifact API Server                                ║`);
     console.log(`╚════════════════════════════════════════════════════════════╝`);
@@ -368,5 +415,21 @@ if (!process.env.TRADE_ARTIFACT_TEST) {
     console.log(`    GET  /receipt/:hash/image`);
     console.log(`\n  UI:  http://localhost:${PORT}/ui/`);
     console.log();
+    console.log(`  [${new Date().toISOString()}] Server listening — pid ${process.pid}`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n  ❌ Port ${PORT} is already in use. Try --port <other>`);
+    } else {
+      console.error(`\n  ❌ Server error:`, err.message);
+    }
+    process.exit(1);
+  });
+
+  // Keep process alive — log on shutdown
+  process.on('SIGINT', () => {
+    console.log('\n  Shutting down...');
+    server.close(() => process.exit(0));
   });
 }

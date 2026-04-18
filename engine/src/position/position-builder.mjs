@@ -169,9 +169,6 @@ export function buildPositions(cycles, { wallet, token, from_ts, to_ts } = {}) {
     const exitProceeds = exits.reduce((s, t) => s + t.quote_amount, 0);
     const avgEntry = totalBought > 0 ? costBasis / totalBought : 0;
     const avgExit = totalSold > 0 ? exitProceeds / totalSold : 0;
-    const realizedPnl = exitProceeds - costBasis;
-    const realizedPnlPct = costBasis > 0 ? (realizedPnl / costBasis) * 100 : 0;
-
     // Timing
     const allTimestamps = legs.map(l => l.timestamp);
     const startTime = Math.min(...allTimestamps);
@@ -187,6 +184,12 @@ export function buildPositions(cycles, { wallet, token, from_ts, to_ts } = {}) {
     // Status
     const status = deriveStatus(cloned);
 
+    // PnL: only compute realized PnL for positions with exits
+    const isOpen = exits.length === 0;
+    const realizedPnl = isOpen ? null : exitProceeds - costBasis;
+    const realizedPnlPct = isOpen ? null : (costBasis > 0 ? ((exitProceeds - costBasis) / costBasis) * 100 : 0);
+    const pnlDisplayType = isOpen ? 'unrealized_unavailable' : 'realized';
+
     positions.push({
       position_id: positionId,
       wallet,
@@ -200,10 +203,10 @@ export function buildPositions(cycles, { wallet, token, from_ts, to_ts } = {}) {
       exits,
 
       avg_entry: parseFloat(avgEntry.toPrecision(12)),
-      avg_exit: parseFloat(avgExit.toPrecision(12)),
+      avg_exit: exits.length > 0 ? parseFloat(avgExit.toPrecision(12)) : null,
 
-      realized_pnl: parseFloat(realizedPnl.toPrecision(12)),
-      realized_pnl_pct: parseFloat(realizedPnlPct.toPrecision(6)),
+      realized_pnl: realizedPnl != null ? parseFloat(realizedPnl.toPrecision(12)) : null,
+      realized_pnl_pct: realizedPnlPct != null ? parseFloat(realizedPnlPct.toPrecision(6)) : null,
 
       total_bought: parseFloat(totalBought.toFixed(10)),
       total_sold: parseFloat(totalSold.toFixed(10)),
@@ -217,6 +220,7 @@ export function buildPositions(cycles, { wallet, token, from_ts, to_ts } = {}) {
       num_sells: exits.length,
 
       status,
+      pnl_display_type: pnlDisplayType,
     });
   }
 
