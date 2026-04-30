@@ -28,6 +28,8 @@ export function reconstructCycles(events) {
       action = 'sell'; baseMint = ev.token_in_mint; baseAmt = ev.token_in_amount;
       quoteMint = ev.token_out_mint; quoteAmt = ev.token_out_amount;
     } else {
+      // Both sides are quote (quote_to_quote) or neither is quote (token_to_token)
+      // Tracked by classifier — skip for cycle reconstruction
       continue;
     }
 

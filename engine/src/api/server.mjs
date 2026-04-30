@@ -26,6 +26,10 @@ import { buildPositionReceipt, buildCustomReceipt } from '../pipeline/receipt.mj
 import { renderReceipt } from '../pipeline/render.mjs';
 import { buildPositions, buildCustomPosition } from '../position/position-builder.mjs';
 import { normalizePositions, detectMixedQuotes } from '../pipeline/quote-normalizer.mjs';
+import { classifyAll, formatCoverageReport } from '../pipeline/classifier.mjs';
+import { TokenMetadataCache, collectMintsFromPositions, enrichPositions } from '../pipeline/token-metadata.mjs';
+import { TransactionCache } from '../pipeline/tx-cache.mjs';
+import { DEX_PROGRAMS } from '../pipeline/constants.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
@@ -41,6 +45,17 @@ try {
   if (match) API_KEY = match[1].trim().replace(/^["']|["']$/g, '');
 } catch {}
 
+// ── Token metadata cache (shared across all wallets) ──
+const tokenMetadataCache = new TokenMetadataCache({
+  heliusApiKey: API_KEY,
+  cacheDir: resolve(ROOT, 'data', 'cache'),
+});
+
+// ── Transaction cache (per-wallet, disk-persisted) ──
+const txCache = new TransactionCache({
+  cacheDir: resolve(ROOT, 'data', 'cache', 'transactions'),
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared pipeline helper (cached per wallet per session)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -48,23 +63,40 @@ try {
 const pipelineCache = new Map();
 
 async function runPipeline(wallet, { token, from, to, maxTxns = 5000 } = {}) {
-  // Cache key includes wallet + maxTxns (token/from/to are post-filters)
-  const cacheKey = `${wallet}:${maxTxns}`;
+  if (!API_KEY) throw { status: 500, message: 'HELIUS_API_KEY not configured' };
 
+  // Cache key includes wallet (maxTxns affects fetch depth, not cache key)
+  const cacheKey = wallet;
+
+  // Fetch transactions incrementally (cache-aware)
+  const { transactions: rawTxns, fromCache, fetched, total } = await txCache.fetchIncremental(
+    wallet, API_KEY, { maxTxns, silent: true }
+  );
+
+  if (rawTxns.length === 0) throw { status: 404, message: 'No transactions found for this wallet' };
+
+  // If we have new transactions, invalidate the pipeline cache
   let cached = pipelineCache.get(cacheKey);
+  if (cached && fetched > 0) {
+    // New transactions arrived — need to re-process
+    cached = null;
+    pipelineCache.delete(cacheKey);
+  }
+
   if (!cached) {
-    if (!API_KEY) throw { status: 500, message: 'HELIUS_API_KEY not configured' };
-
-    const rawTxns = await fetchTransactions(wallet, API_KEY, { maxTxns, silent: true });
-    if (rawTxns.length === 0) throw { status: 404, message: 'No transactions found for this wallet' };
-
     const { events } = normalizeTransactions(rawTxns, wallet, { silent: true });
     if (events.length === 0) throw { status: 404, message: 'No swap events found for this wallet' };
+
+    // Classify all transactions
+    const { coverage } = classifyAll(rawTxns, wallet, DEX_PROGRAMS);
 
     const { cycles } = reconstructCycles(events);
     if (cycles.length === 0) throw { status: 404, message: 'No trade cycles found' };
 
-    cached = { cycles, events, normalizedPositions: new Map(), fetchedAt: Date.now() };
+    cached = {
+      cycles, events, coverage, normalizedPositions: new Map(),
+      fetchedAt: Date.now(), txCount: total, newTxCount: fetched,
+    };
     pipelineCache.set(cacheKey, cached);
   }
 
@@ -86,9 +118,26 @@ async function runPipeline(wallet, { token, from, to, maxTxns = 5000 } = {}) {
 
   // Normalize mixed-quote positions (single API call, then cached)
   const normalized = await normalizePositions(positions);
+
+  // Resolve token metadata for all mints
+  const allMints = collectMintsFromPositions(normalized);
+  await tokenMetadataCache.resolve(allMints);
+  enrichPositions(normalized, tokenMetadataCache);
+
   cached.normalizedPositions.set(filterKey, normalized);
 
-  return { positions: normalized, cycles: cached.cycles };
+  return {
+    positions: normalized,
+    cycles: cached.cycles,
+    coverage: cached.coverage,
+    cacheInfo: {
+      tx_total: cached.txCount || total,
+      tx_new: cached.newTxCount ?? fetched,
+      tx_from_cache: (cached.txCount || total) - (cached.newTxCount ?? fetched),
+      pipeline_cached_at: cached.fetchedAt ? new Date(cached.fetchedAt).toISOString() : null,
+      token_metadata_size: tokenMetadataCache.size,
+    },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -121,7 +170,7 @@ app.get('/positions', asyncHandler(async (req, res) => {
   const { wallet, token, from, to, maxTxns } = req.query;
   if (!wallet) return res.status(400).json({ error: 'wallet query parameter is required' });
 
-  const { positions } = await runPipeline(wallet, { token, from, to, maxTxns });
+  const { positions, coverage, cacheInfo } = await runPipeline(wallet, { token, from, to, maxTxns });
 
   if (positions.length === 0) {
     return res.status(404).json({ error: 'No positions match the given filters' });
@@ -132,6 +181,7 @@ app.get('/positions', asyncHandler(async (req, res) => {
     const base = {
       position_id: p.position_id,
       token: p.token,
+      token_meta: p.token_meta || null,
       status: p.status,
       pnl_display_type: p.pnl_display_type,
       avg_entry: p.avg_entry,
@@ -156,7 +206,12 @@ app.get('/positions', asyncHandler(async (req, res) => {
     return base;
   });
 
-  res.json({ count: result.length, positions: result });
+  res.json({
+    count: result.length,
+    positions: result,
+    coverage: coverage || null,
+    cache: cacheInfo || null,
+  });
 }));
 
 // ── GET /positions/:id ──
@@ -179,6 +234,7 @@ app.get('/positions/:id', asyncHandler(async (req, res) => {
     position_id: match.position_id,
     wallet: match.wallet,
     token: match.token,
+    token_meta: match.token_meta || null,
     from_ts: match.from_ts,
     to_ts: match.to_ts,
     status: match.status,
@@ -381,9 +437,39 @@ app.get('/receipt/:hash/image', (req, res) => {
 const UI_DIR = resolve(ROOT, '..', 'ui');
 app.use('/ui', express.static(UI_DIR));
 
+// ── GET /coverage — classification report for a wallet ──
+app.get('/coverage', asyncHandler(async (req, res) => {
+  const { wallet, maxTxns } = req.query;
+  if (!wallet) return res.status(400).json({ error: 'wallet query parameter is required' });
+
+  // Run pipeline to populate cache (which now includes coverage)
+  try {
+    await runPipeline(wallet, { maxTxns });
+  } catch (e) {
+    const cached = pipelineCache.get(wallet);
+    if (cached?.coverage) {
+      return res.json({ coverage: cached.coverage });
+    }
+    throw e;
+  }
+
+  const cached = pipelineCache.get(wallet);
+  if (!cached?.coverage) {
+    return res.status(404).json({ error: 'No coverage data available' });
+  }
+
+  res.json({ coverage: cached.coverage, tx_cache: txCache.stats(wallet) });
+}));
+
+// ── GET /token/:mint — resolve token metadata ──
+app.get('/token/:mint', asyncHandler(async (req, res) => {
+  const meta = await tokenMetadataCache.getOrResolve(req.params.mint);
+  res.json(meta);
+}));
+
 // ── Health check ──
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', api_key_configured: !!API_KEY });
+  res.json({ status: 'ok', api_key_configured: !!API_KEY, token_cache_size: tokenMetadataCache.size });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

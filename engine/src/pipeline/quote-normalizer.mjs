@@ -21,6 +21,32 @@ import { SOL_MINT, USDC_MINT, USDT_MINT, QUOTE_MINTS, SYMS } from './constants.m
 const JUPITER_QUOTE_API = 'https://api.jup.ag/swap/v1/quote';
 const COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price';
 
+// Rate cache with TTL (5 minutes)
+const RATE_TTL_MS = 5 * 60 * 1000;
+const rateCache = new Map(); // mint → { rate, solUsd, fetchedAt }
+
+/**
+ * Get cached rate if still within TTL.
+ * @param {string} mint
+ * @returns {{ rate: number, solUsd: number|null } | null}
+ */
+function getCachedRate(mint) {
+  const entry = rateCache.get(mint);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > RATE_TTL_MS) {
+    rateCache.delete(mint);
+    return null;
+  }
+  return { rate: entry.rate, solUsd: entry.solUsd };
+}
+
+/**
+ * Store rate in cache with current timestamp.
+ */
+function setCachedRate(mint, rate, solUsd) {
+  rateCache.set(mint, { rate, solUsd, fetchedAt: Date.now() });
+}
+
 // Known decimals for quote mints
 const QUOTE_DECIMALS = {
   [SOL_MINT]: 9,
@@ -114,26 +140,42 @@ async function buildConversionRates(quoteMints) {
 
   const fetchedAt = new Date().toISOString();
 
-  // Fetch conversion rates in parallel
-  const ratePromises = needPricing.map(async (mint) => {
-    const rate = await fetchRateViQuote(mint);
-    return { mint, rate };
-  });
-
-  const solUsdPromise = fetchSolUsd();
-  const [rateResults, solUsd] = await Promise.all([
-    Promise.all(ratePromises),
-    solUsdPromise,
-  ]);
-
-  for (const { mint, rate } of rateResults) {
-    if (rate != null && rate > 0) {
-      rates.set(mint, {
-        rate_to_sol: rate,
-        source: 'jupiter_swap_quote',
-      });
+  // Check TTL cache first
+  const needFetch = [];
+  let cachedSolUsd = null;
+  for (const mint of needPricing) {
+    const cached = getCachedRate(mint);
+    if (cached) {
+      rates.set(mint, { rate_to_sol: cached.rate, source: 'jupiter_swap_quote (cached)' });
+      if (cached.solUsd) cachedSolUsd = cached.solUsd;
+    } else {
+      needFetch.push(mint);
     }
-    // If not found, rate stays missing → will trigger warning
+  }
+
+  let solUsd = cachedSolUsd;
+
+  // Only fetch what's not cached
+  if (needFetch.length > 0) {
+    const ratePromises = needFetch.map(async (mint) => {
+      const rate = await fetchRateViQuote(mint);
+      return { mint, rate };
+    });
+
+    const solUsdPromise = solUsd ? Promise.resolve(solUsd) : fetchSolUsd();
+    const [rateResults, fetchedSolUsd] = await Promise.all([
+      Promise.all(ratePromises),
+      solUsdPromise,
+    ]);
+
+    solUsd = fetchedSolUsd || solUsd;
+
+    for (const { mint, rate } of rateResults) {
+      if (rate != null && rate > 0) {
+        rates.set(mint, { rate_to_sol: rate, source: 'jupiter_swap_quote' });
+        setCachedRate(mint, rate, solUsd);
+      }
+    }
   }
 
   return { rates, sol_usd: solUsd, fetchedAt };

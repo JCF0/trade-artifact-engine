@@ -127,6 +127,7 @@
       <input type="number" id="inp-to" placeholder="To (epoch)" />
     </div>
     <div id="scan-error" class="error-msg hidden"></div>
+    <div id="coverage-bar" class="hidden" style="margin-top:8px;font-size:11px;"></div>
   </div>
 
   <!-- Main panels -->
@@ -225,10 +226,13 @@ async function scanWallet() {
 
     const data = await api(url);
     state.positions = data.positions;
+    state.coverage = data.coverage || null;
+    state.cache = data.cache || null;
     state.selectedPos = null;
     state.selectedDetail = null;
     state.receipt = null;
     renderPositionsList();
+    renderCoverage();
     hide('detail-card'); hide('legs-card'); hide('receipt-card');
     document.getElementById('receipt-content').innerHTML = '';
   } catch (e) {
@@ -375,10 +379,13 @@ function renderPositionsList() {
       pnlHtml = `<span class="pos-pnl ${pnlClass}">${pnlStr}</span>`;
     }
 
+    const sym = p.token_meta?.symbol || p.token.slice(0,8);
+    const tokenName = p.token_meta?.name ? `<span style="font-size:10px;color:var(--text-dim);margin-left:4px">${escHtml(p.token_meta.name)}</span>` : '';
+
     return `
       <div class="pos-item ${active}" onclick="selectPosition('${p.position_id}')">
         <div class="pos-row">
-          <span class="pos-token">${p.token.slice(0,8)}...${mixedBadge}</span>
+          <span class="pos-token">${escHtml(sym)}${tokenName}${mixedBadge}</span>
           ${pnlHtml}
         </div>
         <div class="pos-meta">
@@ -392,6 +399,43 @@ function renderPositionsList() {
         </div>
       </div>`;
   }).join('');
+}
+
+function renderCoverage() {
+  const el = document.getElementById('coverage-bar');
+  const c = state.coverage;
+  if (!c) { el.classList.add('hidden'); return; }
+
+  el.classList.remove('hidden');
+  const pct = c.swap_coverage_pct;
+  const barColor = pct >= 90 ? 'var(--green)' : pct >= 70 ? 'var(--yellow)' : 'var(--red)';
+  const unproc = c.unprocessable;
+  const unprocTotal = (unproc.token_to_token || 0) + (unproc.quote_to_quote || 0) + (unproc.multi_leg || 0) + (unproc.unsupported_swap || 0) + (unproc.unknown || 0);
+
+  let detail = `${c.total_transactions} txns · ${c.swap_related} swaps · ${c.fully_classified} classified`;
+  if (unprocTotal > 0) {
+    const parts = [];
+    if (unproc.token_to_token) parts.push(`${unproc.token_to_token} token↔token`);
+    if (unproc.quote_to_quote) parts.push(`${unproc.quote_to_quote} quote↔quote`);
+    if (unproc.multi_leg) parts.push(`${unproc.multi_leg} multi-leg`);
+    if (unproc.unsupported_swap) parts.push(`${unproc.unsupported_swap} unsupported`);
+    detail += ` · ⚠️ ${unprocTotal} unprocessable (${parts.join(', ')})`;
+  }
+
+  const ca = state.cache;
+  let cacheInfo = '';
+  if (ca && ca.tx_from_cache > 0) {
+    cacheInfo = ` · 💾 ${ca.tx_from_cache} cached${ca.tx_new > 0 ? `, ${ca.tx_new} new` : ''}`;
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="font-weight:600;color:${barColor}">Coverage: ${pct}%</div>
+      <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${barColor};border-radius:2px"></div>
+      </div>
+    </div>
+    <div style="color:var(--text-dim);margin-top:4px">${detail}${cacheInfo}</div>`;
 }
 
 function renderDetail() {
@@ -431,7 +475,7 @@ function renderDetail() {
   document.getElementById('detail-content').innerHTML = `
     ${normBanner}
     <div class="detail-grid">
-      <div class="detail-item"><div class="detail-label">Token</div><div class="detail-value">${d.token.slice(0,20)}...</div></div>
+      <div class="detail-item"><div class="detail-label">Token</div><div class="detail-value">${d.token_meta ? escHtml(d.token_meta.symbol) + ' — ' + escHtml(d.token_meta.name) : d.token.slice(0,20) + '...'}</div></div>
       <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value">${d.status}</div></div>
       <div class="detail-item"><div class="detail-label">PnL${pnlDenom}</div><div class="detail-value" style="color:${displayPnlColor};font-weight:600">${displayPnlStr}</div></div>
       <div class="detail-item"><div class="detail-label">Cycles</div><div class="detail-value">${d.num_cycles}</div></div>
@@ -450,11 +494,6 @@ function renderLegs() {
   if (!d) return;
   const isCustom = state.mode === 'custom';
 
-  const QUOTE_SYMS = {
-    'So11111111111111111111111111111111111111112': 'SOL',
-    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
-    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 'USDT',
-  };
   const isMixedLegs = d.normalization?.mixed_quotes;
 
   document.getElementById('legs-body').innerHTML = d.legs.map((leg, i) => {
@@ -464,10 +503,10 @@ function renderLegs() {
       isCustom ? 'removable' : '',
       isRemoved ? 'removed' : '',
     ].join(' ');
-    // Show raw quote amount and mint for mixed positions
+    // Show raw quote amount and mint — use metadata symbol if available
     const rawQuoteMint = leg.raw_quote_mint || leg.quote_mint;
     const rawQuoteAmt = leg.raw_quote_amount != null ? leg.raw_quote_amount : leg.quote_amount;
-    const quoteSym = QUOTE_SYMS[rawQuoteMint] || (rawQuoteMint || '').slice(0,6);
+    const quoteSym = leg.quote_meta?.symbol || (rawQuoteMint || '').slice(0,6);
     const price = leg.amount > 0 ? (rawQuoteAmt / leg.amount).toPrecision(6) : '-';
     const priceLabel = isMixedLegs ? `${price} ${quoteSym}` : price;
     const check = isCustom ? (isRemoved ? '🗑️' : '') : '';
