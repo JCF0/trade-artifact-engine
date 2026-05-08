@@ -495,6 +495,11 @@ if (!USE_POSITION_FLOW) {
     // Build custom receipt
     console.log(`\n── Phase 5: Generate Custom Receipt ──`);
     selected = buildCustomReceipt(customPosition, verifiedReceipt.verification_hash);
+    // Display metadata (does not affect hash)
+    if (selectedPosition.token_meta?.symbol) {
+      selected.display_symbol = selectedPosition.token_meta.symbol;
+      selected.display_name = selectedPosition.token_meta.name;
+    }
     writeFileSync(resolve(dataDir, 'receipts/receipts.jsonl'), JSON.stringify(selected) + '\n');
 
     // Render
@@ -510,6 +515,11 @@ if (!USE_POSITION_FLOW) {
     // ═══════════════════════════════════════════════════════════════════════
     console.log(`\n── Phase 5: Generate Verified Position Receipt ──`);
     selected = buildPositionReceipt(selectedPosition);
+    // Display metadata (does not affect hash)
+    if (selectedPosition.token_meta?.symbol) {
+      selected.display_symbol = selectedPosition.token_meta.symbol;
+      selected.display_name = selectedPosition.token_meta.name;
+    }
     writeFileSync(resolve(dataDir, 'receipts/receipts.jsonl'), JSON.stringify(selected) + '\n');
     console.log(`  Generated 1 verified receipt`);
 

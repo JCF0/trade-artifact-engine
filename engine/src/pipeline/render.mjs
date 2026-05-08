@@ -19,7 +19,7 @@ export function renderReceipt(receipt, outputPath) {
   mkdirSync(dirname(outputPath), { recursive: true });
 
   const r = receipt;
-  const W = 800, H = 520;
+  const W = 800, H = 548;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
   const isProfit = r.realized_pnl >= 0;
@@ -33,11 +33,12 @@ export function renderReceipt(receipt, outputPath) {
   // Accent bar
   ctx.fillStyle = accent; ctx.fillRect(0, 0, W, 4);
 
-  // Title
+  // Title — use display symbol if available, fall back to truncated mint
   ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px monospace';
-  const tokenShort = r.token_mint.slice(0, 8);
-  const qSym = SYMS[r.quote_currency] || (r.quote_currency === 'MIXED' ? 'MIXED' : r.quote_currency?.slice(0, 8));
-  ctx.fillText(`${tokenShort} / ${qSym}`, 30, 45);
+  const tokenDisplay = r.display_symbol || r.token_mint.slice(0, 8);
+  const qSym = r.quote_currency === 'SOL (normalized)' ? 'SOL'
+    : (SYMS[r.quote_currency] || (r.quote_currency === 'MIXED' ? 'MIXED' : r.quote_currency?.slice(0, 8)));
+  ctx.fillText(`${tokenDisplay} / ${qSym}`, 30, 45);
 
   // PnL
   ctx.fillStyle = accent; ctx.font = 'bold 48px monospace';
@@ -51,6 +52,7 @@ export function renderReceipt(receipt, outputPath) {
     `Cost: ${r.total_cost_basis.toPrecision(6)} | Proceeds: ${r.total_exit_proceeds.toPrecision(6)}`,
     `Trades: ${r.num_buys}B / ${r.num_sells}S | Hold: ${(r.hold_time_seconds / 3600).toFixed(1)}h`,
     `Status: ${r.status}`,
+    `Token: ${r.token_mint}`,
     ``,
     `Receipt: ${r.receipt_id}`,
     `Hash: ${r.verification_hash.slice(0, 32)}...`,
