@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * mint-one.mjs — Single Receipt Mint Flow (v1.1)
+ * mint-one.mjs — Single Receipt Mint Flow (v2)
+ *
+ * Default: position-based flow with mixed-quote normalization.
+ * Legacy cycle-based flow preserved behind --legacy flag.
  *
  * Supports two flows:
- *   1. Legacy cycle-based (--pick) — v1 compatible, unchanged
- *   2. Position-based (--token/--from/--to/--position-id) — v1.1
- *      Optional: --custom for custom receipt with leg removal
+ *   1. Position-based (default) — normalized PnL, matches UI/API
+ *   2. Legacy cycle-based (--legacy) — v1 compatible, raw PnL
  *
  * Usage:
  *   node src/mint-one.mjs <wallet> --keypair <path> [options]
@@ -46,6 +48,8 @@ import { signClaim } from './pipeline/sign.mjs';
 import { uploadToArweave } from './pipeline/upload.mjs';
 import { mintOnChain } from './pipeline/mint.mjs';
 import { buildPositions, buildCustomPosition } from './position/position-builder.mjs';
+import { normalizePositions } from './pipeline/quote-normalizer.mjs';
+import { TokenMetadataCache, collectMintsFromPositions, enrichPositions } from './pipeline/token-metadata.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -66,20 +70,19 @@ function hasFlag(name) { return rawArgs.includes(name); }
 
 if (rawArgs.length === 0 || hasFlag('--help') || hasFlag('-h')) {
   console.log(`
-mint-one — Single Receipt Mint Flow (v1.1)
+mint-one — Single Receipt Mint Flow (v2)
 
 USAGE:
   node src/mint-one.mjs <wallet> --keypair <path> [options]
 
-CYCLE FLOW (v1 compatible):
-  --pick <N>                 Select receipt #N (1-indexed)
+SELECTION:
+  --pick <N>                 Select position #N (1-indexed)
+  --position-id <hash>       Select position by ID directly
 
-POSITION FLOW (v1.1):
-  --positions                Use position-based flow
+FILTERS:
   --token <mint>             Filter by token mint address
   --from <epoch>             Filter positions from this timestamp
   --to <epoch>               Filter positions up to this timestamp
-  --position-id <hash>       Select position by ID directly
 
 CUSTOM MODE:
   --custom                   Enable custom receipt (interactive leg removal)
@@ -91,34 +94,34 @@ COMMON OPTIONS:
   --max-txns <N>             Transaction fetch limit (default: 5000)
   --network <devnet|mainnet> Solana network (default: devnet)
   --dry-run                  Simulate mint transaction only
-  --list-only                List available receipts/positions and exit
+  --list-only                List available positions and exit
   --skip-upload              Skip Arweave upload (use dummy metadata URI)
 
-EXAMPLES:
-  # v1 cycle flow — list receipts
-  node src/mint-one.mjs <wallet> --keypair key.json --list-only
+LEGACY:
+  --legacy                   Use old cycle-based flow (v1 compatible)
 
-  # v1 cycle flow — pick receipt #2
+EXAMPLES:
+  # List positions (default flow)
+  node src/mint-one.mjs <wallet> --list-only
+
+  # Pick position #2 and mint
   node src/mint-one.mjs <wallet> --keypair key.json --pick 2
 
-  # v1.1 position flow — list positions
-  node src/mint-one.mjs <wallet> --keypair key.json --positions --list-only
-
-  # v1.1 position flow — filter by token, verified receipt
+  # Filter by token
   node src/mint-one.mjs <wallet> --keypair key.json --token JUPy...vCN
 
-  # v1.1 custom receipt — interactive leg removal
+  # Custom receipt — interactive leg removal
   node src/mint-one.mjs <wallet> --keypair key.json --token JUPy...vCN --custom
 
-  # v1.1 custom receipt — non-interactive
-  node src/mint-one.mjs <wallet> --keypair key.json --token JUPy...vCN --remove-legs tx1,tx2
+  # Legacy cycle flow
+  node src/mint-one.mjs <wallet> --keypair key.json --legacy --list-only
 `);
   process.exit(0);
 }
 
 // Parse args
 const valueFlagNames = new Set(['--keypair','--recipient','--pick','--max-txns','--network','--token','--from','--to','--position-id','--remove-legs']);
-const boolFlagNames = new Set(['--dry-run','--list-only','--skip-upload','--custom','--positions']);
+const boolFlagNames = new Set(['--dry-run','--list-only','--skip-upload','--custom','--positions','--legacy']);
 const positional = [];
 for (let i = 0; i < rawArgs.length; i++) {
   if (valueFlagNames.has(rawArgs[i])) { i++; continue; }
@@ -144,8 +147,8 @@ const POSITION_ID = getFlag('--position-id');
 const CUSTOM_MODE = hasFlag('--custom');
 const REMOVE_LEGS = getFlag('--remove-legs') ? getFlag('--remove-legs').split(',').map(s => s.trim()).filter(Boolean) : null;
 
-// Detect which flow to use
-const USE_POSITION_FLOW = hasFlag('--positions') || TOKEN_FILTER || FROM_TS !== null || TO_TS !== null || POSITION_ID || CUSTOM_MODE || REMOVE_LEGS;
+// Detect which flow to use — position is now default, --legacy for old cycle path
+const USE_POSITION_FLOW = !hasFlag('--legacy');
 
 if (!WALLET) { console.error('Error: wallet address required.'); process.exit(1); }
 if (!KEYPAIR_PATH && !LIST_ONLY) { console.error('Error: --keypair required (or use --list-only).'); process.exit(1); }
@@ -234,12 +237,12 @@ async function promptLine(question) {
 // HEADER
 // ═══════════════════════════════════════════════════════════════════════════
 console.log(`\n╔════════════════════════════════════════════════════════════╗`);
-console.log(`║  MINT-ONE — Single Receipt Flow ${USE_POSITION_FLOW ? '(v1.1 Position)' : '(v1 Cycle)   '}  ║`);
+console.log(`║  MINT-ONE — Single Receipt Flow ${USE_POSITION_FLOW ? '(v2 Position) ' : '(v1 Legacy)  '}  ║`);
 console.log(`╚════════════════════════════════════════════════════════════╝`);
 console.log(`Wallet:   ${WALLET}`);
 console.log(`Max txns: ${MAX_TXNS}`);
 console.log(`Network:  ${NETWORK}`);
-console.log(`Flow:     ${USE_POSITION_FLOW ? 'POSITION' : 'CYCLE (legacy)'}`);
+console.log(`Flow:     ${USE_POSITION_FLOW ? 'POSITION (default)' : 'CYCLE (--legacy)'}`);
 if (TOKEN_FILTER) console.log(`Token:    ${TOKEN_FILTER}`);
 if (FROM_TS) console.log(`From:     ${tsDisplay(FROM_TS)}`);
 if (TO_TS) console.log(`To:       ${tsDisplay(TO_TS)}`);
@@ -264,7 +267,7 @@ const { cycles, stats: cycleStats } = reconstructCycles(events);
 console.log(`  Cycles: ${cycleStats.total} total (${cycleStats.closed} closed, ${cycleStats.open} open, ${cycleStats.partial} partial)`);
 
 const closed = cycles.filter(c => c.status === 'closed');
-if (closed.length === 0) {
+if (closed.length === 0 && !USE_POSITION_FLOW) {
   console.log('\n⚠️  No closed trade cycles found in this transaction window.');
   console.log('   Try increasing --max-txns or using a different wallet.');
   process.exit(0);
@@ -346,47 +349,82 @@ if (!USE_POSITION_FLOW) {
     process.exit(0);
   }
 
+  // Normalize mixed-quote positions (same pipeline as API/UI)
+  console.log(`\n── Phase 4b: Normalize (mixed-quote conversion) ──`);
+  const normalized = await normalizePositions(positions);
+  const mixedCount = normalized.filter(p => p.normalization?.mixed_quotes).length;
+  console.log(`  Normalized ${mixedCount} mixed-quote position(s)`);
+
+  // Resolve token metadata (symbols, names)
+  const tokenCache = new TokenMetadataCache({ heliusApiKey: API_KEY, cacheDir: resolve(dataDir, 'cache') });
+  const allMints = collectMintsFromPositions(normalized);
+  await tokenCache.resolve(allMints);
+  enrichPositions(normalized, tokenCache);
+
   // List positions
   console.log(`\n── Available Positions ──\n`);
-  for (let i = 0; i < positions.length; i++) {
-    const p = positions[i];
-    const token = p.token.slice(0, 8);
-    const pnlSign = p.realized_pnl_pct >= 0 ? '+' : '';
+  for (let i = 0; i < normalized.length; i++) {
+    const p = normalized[i];
+    const token = p.token_meta?.symbol || p.token.slice(0, 8);
+    const isClosed = p.status === 'closed';
+    const mintable = isClosed ? 'CLOSED ✓ mintable' : 'OPEN ✗ not mintable';
+    const pnlPct = p.normalization?.mixed_quotes ? p.normalized_realized_pnl_pct : p.realized_pnl_pct;
+    const pnlSuffix = p.normalization?.mixed_quotes ? ' (normalized)' : '';
+    const pnlDisplay = p.pnl_display_type === 'unrealized_unavailable'
+      ? 'n/a (open)'
+      : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%${pnlSuffix}`;
     const durH = (p.duration_sec / 3600).toFixed(1);
-    console.log(`  [${i + 1}] ${p.position_id.slice(0, 16)}...`);
-    console.log(`      ${token} | ${p.num_cycles} cycle(s) | ${p.num_buys}B/${p.num_sells}S | PnL: ${pnlSign}${p.realized_pnl_pct.toFixed(2)}% | ${durH}h | ${p.status}`);
-    console.log(`      ${tsDisplay(p.start_time)} → ${tsDisplay(p.end_time)}`);
+    console.log(`  [${i + 1}] ${token} — ${mintable}`);
+    console.log(`      PnL: ${pnlDisplay} | ${p.num_buys}B/${p.num_sells}S | ${durH}h | ${p.num_cycles} cycle(s)`);
+    console.log(`      ${tsDisplay(p.start_time)} → ${p.end_time ? tsDisplay(p.end_time) : 'now'}`);
   }
 
   if (LIST_ONLY) {
-    console.log(`\n${positions.length} position(s) available.`);
-    console.log(`Use --position-id <hash> to select, or omit to auto-select.`);
+    const closedCount = normalized.filter(p => p.status === 'closed').length;
+    console.log(`\n${normalized.length} position(s) found. ${closedCount} closed (mintable).`);
+    console.log(`Use --pick <N> or --position-id <hash> to select.`);
     console.log(`Add --custom for custom receipt with leg removal.`);
     process.exit(0);
   }
 
   // Select position
   let selectedPosition;
-  if (POSITION_ID) {
-    selectedPosition = positions.find(p => p.position_id === POSITION_ID || p.position_id.startsWith(POSITION_ID));
+  if (PICK !== null) {
+    if (PICK < 1 || PICK > normalized.length) {
+      console.error(`\nError: --pick ${PICK} out of range (1–${normalized.length})`);
+      process.exit(1);
+    }
+    selectedPosition = normalized[PICK - 1];
+    const token = selectedPosition.token_meta?.symbol || selectedPosition.token.slice(0, 8);
+    console.log(`\n→ Selected: [${PICK}] ${token} (${selectedPosition.status})`);
+  } else if (POSITION_ID) {
+    selectedPosition = normalized.find(p => p.position_id === POSITION_ID || p.position_id.startsWith(POSITION_ID));
     if (!selectedPosition) {
       console.error(`\nError: no position found matching --position-id ${POSITION_ID}`);
       process.exit(1);
     }
     console.log(`\n→ Selected by ID: ${selectedPosition.position_id.slice(0, 24)}...`);
-  } else if (positions.length === 1) {
-    selectedPosition = positions[0];
+  } else if (normalized.length === 1) {
+    selectedPosition = normalized[0];
     console.log(`\n→ Auto-selected (only position): ${selectedPosition.position_id.slice(0, 24)}...`);
   } else {
     // Auto-select: prefer closed, then highest absolute PnL
-    const sorted = [...positions].sort((a, b) => {
+    const sorted = [...normalized].sort((a, b) => {
       if (a.status === 'closed' && b.status !== 'closed') return -1;
       if (b.status === 'closed' && a.status !== 'closed') return 1;
       return Math.abs(b.realized_pnl_pct) - Math.abs(a.realized_pnl_pct);
     });
     selectedPosition = sorted[0];
-    const idx = positions.indexOf(selectedPosition) + 1;
+    const idx = normalized.indexOf(selectedPosition) + 1;
     console.log(`\n→ Auto-selected: [${idx}] ${selectedPosition.position_id.slice(0, 24)}... (${selectedPosition.status})`);
+  }
+
+  // Reject open positions for minting
+  if (selectedPosition.pnl_display_type === 'unrealized_unavailable' || selectedPosition.status !== 'closed') {
+    const token = selectedPosition.token_meta?.symbol || selectedPosition.token.slice(0, 8);
+    console.error(`\n❌ Cannot mint receipt for OPEN position: ${token}`);
+    console.error(`   The position has no exit legs — close it first by selling the token.`);
+    process.exit(1);
   }
 
   // Show position legs
