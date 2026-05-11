@@ -1,16 +1,40 @@
 # Trade Artifact
 
-Cryptographically verifiable, soul-bound trade receipt NFTs on Solana.
+Cryptographically verifiable, non-transferable trade receipt NFTs on Solana.
 
 Turn your wallet's trade history into permanent, tamper-proof PnL receipts that anyone can independently verify — without trusting you, the issuer, or any third party.
 
+## Demo
+
+- Product demo: https://youtu.be/FV5FzwhXVco
+- Pitch video: https://youtu.be/Jh0lhiqJYlU
+
+Current status: local/devnet prototype. The UI/API and CLI mint flows are demonstrated in the videos.
+
 ## Quick Start
 
+```bash
+cd engine
+npm install
+
+# See available closed trades
+node src/mint-one.mjs <wallet> --keypair <your-keypair.json> --list-only
+
+# Mint one selected receipt to Solana devnet
+node src/mint-one.mjs <wallet> --keypair <your-keypair.json> --pick <N> --network devnet
 ```
-node src/run-pipeline.mjs <wallet> 3000
-node src/mint/mint-submitter.mjs <keypair> data/claims/claims.jsonl --network devnet
-node src/mint/verify-mints.mjs data/mints/mint_results.jsonl --network devnet
+
+## Local UI / API
+
+```bash
+cd engine
+node src/api/server.mjs --port 3000
 ```
+
+Open:
+http://localhost:3000/ui/
+
+The UI supports wallet scanning, position browsing, closed/open position status, receipt generation, and verified/custom receipt views.
 
 ## What It Does
 
@@ -65,17 +89,18 @@ trade-artifact/
 
 ```bash
 # Clone
-git clone https://github.com/YourRepo/trade-artifact.git
-cd trade-artifact/engine
+git clone https://github.com/JCF0/trade-artifact-engine.git
+cd trade-artifact-engine/engine
 
 # Install dependencies
 npm install
 
 # Set Helius API key
-# Create/edit %USERPROFILE%\.openclaw\.env (or export directly)
+
+# Windows: create/edit %USERPROFILE%\.openclaw\.env
 echo HELIUS_API_KEY=your_key_here >> %USERPROFILE%\.openclaw\.env
 
-# Or export directly (Linux/macOS)
+# Linux/macOS: export directly
 export HELIUS_API_KEY=your_key_here
 ```
 
@@ -128,6 +153,7 @@ A real end-to-end run from mainnet trades to a devnet NFT:
 **Command:**
 ```bash
 node src/mint-one.mjs <wallet> --keypair <keypair.json> --pick 1
+```
 
 **Detected trade:**
 - Pair: JUP / SOL
@@ -159,27 +185,30 @@ node src/run-pipeline.mjs <wallet_address> [maxTxns]
 node src/run-pipeline.mjs <wallet_address> [maxTxns] --keypair <path_to_keypair.json> [--recipient <pubkey>]
 ```
 
-### End-to-End Example
+### Manual Batch Flow
+
+For most users, `mint-one` is recommended. The lower-level batch flow is useful for debugging or minting multiple receipts.
 
 ```bash
-# 1. Run pipeline for a wallet (up to 5000 transactions)
-node src/run-pipeline.mjs CsZLf8nuA2GL7sLX31DjFdMtF1W9hcwKakpYPxxaa4pX 5000
+# 1. Run pipeline for a wallet, capped at 5000 transactions
+node src/run-pipeline.mjs <wallet> 5000
 
 # Expected output:
-#   Phase 1: Ingest     → 1740 transactions
-#   Phase 2: Normalize  → 165 swap events
-#   Phase 3: Reconstruct → 49 cycles (10 closed, 19 open, 20 partial)
-#   Phase 4: PnL        → 10 closed cycles with PnL
-#   Phase 5: Receipts   → 10 receipts generated
-#   Phase 6: Render     → 10 PNG cards
+#   Phase 1: Ingest     → transactions fetched
+#   Phase 2: Normalize  → swap events extracted
+#   Phase 3: Reconstruct → open/closed/partial cycles
+#   Phase 4: PnL        → closed cycles with PnL
+#   Phase 5: Receipts   → receipts generated
+#   Phase 6: Render     → PNG cards rendered
 
 # 2. Inspect receipts and verify hashes
 node src/inspect-receipts.mjs
 
 # 3. Sign claims (requires the wallet's keypair)
+# The keypair must match the wallet whose trades are being receipted.
 node src/claims/claim-signer.mjs ./my-keypair.json
 
-# 4. Upload to Arweave (devnet = free)
+# 4. Upload to Arweave/Irys (devnet = free)
 node src/arweave/arweave-upload.mjs ./my-keypair.json --network devnet
 
 # 5. Mint on-chain NFTs
@@ -254,7 +283,7 @@ data/
 ### NFT Properties
 
 - **Token-2022** with extensions: NonTransferable + MetadataPointer + TokenMetadata
-- **Soul-bound:** Cannot be transferred after minting
+- **Non-transferable / soul-bound:** Cannot be transferred after minting
 - **Supply:** 1, Decimals: 0
 - **Mint authority:** Removed after minting
 - **Cost:** ~0.0065 SOL per mint
@@ -294,7 +323,7 @@ See [docs/verifier_flow.md](engine/docs/verifier_flow.md) for detailed steps.
 
 ## Known Limitations
 
-- **Mixed-quote trades:** When a cycle's buys and sells use different quote currencies (e.g. buy with SOL, sell for USDC), PnL sums raw amounts across currencies. Flagged as `verified_mixed_quote`. V2 will add USD normalization via historical price oracles.
+- **Mixed-quote trades:** When buys and sells use different quote currencies, the prototype normalizes quotes before displaying PnL. These receipts are marked with normalization metadata and should be treated as estimated when historical trade-time pricing is unavailable.
 - **Transaction fees:** SOL base fees and priority fees are not deducted from cost basis. Negligible for typical trades (~0.000005 SOL).
 - **Ambiguous swaps:** Multi-hop Jupiter routes with >1 sent or received token transfer are skipped during normalization (~1–2% of swap transactions).
 - **Partial history:** Sells without matching buys in the observation window (pre-existing positions) are excluded from receipts.
