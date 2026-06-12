@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import { createCanvas } from 'canvas';
 import { buildPositionLedger, serializeLedger } from './ledger/position-ledger.mjs';
+import { generateReceiptCandidates } from './ledger/receipt-candidates.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -413,6 +414,30 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   if (comparison.mismatches.length === 0) {
     console.log(`  \u2705 All closed segments agree with v1 cycles`);
   }
+}
+
+// ===== LEDGER DEBUG: Receipt Candidates (opt-in via --ledger-debug) =====
+if (LEDGER_DEBUG && ledgerDebugResult) {
+  const candidates = generateReceiptCandidates(ledgerDebugResult, WALLET, {
+    snapshotAt: Math.floor(Date.now() / 1000),
+  });
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-candidates.json'),
+    JSON.stringify(candidates, null, 2)
+  );
+  const byType = { closed_position: 0, realized_partial: 0, open_snapshot: 0 };
+  let eligibleVerified = 0, eligibleClosed = 0;
+  for (const c of candidates) {
+    byType[c.candidate_type]++;
+    if (c.eligible_for_verified_receipt) eligibleVerified++;
+    if (c.eligible_for_closed_position_receipt) eligibleClosed++;
+  }
+  console.log(`\n--- Ledger Debug: Receipt Candidates ---`);
+  console.log(`  closed_position:   ${byType.closed_position}`);
+  console.log(`  realized_partial:  ${byType.realized_partial}`);
+  console.log(`  open_snapshot:     ${byType.open_snapshot}`);
+  console.log(`  Eligible verified: ${eligibleVerified}/${candidates.length}`);
+  console.log(`  Eligible closed:   ${eligibleClosed}/${candidates.length}`);
 }
 
 // ===== PHASE 4: PNL =====
