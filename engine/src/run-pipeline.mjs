@@ -17,6 +17,7 @@ import { createHash } from 'crypto';
 import { createCanvas } from 'canvas';
 import { buildPositionLedger, serializeLedger } from './ledger/position-ledger.mjs';
 import { generateReceiptCandidates } from './ledger/receipt-candidates.mjs';
+import { promoteReceiptCandidates } from './ledger/receipt-promotion.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -438,6 +439,24 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  open_snapshot:     ${byType.open_snapshot}`);
   console.log(`  Eligible verified: ${eligibleVerified}/${candidates.length}`);
   console.log(`  Eligible closed:   ${eligibleClosed}/${candidates.length}`);
+
+  // ── Promote candidates to v1.2 receipts ──
+  const v12Receipts = promoteReceiptCandidates(candidates, {
+    promotedAt: Math.floor(Date.now() / 1000),
+  });
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-receipts-v12.json'),
+    JSON.stringify(v12Receipts, null, 2)
+  );
+  const byStatus = {};
+  for (const r of v12Receipts) {
+    byStatus[r.verification_status] = (byStatus[r.verification_status] || 0) + 1;
+  }
+  console.log(`\n--- Ledger Debug: v1.2 Receipts ---`);
+  console.log(`  Total:              ${v12Receipts.length}`);
+  for (const [status, count] of Object.entries(byStatus)) {
+    console.log(`  ${status}: ${count}`);
+  }
 }
 
 // ===== PHASE 4: PNL =====
