@@ -4,16 +4,18 @@
  * Runs: ingest → normalize → reconstruct → pnl → receipts → render [→ claim]
  * for a given wallet address.
  * 
- * Usage: node src/run-pipeline.mjs <wallet> [maxTxns] [--keypair <path>] [--recipient <pubkey>]
+ * Usage: node src/run-pipeline.mjs <wallet> [maxTxns] [--keypair <path>] [--recipient <pubkey>] [--ledger-debug]
  *
  * If --keypair is provided, Phase 7 (claim signing) runs after render.
  * If --recipient is omitted, claims are self-addressed (trader = recipient).
+ * If --ledger-debug is provided, runs the position ledger after Phase 2 and writes debug output.
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import { createCanvas } from 'canvas';
+import { buildPositionLedger, serializeLedger } from './ledger/position-ledger.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -31,18 +33,21 @@ function getFlag(name) {
 }
 const KEYPAIR_PATH = getFlag('--keypair');
 const RECIPIENT_OVERRIDE = getFlag('--recipient');
+const LEDGER_DEBUG = rawArgs.includes('--ledger-debug');
 
 // Positional args (skip flags and their values)
-const flagNames = new Set(['--keypair', '--recipient']);
+const valueFlagNames = new Set(['--keypair', '--recipient']);
+const boolFlagNames = new Set(['--ledger-debug']);
 const positional = [];
 for (let i = 0; i < rawArgs.length; i++) {
-  if (flagNames.has(rawArgs[i])) { i++; continue; } // skip flag + value
+  if (valueFlagNames.has(rawArgs[i])) { i++; continue; } // skip flag + value
+  if (boolFlagNames.has(rawArgs[i])) { continue; } // skip boolean flag
   positional.push(rawArgs[i]);
 }
 
 const WALLET = positional[0];
 if (!WALLET) {
-  console.error('Usage: node src/run-pipeline.mjs <wallet> [maxTxns] [--keypair <path>] [--recipient <pubkey>]');
+  console.error('Usage: node src/run-pipeline.mjs <wallet> [maxTxns] [--keypair <path>] [--recipient <pubkey>] [--ledger-debug]');
   process.exit(1);
 }
 const MAX_TXNS = parseInt(positional[1] || '10000', 10);
@@ -53,6 +58,7 @@ console.log(`Wallet:  ${WALLET}`);
 console.log(`Max txn: ${MAX_TXNS}`);
 if (KEYPAIR_PATH) console.log(`Keypair: ${KEYPAIR_PATH}`);
 if (RECIPIENT_OVERRIDE) console.log(`Recipient: ${RECIPIENT_OVERRIDE}`);
+if (LEDGER_DEBUG) console.log(`Ledger:  debug mode`);
 console.log(`${'='.repeat(60)}`);
 
 // ---------------------------------------------------------------------------
@@ -198,6 +204,20 @@ const eventsPath = resolve(ROOT, 'data/normalized/events.jsonl');
 writeFileSync(eventsPath, events.map(e => JSON.stringify(e)).join('\n') + '\n');
 console.log(`Normalized: ${events.length} swap events (skipped: ${normSkipped.notSwap} non-swap, ${normSkipped.errored} errored, ${normSkipped.ambiguous} ambiguous)`);
 
+// ===== LEDGER DEBUG: Build (opt-in via --ledger-debug) =====
+let ledgerDebugResult = null;
+if (LEDGER_DEBUG) {
+  console.log(`\n--- Ledger Debug: Build ---`);
+  mkdirSync(resolve(ROOT, 'data/debug'), { recursive: true });
+  ledgerDebugResult = buildPositionLedger(events);
+  const serialized = serializeLedger(ledgerDebugResult);
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-output.json'),
+    JSON.stringify(serialized, null, 2)
+  );
+  console.log(`  Ledger: ${ledgerDebugResult.processedCount} processed, ${ledgerDebugResult.skippedCount} skipped, ${ledgerDebugResult.closedSegments.length} closed segments`);
+}
+
 // ===== PHASE 3: RECONSTRUCT =====
 console.log(`\n--- Phase 3: Reconstruct ---`);
 let cycleCounter = 0;
@@ -276,6 +296,124 @@ const closed = cyclesOutput.filter(c => c.status === 'closed');
 const open = cyclesOutput.filter(c => c.status === 'open');
 const partial = cyclesOutput.filter(c => c.status === 'partial_history');
 console.log(`Cycles: ${cyclesOutput.length} total (${closed.length} closed, ${open.length} open, ${partial.length} partial_history)`);
+
+// ===== LEDGER DEBUG: Compare (opt-in via --ledger-debug) =====
+if (LEDGER_DEBUG && ledgerDebugResult) {
+  console.log(`\n--- Ledger Debug: Comparison ---`);
+
+  // Build comparison — diagnostic only, not proof logic.
+  // Matching by token_mint may be imperfect for repeated close/reopen segments.
+  const ledgerClosed = ledgerDebugResult.closedSegments;
+  const v1Closed = cyclesOutput.filter(c => c.status === 'closed');
+
+  // Group v1 closed cycles by token_mint (first occurrence per mint for simple comparison)
+  const v1ByMint = new Map();
+  for (const c of v1Closed) {
+    if (!v1ByMint.has(c.token_mint)) v1ByMint.set(c.token_mint, []);
+    v1ByMint.get(c.token_mint).push(c);
+  }
+
+  const details = [];
+  const mismatches = [];
+
+  for (const seg of ledgerClosed) {
+    const mint = seg.token_mint;
+    const v1Matches = v1ByMint.get(mint) || [];
+
+    if (v1Matches.length === 0) {
+      const entry = {
+        token_mint: mint,
+        ledger_status: seg.status,
+        v1_status: null,
+        ledger_realized_pnl_quote: seg.realized_pnl_quote,
+        v1_total_bought: null,
+        v1_total_sold: null,
+        pnl_direction_match: null,
+        status_match: false,
+      };
+      details.push(entry);
+      mismatches.push({ token_mint: mint, reason: 'closed in ledger but no matching v1 closed cycle' });
+      continue;
+    }
+
+    // Compare against first v1 closed cycle for this mint (simple Option A matching)
+    const v1 = v1Matches[0];
+    const v1Proceeds = v1.exit_txs.reduce((sum, tx) => sum + tx.quote_amount, 0);
+    const v1Cost = v1.entry_txs.reduce((sum, tx) => sum + tx.quote_amount, 0);
+    const v1Pnl = v1Proceeds - v1Cost;
+    const directionMatch = Math.sign(seg.realized_pnl_quote) === Math.sign(v1Pnl)
+      || (Math.abs(seg.realized_pnl_quote) < 1e-8 && Math.abs(v1Pnl) < 1e-8);
+
+    const entry = {
+      token_mint: mint,
+      ledger_status: seg.status,
+      v1_status: v1.status,
+      ledger_realized_pnl_quote: seg.realized_pnl_quote,
+      v1_pnl_estimate: parseFloat(v1Pnl.toPrecision(12)),
+      v1_total_bought: v1.total_bought,
+      v1_total_sold: v1.total_sold,
+      pnl_direction_match: directionMatch,
+      status_match: seg.status === v1.status,
+    };
+    details.push(entry);
+
+    if (!directionMatch) {
+      mismatches.push({ token_mint: mint, reason: `PnL direction mismatch: ledger=${seg.realized_pnl_quote}, v1=${v1Pnl}` });
+    }
+    if (seg.status !== v1.status) {
+      mismatches.push({ token_mint: mint, reason: `status mismatch: ledger=${seg.status}, v1=${v1.status}` });
+    }
+  }
+
+  // Check v1 closed cycles with no ledger match
+  const ledgerClosedMints = new Set(ledgerClosed.map(s => s.token_mint));
+  for (const [mint, cycles] of v1ByMint) {
+    if (!ledgerClosedMints.has(mint)) {
+      mismatches.push({ token_mint: mint, reason: 'closed in v1 but no matching ledger closed segment' });
+      details.push({
+        token_mint: mint,
+        ledger_status: null,
+        v1_status: cycles[0].status,
+        ledger_realized_pnl_quote: null,
+        v1_total_bought: cycles[0].total_bought,
+        v1_total_sold: cycles[0].total_sold,
+        pnl_direction_match: null,
+        status_match: false,
+      });
+    }
+  }
+
+  const matched = ledgerClosed.length - mismatches.filter(m =>
+    ledgerClosed.some(s => s.token_mint === m.token_mint)
+  ).length;
+
+  const comparison = {
+    generated_at: new Date().toISOString(),
+    ledger_closed: ledgerClosed.length,
+    v1_closed: v1Closed.length,
+    ledger_open: ledgerDebugResult.positionsByMint.size,
+    v1_open: cyclesOutput.filter(c => c.status === 'open').length,
+    matched: Math.max(0, matched),
+    mismatches,
+    details,
+  };
+
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-comparison.json'),
+    JSON.stringify(comparison, null, 2)
+  );
+
+  console.log(`  Closed segments (ledger): ${comparison.ledger_closed}`);
+  console.log(`  Closed cycles (v1):       ${comparison.v1_closed}`);
+  console.log(`  Matched:                  ${comparison.matched}`);
+  console.log(`  Mismatches:               ${comparison.mismatches.length}`);
+  for (const m of comparison.mismatches) {
+    console.log(`  \u26a0\ufe0f  ${m.token_mint.slice(0, 8)}\u2026 \u2014 ${m.reason}`);
+  }
+  if (comparison.mismatches.length === 0) {
+    console.log(`  \u2705 All closed segments agree with v1 cycles`);
+  }
+}
 
 // ===== PHASE 4: PNL =====
 console.log(`\n--- Phase 4: PnL ---`);
