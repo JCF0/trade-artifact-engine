@@ -19,6 +19,7 @@ import { buildPositionLedger, serializeLedger } from './ledger/position-ledger.m
 import { generateReceiptCandidates } from './ledger/receipt-candidates.mjs';
 import { promoteReceiptCandidates } from './ledger/receipt-promotion.mjs';
 import { verifyReceiptBatch } from './ledger/receipt-verifier.mjs';
+import { buildProofPipelineSummary } from './ledger/proof-pipeline-summary.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -301,6 +302,7 @@ const partial = cyclesOutput.filter(c => c.status === 'partial_history');
 console.log(`Cycles: ${cyclesOutput.length} total (${closed.length} closed, ${open.length} open, ${partial.length} partial_history)`);
 
 // ===== LEDGER DEBUG: Compare (opt-in via --ledger-debug) =====
+let ledgerComparison = null;
 if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`\n--- Ledger Debug: Comparison ---`);
 
@@ -390,7 +392,7 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
     ledgerClosed.some(s => s.token_mint === m.token_mint)
   ).length;
 
-  const comparison = {
+  ledgerComparison = {
     generated_at: new Date().toISOString(),
     ledger_closed: ledgerClosed.length,
     v1_closed: v1Closed.length,
@@ -403,17 +405,17 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
 
   writeFileSync(
     resolve(ROOT, 'data/debug/ledger-comparison.json'),
-    JSON.stringify(comparison, null, 2)
+    JSON.stringify(ledgerComparison, null, 2)
   );
 
-  console.log(`  Closed segments (ledger): ${comparison.ledger_closed}`);
-  console.log(`  Closed cycles (v1):       ${comparison.v1_closed}`);
-  console.log(`  Matched:                  ${comparison.matched}`);
-  console.log(`  Mismatches:               ${comparison.mismatches.length}`);
-  for (const m of comparison.mismatches) {
+  console.log(`  Closed segments (ledger): ${ledgerComparison.ledger_closed}`);
+  console.log(`  Closed cycles (v1):       ${ledgerComparison.v1_closed}`);
+  console.log(`  Matched:                  ${ledgerComparison.matched}`);
+  console.log(`  Mismatches:               ${ledgerComparison.mismatches.length}`);
+  for (const m of ledgerComparison.mismatches) {
     console.log(`  \u26a0\ufe0f  ${m.token_mint.slice(0, 8)}\u2026 \u2014 ${m.reason}`);
   }
-  if (comparison.mismatches.length === 0) {
+  if (ledgerComparison.mismatches.length === 0) {
     console.log(`  \u2705 All closed segments agree with v1 cycles`);
   }
 }
@@ -475,6 +477,50 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   if (verifyReport.failed === 0) {
     console.log(`  \u2705 All v1.2 receipts pass verification`);
   }
+
+  // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
+  const summary = buildProofPipelineSummary({
+    wallet: WALLET,
+    chain: 'solana',
+    generatedAt: new Date().toISOString(),
+    ledger: {
+      processedCount: ledgerDebugResult.processedCount,
+      skippedCount: ledgerDebugResult.skippedCount,
+      closedSegments: ledgerDebugResult.closedSegments.length,
+      openPositions: ledgerDebugResult.positionsByMint.size,
+    },
+    comparison: ledgerComparison,
+    candidates,
+    receipts: v12Receipts,
+    verifyReport,
+  });
+  writeFileSync(
+    resolve(ROOT, 'data/debug/v12-proof-pipeline-summary.json'),
+    JSON.stringify(summary, null, 2)
+  );
+  const stagesComplete = [summary.stages.ledger, summary.stages.comparison, summary.stages.candidates, summary.stages.receipts, summary.stages.verification].filter(Boolean).length;
+  const checksTotal = summary.consistency.checks.length;
+  const checksPassed = summary.consistency.checks.filter(c => c.pass).length;
+  const statusCounts = Object.entries(summary.stages.receipts.by_status).map(([s, n]) => `${n} ${s}`).join(', ');
+  console.log(`\n--- Ledger Debug: v1.2 Proof Pipeline Summary ---`);
+  console.log(`  Stages:    ${stagesComplete}/5 complete`);
+  console.log(`  Receipts:  ${summary.stages.receipts.total} (${statusCounts})`);
+  console.log(`  Verify:    ${summary.stages.verification.passed}/${summary.stages.verification.total} passed`);
+  console.log(`  Checks:    ${checksPassed}/${checksTotal} passed`);
+  if (summary.consistency.warnings.length > 0) {
+    for (const w of summary.consistency.warnings) {
+      console.log(`  \u26a0\ufe0f  ${w}`);
+    }
+  }
+  for (const c of summary.consistency.checks) {
+    if (!c.pass) {
+      const detail = c.expected !== undefined ? `: expected ${c.expected}, got ${c.actual}` : '';
+      const icon = c.severity === 'warn' ? '\u26a0\ufe0f' : '\u274c';
+      console.log(`  ${icon} ${c.check}${detail}`);
+    }
+  }
+  console.log(`  Result:    ${summary.result === 'PASS' ? '\u2705' : summary.result === 'WARN' ? '\u26a0\ufe0f' : '\u274c'} ${summary.result}`);
+  console.log(`  Summary:   data/debug/v12-proof-pipeline-summary.json`);
 }
 
 // ===== PHASE 4: PNL =====
