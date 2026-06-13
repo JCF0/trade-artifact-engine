@@ -18,6 +18,7 @@ import { createCanvas } from 'canvas';
 import { buildPositionLedger, serializeLedger } from './ledger/position-ledger.mjs';
 import { generateReceiptCandidates } from './ledger/receipt-candidates.mjs';
 import { promoteReceiptCandidates } from './ledger/receipt-promotion.mjs';
+import { verifyReceiptBatch } from './ledger/receipt-verifier.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -456,6 +457,23 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  Total:              ${v12Receipts.length}`);
   for (const [status, count] of Object.entries(byStatus)) {
     console.log(`  ${status}: ${count}`);
+  }
+
+  // ===== LEDGER DEBUG: Verify v1.2 Receipts =====
+  const verifyReport = verifyReceiptBatch(v12Receipts);
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-verify-v12.json'),
+    JSON.stringify(verifyReport, null, 2)
+  );
+  console.log(`\n--- Ledger Debug: Verify v1.2 Receipts ---`);
+  console.log(`  Total:   ${verifyReport.total}`);
+  console.log(`  Passed:  ${verifyReport.passed}`);
+  console.log(`  Failed:  ${verifyReport.failed}`);
+  for (const f of verifyReport.failures) {
+    console.log(`  \u274c ${f.receipt_id}: ${f.rule_violations.map(v => v.rule).join(', ')}`);
+  }
+  if (verifyReport.failed === 0) {
+    console.log(`  \u2705 All v1.2 receipts pass verification`);
   }
 }
 
