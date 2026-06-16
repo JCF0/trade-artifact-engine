@@ -23,6 +23,7 @@ import { buildProofPipelineSummary } from './ledger/proof-pipeline-summary.mjs';
 import { buildValuationContext, validateValuationContext } from './ledger/valuation.mjs';
 import { buildReceiptPreviews } from './ledger/receipt-preview.mjs';
 import { renderPreviewsHtml } from './ledger/receipt-preview-html.mjs';
+import { buildReceiptMetadataBatch } from './ledger/receipt-metadata.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -551,6 +552,25 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
     previewHtml
   );
   console.log(`  HTML:     data/debug/ledger-previews-v12.html (${(previewHtml.length / 1024).toFixed(1)} KB)`);
+
+  // ===== LEDGER DEBUG: Metadata Scaffold =====
+  console.log(`\n--- Ledger Debug: Metadata Scaffold ---`);
+  const metadataContexts = valuationDebug.contexts || [];
+  const metadataBatch = buildReceiptMetadataBatch(v12Receipts, previews, metadataContexts);
+  const metadataDebug = {
+    generated_at: new Date().toISOString(),
+    scaffold_version: '1.0.0',
+    receipt_count: metadataBatch.length,
+    metadata: metadataBatch,
+  };
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-metadata-v12.json'),
+    JSON.stringify(metadataDebug, null, 2)
+  );
+  console.log(`  Metadata: ${metadataBatch.length} scaffolds`);
+  for (const m of metadataBatch) {
+    console.log(`  ${m._scaffold.status}: ${m.name}`);
+  }
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
