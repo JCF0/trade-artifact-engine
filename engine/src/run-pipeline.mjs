@@ -31,6 +31,7 @@ import { buildDryRunBatch } from './ledger/upload-dry-run.mjs';
 import { checkUploadGates, shouldSkipUpload, uploadSingleReceipt } from './ledger/live-upload.mjs';
 import { selectPackages, loadExistingResults, mergeResults } from './ledger/irys-uploader.mjs';
 import { resolveMintPlanBatch } from './ledger/mint-ready-resolver.mjs';
+import { checkMintGates, validatePlanForMint, shouldSkipMint, executeSingleMint } from './ledger/devnet-mint-adapter.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -53,10 +54,14 @@ const UPLOAD_LIVE = rawArgs.includes('--upload-live');
 const UPLOAD_CONFIRM = rawArgs.includes('--upload-confirm');
 const UPLOAD_MAX = getFlag('--upload-max') ? parseInt(getFlag('--upload-max'), 10) : null;
 const UPLOAD_RECEIPT_ID = getFlag('--upload-receipt-id');
+const MINT_LIVE = rawArgs.includes('--mint-live');
+const MINT_CONFIRM = rawArgs.includes('--mint-confirm');
+const MINT_RECEIPT_ID = getFlag('--mint-receipt-id');
+const PROOF_WALLET = getFlag('--proof-wallet');
 
 // Positional args (skip flags and their values)
-const valueFlagNames = new Set(['--keypair', '--recipient', '--upload-max', '--upload-receipt-id']);
-const boolFlagNames = new Set(['--ledger-debug', '--upload-live', '--upload-confirm']);
+const valueFlagNames = new Set(['--keypair', '--recipient', '--upload-max', '--upload-receipt-id', '--mint-receipt-id', '--proof-wallet']);
+const boolFlagNames = new Set(['--ledger-debug', '--upload-live', '--upload-confirm', '--mint-live', '--mint-confirm']);
 const positional = [];
 for (let i = 0; i < rawArgs.length; i++) {
   if (valueFlagNames.has(rawArgs[i])) { i++; continue; } // skip flag + value
@@ -837,6 +842,93 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  URI usable:      ${mintReadySummary.upload_uri_usable_count}`);
   console.log(`  Mint ready:      ${mintReadySummary.mint_ready_count}`);
   console.log(`  Mint blocked:    ${mintReadySummary.mint_blocked_count}`);
+
+  // ===== LEDGER DEBUG: Devnet Mint =====
+  if (MINT_LIVE) {
+    console.log(`\n--- Ledger Debug: Devnet Mint ---`);
+    const mintGateOpts = {
+      ledgerDebug: LEDGER_DEBUG,
+      mintLive: MINT_LIVE,
+      mintConfirm: MINT_CONFIRM,
+      mintReceiptId: MINT_RECEIPT_ID,
+      proofWallet: PROOF_WALLET,
+      mintEnabled: process.env.MINT_ENABLED,
+      mintAuthorityKeypairPath: process.env.MINT_AUTHORITY_KEYPAIR_PATH,
+      mintAuthorityKeypairFileExists: process.env.MINT_AUTHORITY_KEYPAIR_PATH
+        ? existsSync(resolve(process.env.MINT_AUTHORITY_KEYPAIR_PATH)) : false,
+      network: 'devnet',
+    };
+    const mintGateResult = checkMintGates(mintGateOpts);
+    if (!mintGateResult.allowed) {
+      console.log(`  Mint BLOCKED:`);
+      for (const b of mintGateResult.blockers) console.log(`    - ${b}`);
+    } else {
+      console.log(`  All mint gates passed`);
+      const targetPlan = mintReadyPlans.find(p => p.receipt_id === MINT_RECEIPT_ID);
+      const planCheck = validatePlanForMint(targetPlan);
+      if (!planCheck.valid) {
+        console.log(`  Plan not ready for ${MINT_RECEIPT_ID}:`);
+        for (const b of planCheck.blockers) console.log(`    - ${b}`);
+      } else {
+        const mintResultsPath = resolve(ROOT, 'data/debug/ledger-mint-results-v12.json');
+        const existingMintMap = loadExistingResults(mintResultsPath);
+        const { skip, reason: skipReason } = shouldSkipMint(existingMintMap.get(MINT_RECEIPT_ID));
+        if (skip) {
+          console.log(`  SKIP ${MINT_RECEIPT_ID}: ${skipReason}`);
+        } else {
+          console.log(`  Minting ${MINT_RECEIPT_ID}...`);
+          const { createSolanaMintClient } = await import('./ledger/devnet-mint-adapter.mjs');
+          let mintClient;
+          try {
+            mintClient = await createSolanaMintClient({
+              keypairPath: process.env.MINT_AUTHORITY_KEYPAIR_PATH,
+              devnet: true,
+            });
+            console.log(`  Mint authority pubkey: ${mintClient.authorityPubkey}`);
+          } catch (e) {
+            console.error(`  Mint client init failed: ${e.message}`);
+            mintClient = null;
+          }
+          if (mintClient) {
+            mkdirSync(resolve(ROOT, 'data/debug/mint-results-v12'), { recursive: true });
+            const mintResult = await executeSingleMint(targetPlan, {
+              proofWallet: PROOF_WALLET,
+              mintAuthorityPubkey: mintClient.authorityPubkey,
+              network: 'devnet',
+            }, mintClient);
+            if (mintResult.mint_status === 'minted') {
+              let localOk = false;
+              try {
+                const safeName = MINT_RECEIPT_ID.replace(/[^A-Za-z0-9_-]/g, '_');
+                writeFileSync(
+                  resolve(ROOT, `data/debug/mint-results-v12/${safeName}.mint-result.json`),
+                  JSON.stringify(mintResult, null, 2)
+                );
+                localOk = true;
+              } catch (e) {
+                console.error(`  Local write failed: ${e.message}`);
+                mintResult.mint_status = 'minted_but_local_write_failed';
+              }
+              console.log(`  ${MINT_RECEIPT_ID}: ${mintResult.mint_status}`);
+              console.log(`    Mint:    ${mintResult.mint_address}`);
+              console.log(`    Token:   ${mintResult.token_account}`);
+              console.log(`    Tx:      ${mintResult.transaction_signature}`);
+            } else {
+              console.log(`  ${MINT_RECEIPT_ID}: ${mintResult.mint_status} - ${mintResult.error_message}`);
+            }
+            const mergedMint = mergeResults(existingMintMap, [mintResult]);
+            writeFileSync(mintResultsPath, JSON.stringify({
+              generated_at: new Date().toISOString(),
+              mint_version: '1.0.0',
+              network: 'devnet',
+              total_results: mergedMint.length,
+              results: mergedMint,
+            }, null, 2));
+          }
+        }
+      }
+    }
+  }
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
