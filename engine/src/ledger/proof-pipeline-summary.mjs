@@ -25,6 +25,7 @@ const ARTIFACT_PATHS = [
   'data/debug/ledger-candidates.json',
   'data/debug/ledger-receipts-v12.json',
   'data/debug/ledger-verify-v12.json',
+  'data/debug/ledger-valuations-v12.json',
   'data/debug/v12-proof-pipeline-summary.json',
 ];
 
@@ -149,7 +150,21 @@ function runConsistencyChecks(inputs) {
     });
   }
 
-  // ── 8. receipt_id_coverage: B2→B3 chain ──
+  // ── 8. valuation_all_valid ──
+  if (inputs.valuation) {
+    const expected = 0;
+    const actual = inputs.valuation.summary.invalid_count;
+    checks.push({
+      check: 'valuation_all_valid',
+      expected,
+      actual,
+      pass: actual === 0,
+    });
+  } else {
+    warnings.push('valuation data missing — skipped valuation_all_valid');
+  }
+
+  // ── 9. receipt_id_coverage: B2→B3 chain ──
   {
     const verifiedIds = new Set(verifyReport.results.map(r => r.receipt_id));
     let pass = true;
@@ -258,6 +273,13 @@ function buildStages(inputs) {
       failed: verifyReport.failed,
       artifact: ARTIFACT_PATHS[4],
     },
+    valuation: inputs.valuation ? {
+      total: inputs.valuation.receipt_count,
+      all_valid: inputs.valuation.all_valid,
+      usd_stable_count: inputs.valuation.summary.usd_stable_count,
+      invalid_count: inputs.valuation.summary.invalid_count,
+      artifact: ARTIFACT_PATHS[5],
+    } : null,
   };
 
   return stages;

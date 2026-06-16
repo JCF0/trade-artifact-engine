@@ -20,6 +20,7 @@ import { generateReceiptCandidates } from './ledger/receipt-candidates.mjs';
 import { promoteReceiptCandidates } from './ledger/receipt-promotion.mjs';
 import { verifyReceiptBatch } from './ledger/receipt-verifier.mjs';
 import { buildProofPipelineSummary } from './ledger/proof-pipeline-summary.mjs';
+import { buildValuationContext, validateValuationContext } from './ledger/valuation.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -478,6 +479,52 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
     console.log(`  \u2705 All v1.2 receipts pass verification`);
   }
 
+  // ===== LEDGER DEBUG: Valuation Contexts =====
+  console.log(`\n--- Ledger Debug: Valuation Contexts ---`);
+  const valuationContexts = v12Receipts.map(r => {
+    const ctx = buildValuationContext(r);
+    const validation = validateValuationContext(ctx);
+    return {
+      receipt_id: r.receipt_id,
+      ...ctx,
+      valid: validation.valid,
+      violations: validation.violations,
+    };
+  });
+
+  const valUsdStableCount = valuationContexts.filter(c => c.quote_is_usd_stable).length;
+  const valInvalidCount = valuationContexts.filter(c => !c.valid).length;
+  const valByStatus = {};
+  for (const c of valuationContexts) {
+    valByStatus[c.valuation_status] = (valByStatus[c.valuation_status] || 0) + 1;
+  }
+
+  const valuationDebug = {
+    generated_at: new Date().toISOString(),
+    receipt_count: valuationContexts.length,
+    all_valid: valInvalidCount === 0,
+    contexts: valuationContexts,
+    summary: {
+      by_valuation_status: valByStatus,
+      usd_stable_count: valUsdStableCount,
+      non_usd_stable_count: valuationContexts.length - valUsdStableCount,
+      invalid_count: valInvalidCount,
+    },
+  };
+
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-valuations-v12.json'),
+    JSON.stringify(valuationDebug, null, 2)
+  );
+  console.log(`  Total:      ${valuationContexts.length}`);
+  console.log(`  All valid:  ${valuationDebug.all_valid ? '✅' : '❌'}`);
+  console.log(`  USD-stable: ${valUsdStableCount}`);
+  if (valInvalidCount > 0) {
+    for (const c of valuationContexts.filter(c => !c.valid)) {
+      console.log(`  ❌ ${c.receipt_id}: ${c.violations.map(v => v.rule).join(', ')}`);
+    }
+  }
+
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
     wallet: WALLET,
@@ -493,17 +540,19 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
     candidates,
     receipts: v12Receipts,
     verifyReport,
+    valuation: valuationDebug,
   });
   writeFileSync(
     resolve(ROOT, 'data/debug/v12-proof-pipeline-summary.json'),
     JSON.stringify(summary, null, 2)
   );
-  const stagesComplete = [summary.stages.ledger, summary.stages.comparison, summary.stages.candidates, summary.stages.receipts, summary.stages.verification].filter(Boolean).length;
+  const stagesComplete = [summary.stages.ledger, summary.stages.comparison, summary.stages.candidates, summary.stages.receipts, summary.stages.verification, summary.stages.valuation].filter(Boolean).length;
+  const stagesTotal = stagesComplete;
   const checksTotal = summary.consistency.checks.length;
   const checksPassed = summary.consistency.checks.filter(c => c.pass).length;
   const statusCounts = Object.entries(summary.stages.receipts.by_status).map(([s, n]) => `${n} ${s}`).join(', ');
   console.log(`\n--- Ledger Debug: v1.2 Proof Pipeline Summary ---`);
-  console.log(`  Stages:    ${stagesComplete}/5 complete`);
+  console.log(`  Stages:    ${stagesComplete}/${stagesTotal} complete`);
   console.log(`  Receipts:  ${summary.stages.receipts.total} (${statusCounts})`);
   console.log(`  Verify:    ${summary.stages.verification.passed}/${summary.stages.verification.total} passed`);
   console.log(`  Checks:    ${checksPassed}/${checksTotal} passed`);

@@ -156,6 +156,21 @@ function makeComparison(ledgerClosed = 1, v1Closed = 1, matched = 1, mismatches 
   };
 }
 
+function makeValuation(overrides = {}) {
+  return {
+    receipt_count: 2,
+    all_valid: true,
+    contexts: [],
+    summary: {
+      by_valuation_status: { raw_quote: 2 },
+      usd_stable_count: 0,
+      non_usd_stable_count: 2,
+      invalid_count: 0,
+    },
+    ...overrides,
+  };
+}
+
 /**
  * Build a complete valid inputs object for the summary.
  */
@@ -191,6 +206,7 @@ console.log('\n── Happy path ──');
 
 test('all stages present, all checks pass → PASS', () => {
   const inputs = makeInputs();
+  inputs.valuation = makeValuation();
   const summary = buildProofPipelineSummary(inputs);
 
   assert(summary.schema === 'v12_proof_pipeline_summary', 'schema');
@@ -198,10 +214,10 @@ test('all stages present, all checks pass → PASS', () => {
   assert(summary.result === 'PASS', `result should be PASS, got ${summary.result}`);
   assert(summary.consistency.all_pass === true, 'all_pass');
   assert(summary.consistency.warnings.length === 0, `no warnings, got ${summary.consistency.warnings.length}`);
-  assert(summary.consistency.checks.length === 8, `8 checks, got ${summary.consistency.checks.length}`);
+  assert(summary.consistency.checks.length === 9, `9 checks, got ${summary.consistency.checks.length}`);
   assert(summary.consistency.checks.every(c => c.pass), 'all checks pass');
   assert(summary.receipts.length === 2, '2 receipt entries');
-  assert(summary.artifacts.length === 6, '6 artifacts');
+  assert(summary.artifacts.length === 7, '7 artifacts');
 });
 
 console.log('\n── WARN cases ──');
@@ -293,7 +309,7 @@ test('null comparison → skipped checks + warning', () => {
   const summary = buildProofPipelineSummary(inputs);
   assert(summary.stages.comparison === null, 'comparison stage should be null');
   assert(summary.consistency.warnings.length >= 2, 'at least 2 skip warnings');
-  // Only 6 checks (2 skipped)
+  // 6 checks (2 comparison skipped + 1 valuation skipped = 3 skipped from 9)
   assert(summary.consistency.checks.length === 6, `6 checks, got ${summary.consistency.checks.length}`);
   // Still WARN because of skip warnings
   assert(summary.result === 'WARN', `result should be WARN, got ${summary.result}`);
@@ -307,6 +323,7 @@ test('empty inputs (0 candidates, 0 receipts) → PASS', () => {
     receipts: [],
     verifyReport: makeVerifyReport([], true),
   });
+  inputs.valuation = makeValuation({ receipt_count: 0, summary: { by_valuation_status: {}, usd_stable_count: 0, non_usd_stable_count: 0, invalid_count: 0 } });
   const summary = buildProofPipelineSummary(inputs);
   assert(summary.result === 'PASS', `result should be PASS, got ${summary.result}`);
   assert(summary.receipts.length === 0, 'no receipt entries');
@@ -327,11 +344,12 @@ test('receipt entries have correct fields', () => {
   assert(entry.violations === 0, 'violations');
 });
 
-test('artifacts list has 6 paths', () => {
+test('artifacts list has 7 paths', () => {
   const inputs = makeInputs();
   const summary = buildProofPipelineSummary(inputs);
-  assert(summary.artifacts.length === 6, `6 artifacts, got ${summary.artifacts.length}`);
-  assert(summary.artifacts[5] === 'data/debug/v12-proof-pipeline-summary.json', 'last artifact is summary itself');
+  assert(summary.artifacts.length === 7, `7 artifacts, got ${summary.artifacts.length}`);
+  assert(summary.artifacts[5] === 'data/debug/ledger-valuations-v12.json', 'valuations artifact');
+  assert(summary.artifacts[6] === 'data/debug/v12-proof-pipeline-summary.json', 'last artifact is summary itself');
 });
 
 test('stage counts match inputs', () => {
@@ -341,6 +359,65 @@ test('stage counts match inputs', () => {
   assert(summary.stages.ledger.open_positions === 5, 'open_positions');
   assert(summary.stages.verification.total === 2, 'verify total');
   assert(summary.stages.verification.passed === 2, 'verify passed');
+});
+
+// ═══════════════════════════════════════════════════════════════
+// VALUATION STAGE (C3)
+// ═══════════════════════════════════════════════════════════════
+
+console.log('\n── Valuation stage (C3) ──');
+
+test('valuation stage present → stage populated', () => {
+  const inputs = makeInputs();
+  inputs.valuation = makeValuation();
+  const summary = buildProofPipelineSummary(inputs);
+  assert(summary.stages.valuation !== null, 'valuation stage should exist');
+  assert(summary.stages.valuation.total === 2, `total should be 2, got ${summary.stages.valuation.total}`);
+  assert(summary.stages.valuation.all_valid === true, 'all_valid should be true');
+  assert(summary.stages.valuation.usd_stable_count === 0, 'usd_stable_count should be 0');
+  assert(summary.stages.valuation.invalid_count === 0, 'invalid_count should be 0');
+  assert(summary.stages.valuation.artifact === 'data/debug/ledger-valuations-v12.json', 'artifact path');
+});
+
+test('valuation stage null → stage absent + warning', () => {
+  const inputs = makeInputs();
+  // no inputs.valuation set
+  const summary = buildProofPipelineSummary(inputs);
+  assert(summary.stages.valuation === null, 'valuation stage should be null');
+  const hasWarning = summary.consistency.warnings.some(w => w.includes('valuation'));
+  assert(hasWarning, 'should have valuation skip warning');
+});
+
+test('valuation_all_valid check passes when invalid_count=0', () => {
+  const inputs = makeInputs();
+  inputs.valuation = makeValuation();
+  const summary = buildProofPipelineSummary(inputs);
+  const check = summary.consistency.checks.find(c => c.check === 'valuation_all_valid');
+  assert(check, 'valuation_all_valid check should exist');
+  assert(check.pass === true, 'should pass');
+  assert(check.expected === 0, 'expected should be 0');
+  assert(check.actual === 0, 'actual should be 0');
+});
+
+test('valuation_all_valid check fails when invalid_count>0 → FAIL', () => {
+  const inputs = makeInputs();
+  inputs.valuation = makeValuation({
+    all_valid: false,
+    summary: { by_valuation_status: { raw_quote: 2 }, usd_stable_count: 0, non_usd_stable_count: 2, invalid_count: 1 },
+  });
+  const summary = buildProofPipelineSummary(inputs);
+  const check = summary.consistency.checks.find(c => c.check === 'valuation_all_valid');
+  assert(check, 'valuation_all_valid check should exist');
+  assert(check.pass === false, 'should fail');
+  assert(check.actual === 1, `actual should be 1, got ${check.actual}`);
+  assert(summary.result === 'FAIL', `result should be FAIL, got ${summary.result}`);
+});
+
+test('valuation present → artifact list includes valuation path', () => {
+  const inputs = makeInputs();
+  inputs.valuation = makeValuation();
+  const summary = buildProofPipelineSummary(inputs);
+  assert(summary.artifacts.includes('data/debug/ledger-valuations-v12.json'), 'should include valuation artifact');
 });
 
 // ═══════════════════════════════════════════════════════════════
