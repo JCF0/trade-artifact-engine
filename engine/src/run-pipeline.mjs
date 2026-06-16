@@ -26,6 +26,7 @@ import { renderPreviewsHtml } from './ledger/receipt-preview-html.mjs';
 import { buildReceiptMetadataBatch } from './ledger/receipt-metadata.mjs';
 import { buildMintPlanBatch } from './ledger/mint-plan.mjs';
 import { renderReceiptSvg, sanitizeFilename } from './ledger/receipt-image-svg.mjs';
+import { buildUploadPackage } from './ledger/upload-package.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -643,6 +644,36 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   for (const a of imageArtifacts) {
     console.log(`  \u2705 ${a.receipt_id} (${a.file_size_bytes} B)`);
   }
+
+  // ===== LEDGER DEBUG: Upload Package =====
+  console.log(`\n--- Ledger Debug: Upload Package ---`);
+  mkdirSync(resolve(ROOT, 'data/debug/metadata-packages-v12'), { recursive: true });
+  const { packages: uploadPackages, templates: uploadTemplates } = buildUploadPackage(metadataBatch, imageArtifacts);
+
+  for (const t of uploadTemplates) {
+    const safeName = sanitizeFilename(t.receiptId);
+    const templatePath = resolve(ROOT, `data/debug/metadata-packages-v12/${safeName}.metadata.template.json`);
+    writeFileSync(templatePath, JSON.stringify(t.template, null, 2));
+  }
+
+  const uploadReadyCount = uploadPackages.filter(p => p.upload_blockers.length === 0).length;
+  const uploadBlockedCount = uploadPackages.filter(p => p.upload_blockers.length > 0).length;
+  const uploadManifest = {
+    generated_at: new Date().toISOString(),
+    package_version: '1.0.0',
+    receipt_count: uploadPackages.length,
+    upload_ready_count: uploadReadyCount,
+    blocked_count: uploadBlockedCount,
+    packages: uploadPackages,
+  };
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-upload-package-v12.json'),
+    JSON.stringify(uploadManifest, null, 2)
+  );
+  console.log(`  Packages:  ${uploadPackages.length}`);
+  console.log(`  Ready:     ${uploadReadyCount}`);
+  console.log(`  Blocked:   ${uploadBlockedCount}`);
+  console.log(`  Templates: ${uploadTemplates.length} written`);
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
