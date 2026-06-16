@@ -27,6 +27,7 @@ import { buildReceiptMetadataBatch } from './ledger/receipt-metadata.mjs';
 import { buildMintPlanBatch } from './ledger/mint-plan.mjs';
 import { renderReceiptSvg, sanitizeFilename } from './ledger/receipt-image-svg.mjs';
 import { buildUploadPackage } from './ledger/upload-package.mjs';
+import { buildDryRunBatch } from './ledger/upload-dry-run.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -674,6 +675,35 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  Ready:     ${uploadReadyCount}`);
   console.log(`  Blocked:   ${uploadBlockedCount}`);
   console.log(`  Templates: ${uploadTemplates.length} written`);
+
+  // ===== LEDGER DEBUG: Upload Dry Run =====
+  console.log(`\n--- Ledger Debug: Upload Dry Run ---`);
+  mkdirSync(resolve(ROOT, 'data/debug/upload-dry-run-v12'), { recursive: true });
+  const dryRunTemplates = uploadTemplates.map(t => t.template);
+  const { entries: dryRunEntries, resolvedFiles: dryRunFiles } = buildDryRunBatch(uploadPackages, dryRunTemplates);
+
+  for (const f of dryRunFiles) {
+    const outPath = resolve(ROOT, `data/debug/upload-dry-run-v12/${f.safeName}.metadata.resolved.dryrun.json`);
+    writeFileSync(outPath, JSON.stringify(f.resolved, null, 2));
+  }
+
+  const allResolved = dryRunEntries.every(e => e.placeholders_resolved);
+  const dryRunManifest = {
+    generated_at: new Date().toISOString(),
+    dry_run_version: '1.0.0',
+    upload_mode: 'dry_run',
+    receipt_count: dryRunEntries.length,
+    all_placeholders_resolved: allResolved,
+    live_upload_ready: false,
+    entries: dryRunEntries,
+  };
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-upload-dry-run-v12.json'),
+    JSON.stringify(dryRunManifest, null, 2)
+  );
+  console.log(`  Entries:     ${dryRunEntries.length}`);
+  console.log(`  Resolved:    ${allResolved ? '\u2705 all' : '\u274c some unresolved'}`);
+  console.log(`  Live ready:  false (dry run only)`);
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
