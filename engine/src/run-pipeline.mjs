@@ -30,6 +30,7 @@ import { buildUploadPackage } from './ledger/upload-package.mjs';
 import { buildDryRunBatch } from './ledger/upload-dry-run.mjs';
 import { checkUploadGates, shouldSkipUpload, uploadSingleReceipt } from './ledger/live-upload.mjs';
 import { selectPackages, loadExistingResults, mergeResults } from './ledger/irys-uploader.mjs';
+import { resolveMintPlanBatch } from './ledger/mint-ready-resolver.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -811,6 +812,31 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
       }
     }
   }
+
+  // ===== LEDGER DEBUG: Mint-Ready Resolver =====
+  console.log(`\n--- Ledger Debug: Mint-Ready Resolver ---`);
+  const uploadResultsPath = resolve(ROOT, 'data/debug/ledger-upload-results-v12.json');
+  const uploadResultsForResolver = loadExistingResults(uploadResultsPath);
+  const packageMapForResolver = new Map();
+  for (const p of uploadPackages) packageMapForResolver.set(p.receipt_id, p);
+  const { plans: mintReadyPlans, summary: mintReadySummary } = resolveMintPlanBatch(
+    v12Receipts, metadataBatch, uploadResultsForResolver, packageMapForResolver
+  );
+  const mintReadyOutput = {
+    generated_at: new Date().toISOString(),
+    resolver_version: '1.0.0',
+    ...mintReadySummary,
+    plans: mintReadyPlans,
+  };
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-mint-ready-v12.json'),
+    JSON.stringify(mintReadyOutput, null, 2)
+  );
+  console.log(`  Receipts:        ${mintReadySummary.receipt_count}`);
+  console.log(`  Upload complete: ${mintReadySummary.upload_complete_count}`);
+  console.log(`  URI usable:      ${mintReadySummary.upload_uri_usable_count}`);
+  console.log(`  Mint ready:      ${mintReadySummary.mint_ready_count}`);
+  console.log(`  Mint blocked:    ${mintReadySummary.mint_blocked_count}`);
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
