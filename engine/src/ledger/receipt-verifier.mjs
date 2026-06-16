@@ -4,7 +4,8 @@
  * Pure function: v1.2 receipt records → verification results.
  *
  * Recomputes receipt_hash, validates schema, checks type-specific
- * field constraints, and verifies status/disclosure consistency.
+ * field constraints, verifies status/disclosure consistency,
+ * and enforces valuation boundary rules (V-* from C1).
  *
  * This module does NOT:
  *   - Fix or modify receipts (report-only)
@@ -16,6 +17,7 @@
  */
 
 import { computeReceiptHash } from './receipt-promotion.mjs';
+import { validateReceiptValuation } from './valuation.mjs';
 
 // ═══════════════════════════════════════════════════════════════
 // Constants
@@ -389,13 +391,19 @@ export function verifyReceipt(receipt) {
     }
   }
 
+  // ═══ VALUATION validation (V-*) ═══
+  const valuationResult = validateReceiptValuation(receipt);
+  for (const v of valuationResult.violations) {
+    viol(v.rule, v.message);
+  }
+
   // ═══ Compute summary flags ═══
   const errors = violations.filter(v => v.severity === 'error');
   const schemaValid = !errors.some(e =>
     e.rule.startsWith('S-') || e.rule.startsWith('CP-') ||
     e.rule.startsWith('RP-') || e.rule.startsWith('OS-')
   );
-  const consistencyValid = !errors.some(e => e.rule.startsWith('C-'));
+  const consistencyValid = !errors.some(e => e.rule.startsWith('C-') || e.rule.startsWith('V-'));
 
   return {
     receipt_id: receipt.receipt_id,

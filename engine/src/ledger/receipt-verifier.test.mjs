@@ -679,6 +679,91 @@ test('C-20b: valid disclosures produce no C-20', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// VALUATION TESTS (V-1 to V-6) — C2 integration
+// ═══════════════════════════════════════════════════════════════
+
+console.log('\n── Valuation (V-*) ──');
+
+test('V-*: valid raw_quote receipts produce no V-* violations', () => {
+  for (const r of [cpReceipt, rpReceipt, osReceipt]) {
+    const result = verifyReceipt(r);
+    const vViols = result.rule_violations.filter(v => v.rule.startsWith('V-'));
+    assert(vViols.length === 0, `unexpected V-* violations: [${vViols.map(v => v.rule).join(', ')}]`);
+  }
+});
+
+test('V-1: reserved status usd_normalized (rehashed)', () => {
+  // valuation_status is hashed → rehash to isolate V-1
+  const r = mutate(cpReceipt, { valuation_status: 'usd_normalized' });
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-1');
+  assert(result.consistency_valid === false, 'V-1 must make consistency_valid=false');
+  assert(result.pass === false, 'V-1 must make pass=false');
+});
+
+test('V-1: unknown garbage status (rehashed)', () => {
+  const r = mutate(cpReceipt, { valuation_status: 'banana' });
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-1');
+});
+
+test('V-2: valuation_currency mismatch (non-hashed field)', () => {
+  const r = mutate(cpReceipt, { limitations: { valuation_currency: 'usd' } });
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-2');
+  // Also expect C-19 (intentional redundancy)
+  assertViolation(result, 'C-19');
+});
+
+test('V-3: missing no_usd_normalization disclosure (non-hashed field)', () => {
+  const r = mutate(cpReceipt, { limitations: { disclosures: [] } });
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-3');
+  // Also expect C-11 (intentional redundancy)
+  assertViolation(result, 'C-11');
+});
+
+test('V-4: non-null _usd field (non-hashed field)', () => {
+  const r = mutate(cpReceipt, {});
+  r.realized_pnl_usd = 42.5;
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-4');
+  assert(result.consistency_valid === false, 'V-4 must make consistency_valid=false');
+});
+
+test('V-4: zero _usd field triggers violation', () => {
+  const r = mutate(cpReceipt, {});
+  r.total_pnl_usd = 0;
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-4');
+});
+
+test('V-5: empty quote_mint (rehashed)', () => {
+  // quote_mint is hashed → rehash to isolate V-5
+  const r = mutate(cpReceipt, { quote_mint: '' });
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-5');
+});
+
+test('V-6: empty quote_symbol (rehashed)', () => {
+  // quote_symbol is hashed → rehash to isolate V-6
+  const r = mutate(cpReceipt, { quote_symbol: '' });
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-6');
+});
+
+test('V-*: reserved status only fires V-1, skips V-2..V-6', () => {
+  const r = mutate(cpReceipt, { valuation_status: 'usd_estimated' });
+  const result = verifyReceipt(r);
+  assertViolation(result, 'V-1');
+  assertNoViolation(result, 'V-2');
+  assertNoViolation(result, 'V-3');
+  assertNoViolation(result, 'V-4');
+  assertNoViolation(result, 'V-5');
+  assertNoViolation(result, 'V-6');
+});
+
+// ═══════════════════════════════════════════════════════════════
 // BATCH REPORT TESTS (2)
 // ═══════════════════════════════════════════════════════════════
 
