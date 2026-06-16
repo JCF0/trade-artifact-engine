@@ -32,6 +32,7 @@ import { checkUploadGates, shouldSkipUpload, uploadSingleReceipt } from './ledge
 import { selectPackages, loadExistingResults, mergeResults } from './ledger/irys-uploader.mjs';
 import { resolveMintPlanBatch } from './ledger/mint-ready-resolver.mjs';
 import { checkMintGates, validatePlanForMint, shouldSkipMint, executeSingleMint } from './ledger/devnet-mint-adapter.mjs';
+import { buildE2EProofManifest } from './ledger/e2e-proof-manifest.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -975,6 +976,41 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   }
   console.log(`  Result:    ${summary.result === 'PASS' ? '\u2705' : summary.result === 'WARN' ? '\u26a0\ufe0f' : '\u274c'} ${summary.result}`);
   console.log(`  Summary:   data/debug/v12-proof-pipeline-summary.json`);
+
+  // ===== LEDGER DEBUG: E2E Proof Manifest =====
+  console.log(`\n--- Ledger Debug: E2E Proof Manifest ---`);
+  const mintResultsForE2E = loadExistingResults(resolve(ROOT, 'data/debug/ledger-mint-results-v12.json'));
+  const mintReadyForE2E = new Map();
+  for (const p of mintReadyPlans) mintReadyForE2E.set(p.receipt_id, p);
+
+  const e2eManifest = buildE2EProofManifest({
+    wallet: WALLET,
+    chain: 'solana',
+    network: 'devnet',
+    receipts: v12Receipts,
+    verifyReport,
+    valuationContexts: valuationDebug.contexts || [],
+    previewsGenerated: true,
+    htmlPreviewGenerated: true,
+    imageArtifacts: imageArtifacts,
+    metadataScaffoldsExist: true,
+    metadataTemplatesExist: true,
+    uploadResultsMap: uploadResultsForResolver,
+    mintReadyPlansMap: mintReadyForE2E,
+    mintResultsMap: mintResultsForE2E,
+  });
+  e2eManifest.generated_at = new Date().toISOString();
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-e2e-proof-v12.json'),
+    JSON.stringify(e2eManifest, null, 2)
+  );
+  console.log(`  Receipts:  ${e2eManifest.receipt_count}`);
+  console.log(`  Verified:  ${e2eManifest.summary.verified_count}`);
+  console.log(`  Uploaded:  ${e2eManifest.summary.uploaded_count}`);
+  console.log(`  Minted:    ${e2eManifest.summary.minted_count}`);
+  console.log(`  Proven:    ${e2eManifest.summary.fully_proven_count}`);
+  console.log(`  Status:    ${e2eManifest.summary.status}`);
+  console.log(`  Manifest:  data/debug/ledger-e2e-proof-v12.json`);
 }
 
 // ===== PHASE 4: PNL =====
