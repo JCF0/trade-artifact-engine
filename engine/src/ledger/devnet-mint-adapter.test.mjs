@@ -13,6 +13,8 @@ import {
   buildFailedMintResultEntry,
   checkMintEnvPresence,
   executeSingleMint,
+  extractSafeErrorMessage,
+  MIN_MINT_LAMPORTS,
 } from './devnet-mint-adapter.mjs';
 
 // ═══════════════════════════════════════════════════════════════
@@ -59,10 +61,21 @@ function makeMintReadyPlan(overrides = {}) {
   };
 }
 
-function mockMintClient(mintAddr, tokenAcct, sig) {
+function mockMintClient(mintAddr, tokenAcct, sig, opts = {}) {
   return {
     authorityPubkey: 'MOCK_AUTHORITY_PUBKEY',
     calls: [],
+    async checkPreflight() {
+      if (opts.balance !== undefined && opts.balance < MIN_MINT_LAMPORTS) {
+        return {
+          ready: false,
+          blocker: 'mint_authority_unfunded',
+          message: `Mint authority has ${(opts.balance / 1e9).toFixed(4)} SOL`,
+          balance: opts.balance,
+        };
+      }
+      return { ready: true, balance: opts.balance ?? 100_000_000 };
+    },
     async mintNonTransferableToken(proofWallet, metadataUri) {
       this.calls.push({ proofWallet, metadataUri });
       return {
@@ -77,10 +90,15 @@ function mockMintClient(mintAddr, tokenAcct, sig) {
 function failingMintClient(error) {
   return {
     authorityPubkey: 'MOCK_AUTHORITY_PUBKEY',
+    async checkPreflight() { return { ready: true, balance: 100_000_000 }; },
     async mintNonTransferableToken() {
       throw new Error(error || 'mint_failed');
     },
   };
+}
+
+function unfundedMintClient(balance) {
+  return mockMintClient(null, null, null, { balance: balance ?? 0 });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -297,6 +315,75 @@ t('env check: no secret values returned', () => {
   assert(!str.includes('\\'), 'no backslash paths');
   assert(typeof check.mintEnabled === 'boolean');
   assert(check.mintAuthorityPathPresence === 'defined' || check.mintAuthorityPathPresence === 'not defined');
+});
+
+// ═══════════════════════════════════════════════════════════════
+// E9.1 Preflight tests
+// ═══════════════════════════════════════════════════════════════
+
+t('preflight: unfunded mint authority fails with mint_authority_unfunded', async () => {
+  const plan = makeMintReadyPlan();
+  const client = unfundedMintClient(0);
+  const result = await executeSingleMint(plan, {
+    proofWallet: 'PROOF_WALLET',
+    mintAuthorityPubkey: 'AUTH_PUBKEY',
+  }, client);
+  assert(result.mint_status === 'mint_authority_unfunded', `got ${result.mint_status}`);
+  assert(result.error_message.includes('SOL'), `error should mention SOL: ${result.error_message}`);
+  assert(result.transaction_signature === null);
+});
+
+t('preflight: low but nonzero balance still fails', async () => {
+  const plan = makeMintReadyPlan();
+  const client = unfundedMintClient(5_000_000); // 0.005 SOL, below 0.02 threshold
+  const result = await executeSingleMint(plan, {
+    proofWallet: 'PROOF_WALLET',
+    mintAuthorityPubkey: 'AUTH_PUBKEY',
+  }, client);
+  assert(result.mint_status === 'mint_authority_unfunded');
+});
+
+t('preflight: funded balance passes and mint proceeds', async () => {
+  const plan = makeMintReadyPlan();
+  const client = mockMintClient('MINT_OK', 'ATA_OK', 'SIG_OK', { balance: 100_000_000 });
+  const result = await executeSingleMint(plan, {
+    proofWallet: 'PROOF_WALLET',
+    mintAuthorityPubkey: 'AUTH_PUBKEY',
+  }, client);
+  assert(result.mint_status === 'minted', `got ${result.mint_status}`);
+  assert(result.mint_address === 'MINT_OK');
+});
+
+t('extractSafeErrorMessage: includes log excerpt from e.logs', () => {
+  const err = new Error('Transaction simulation failed');
+  err.logs = ['Program log: ix 0', 'Program log: ix 1', 'Program log: custom error 0x1', 'Program log: failed'];
+  const msg = extractSafeErrorMessage(err);
+  assert(msg.includes('Transaction simulation failed'), 'base message');
+  assert(msg.includes('logs:'), 'should include logs');
+  assert(msg.includes('custom error'), 'should include log content');
+  // Only last 3 logs
+  assert(!msg.includes('ix 0'), 'should not include earliest log');
+});
+
+t('extractSafeErrorMessage: generic error has no log dump', () => {
+  const err = new Error('Connection timeout');
+  const msg = extractSafeErrorMessage(err);
+  assert(msg === 'Connection timeout', `got ${msg}`);
+  assert(!msg.includes('logs:'));
+});
+
+t('preflight: failed result contains no secrets', async () => {
+  const plan = makeMintReadyPlan();
+  const client = unfundedMintClient(0);
+  const result = await executeSingleMint(plan, {
+    proofWallet: 'PROOF_WALLET',
+    mintAuthorityPubkey: 'AUTH_PUBKEY',
+  }, client);
+  const str = JSON.stringify(result);
+  assert(!str.includes('PRIVATE'), 'no PRIVATE');
+  assert(!str.includes('SECRET'), 'no SECRET');
+  assert(!str.includes('keypair'), 'no keypair');
+  assert(!str.includes('.env'), 'no .env');
 });
 
 // ═══════════════════════════════════════════════════════════════

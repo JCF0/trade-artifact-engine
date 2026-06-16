@@ -13,3 +13,13 @@ engine/.env.*
 engine/*.log
 
 trade-artifact-build-specs/
+
+# Artifact v1.2 generated runtime/debug artifacts
+engine/data/debug/
+engine/data/raw/
+engine/data/normalized/
+engine/data/cycles/
+engine/data/pnl/
+engine/data/receipts/
+engine/data/renders/
+engine/data/arweave/

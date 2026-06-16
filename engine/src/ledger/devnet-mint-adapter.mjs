@@ -22,6 +22,47 @@ import { resolve } from 'path';
 
 const MINT_ADAPTER_VERSION = '1.0.0';
 
+// Conservative minimum for Token-2022 mint (rent + ATA rent + tx fees)
+const MIN_MINT_LAMPORTS = 20_000_000; // 0.02 SOL
+
+// ═══════════════════════════════════════════════════════════════
+// Safe error message extraction
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Extract a safe error message from a Solana transaction error.
+ *
+ * Includes log excerpts from SendTransactionError when available.
+ * Never dumps full error objects, config, keypair, or env values.
+ *
+ * @param {Error} e
+ * @returns {string}
+ */
+export function extractSafeErrorMessage(e) {
+  let msg = e.message || 'unknown error';
+
+  // SendTransactionError may have .logs directly
+  if (Array.isArray(e.logs) && e.logs.length > 0) {
+    const safeLogExcerpt = e.logs.slice(-3).join('; ');
+    msg += ` | logs: ${safeLogExcerpt}`;
+  } else if (typeof e.getLogs === 'function') {
+    // Some versions expose getLogs() as async
+    try {
+      // getLogs may be sync or async — handle both
+      const logs = e.getLogs();
+      if (Array.isArray(logs) && logs.length > 0) {
+        msg += ` | logs: ${logs.slice(-3).join('; ')}`;
+      }
+    } catch {
+      // getLogs failed — ignore, we already have the base message
+    }
+  }
+
+  return msg;
+}
+
+export { MIN_MINT_LAMPORTS };
+
 // ═══════════════════════════════════════════════════════════════
 // Gate checking (pure function)
 // ═══════════════════════════════════════════════════════════════
@@ -205,6 +246,17 @@ export async function executeSingleMint(plan, opts, solanaClient) {
     network: opts.network || 'devnet',
   };
 
+  // Preflight: check mint authority balance if client supports it
+  if (typeof solanaClient.checkPreflight === 'function') {
+    const preflight = await solanaClient.checkPreflight();
+    if (!preflight.ready) {
+      return buildFailedMintResultEntry(
+        { ...baseParams, mintStatus: preflight.blocker || 'preflight_failed' },
+        new Error(preflight.message || 'Preflight check failed')
+      );
+    }
+  }
+
   try {
     const result = await solanaClient.mintNonTransferableToken(
       opts.proofWallet,
@@ -220,7 +272,9 @@ export async function executeSingleMint(plan, opts, solanaClient) {
       mintedAt: new Date().toISOString(),
     });
   } catch (e) {
-    return buildFailedMintResultEntry(baseParams, e);
+    // Safe error extraction — never dump full error/config/keypair objects
+    const errorMsg = extractSafeErrorMessage(e);
+    return buildFailedMintResultEntry(baseParams, { message: errorMsg });
   }
 }
 
@@ -273,6 +327,31 @@ export async function createSolanaMintClient(opts) {
 
   return {
     authorityPubkey,
+
+    /**
+     * Preflight check: verify mint authority has enough SOL.
+     * @returns {Promise<{ ready: boolean, blocker?: string, message?: string, balance?: number }>}
+     */
+    async checkPreflight() {
+      try {
+        const balance = await connection.getBalance(mintAuthority.publicKey);
+        if (balance < MIN_MINT_LAMPORTS) {
+          return {
+            ready: false,
+            blocker: 'mint_authority_unfunded',
+            message: `Mint authority has ${(balance / 1e9).toFixed(4)} SOL, needs ~${(MIN_MINT_LAMPORTS / 1e9).toFixed(2)} SOL minimum`,
+            balance,
+          };
+        }
+        return { ready: true, balance };
+      } catch (e) {
+        return {
+          ready: false,
+          blocker: 'preflight_rpc_error',
+          message: `Balance check failed: ${e.message}`,
+        };
+      }
+    },
 
     async mintNonTransferableToken(proofWalletPubkey, metadataUri) {
       const { PublicKey } = await import('@solana/web3.js');
