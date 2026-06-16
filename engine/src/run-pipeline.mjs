@@ -25,6 +25,7 @@ import { buildReceiptPreviews } from './ledger/receipt-preview.mjs';
 import { renderPreviewsHtml } from './ledger/receipt-preview-html.mjs';
 import { buildReceiptMetadataBatch } from './ledger/receipt-metadata.mjs';
 import { buildMintPlanBatch } from './ledger/mint-plan.mjs';
+import { renderReceiptSvg, sanitizeFilename } from './ledger/receipt-image-svg.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -598,6 +599,49 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
     for (const p of mintPlans.filter(p => !p.mint_ready)) {
       console.log(`  \u274c ${p.receipt_id}: [${p.mint_blockers.join(', ')}]`);
     }
+  }
+
+  // ===== LEDGER DEBUG: Image Artifacts =====
+  console.log(`\n--- Ledger Debug: Image Artifacts ---`);
+  mkdirSync(resolve(ROOT, 'data/debug/receipt-images-v12'), { recursive: true });
+  const imageArtifacts = previews.map(p => {
+    const svg = renderReceiptSvg(p);
+    const safeName = sanitizeFilename(p.receipt_id);
+    const filename = `${safeName}.svg`;
+    const localPath = `data/debug/receipt-images-v12/${filename}`;
+    writeFileSync(resolve(ROOT, localPath), svg);
+    const hash = createHash('sha256').update(svg).digest('hex');
+    return {
+      receipt_id: p.receipt_id,
+      receipt_type: p.receipt_type,
+      display_status: p.display_status,
+      artifact_type: 'svg',
+      local_path: localPath,
+      content_type: 'image/svg+xml',
+      render_status: 'rendered',
+      upload_status: 'not_uploaded',
+      file_size_bytes: Buffer.byteLength(svg, 'utf-8'),
+      artifact_hash: `sha256:${hash}`,
+      proof: {
+        receipt_hash_short: p.proof?.receipt_hash_short || null,
+        candidate_hash_short: p.proof?.candidate_hash_short || null,
+      },
+    };
+  });
+  const imageManifest = {
+    generated_at: new Date().toISOString(),
+    artifact_version: '1.0.0',
+    artifact_type: 'svg',
+    receipt_count: imageArtifacts.length,
+    artifacts: imageArtifacts,
+  };
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-image-artifacts-v12.json'),
+    JSON.stringify(imageManifest, null, 2)
+  );
+  console.log(`  Artifacts: ${imageArtifacts.length}`);
+  for (const a of imageArtifacts) {
+    console.log(`  \u2705 ${a.receipt_id} (${a.file_size_bytes} B)`);
   }
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
