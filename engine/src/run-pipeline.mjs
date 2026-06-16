@@ -22,6 +22,7 @@ import { verifyReceiptBatch } from './ledger/receipt-verifier.mjs';
 import { buildProofPipelineSummary } from './ledger/proof-pipeline-summary.mjs';
 import { buildValuationContext, validateValuationContext } from './ledger/valuation.mjs';
 import { buildReceiptPreviews } from './ledger/receipt-preview.mjs';
+import { renderPreviewsHtml } from './ledger/receipt-preview-html.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -542,6 +543,14 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   for (const p of previews) {
     console.log(`  ${p.display_status}: ${p.header.token_display} / ${p.header.quote_symbol}`);
   }
+
+  // ===== LEDGER DEBUG: Receipt Previews HTML =====
+  const previewHtml = renderPreviewsHtml(previews, { generatedAt: previewDebug.generated_at });
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-previews-v12.html'),
+    previewHtml
+  );
+  console.log(`  HTML:     data/debug/ledger-previews-v12.html (${(previewHtml.length / 1024).toFixed(1)} KB)`);
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
