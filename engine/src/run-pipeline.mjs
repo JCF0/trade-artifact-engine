@@ -28,6 +28,7 @@ import { buildMintPlanBatch } from './ledger/mint-plan.mjs';
 import { renderReceiptSvg, sanitizeFilename } from './ledger/receipt-image-svg.mjs';
 import { buildUploadPackage } from './ledger/upload-package.mjs';
 import { buildDryRunBatch } from './ledger/upload-dry-run.mjs';
+import { checkUploadGates } from './ledger/live-upload.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -46,10 +47,14 @@ function getFlag(name) {
 const KEYPAIR_PATH = getFlag('--keypair');
 const RECIPIENT_OVERRIDE = getFlag('--recipient');
 const LEDGER_DEBUG = rawArgs.includes('--ledger-debug');
+const UPLOAD_LIVE = rawArgs.includes('--upload-live');
+const UPLOAD_CONFIRM = rawArgs.includes('--upload-confirm');
+const UPLOAD_MAX = getFlag('--upload-max') ? parseInt(getFlag('--upload-max'), 10) : null;
+const UPLOAD_RECEIPT_ID = getFlag('--upload-receipt-id');
 
 // Positional args (skip flags and their values)
-const valueFlagNames = new Set(['--keypair', '--recipient']);
-const boolFlagNames = new Set(['--ledger-debug']);
+const valueFlagNames = new Set(['--keypair', '--recipient', '--upload-max', '--upload-receipt-id']);
+const boolFlagNames = new Set(['--ledger-debug', '--upload-live', '--upload-confirm']);
 const positional = [];
 for (let i = 0; i < rawArgs.length; i++) {
   if (valueFlagNames.has(rawArgs[i])) { i++; continue; } // skip flag + value
@@ -704,6 +709,33 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  Entries:     ${dryRunEntries.length}`);
   console.log(`  Resolved:    ${allResolved ? '\u2705 all' : '\u274c some unresolved'}`);
   console.log(`  Live ready:  false (dry run only)`);
+
+  // ===== LEDGER DEBUG: Live Upload Gate Check =====
+  if (UPLOAD_LIVE) {
+    console.log(`\n--- Ledger Debug: Live Upload Gate Check ---`);
+    const gateOpts = {
+      ledgerDebug: LEDGER_DEBUG,
+      uploadLive: UPLOAD_LIVE,
+      uploadConfirm: UPLOAD_CONFIRM,
+      uploadEnabled: process.env.UPLOAD_ENABLED,
+      keypairPath: process.env.IRYS_KEYPAIR_PATH,
+      keypairFileExists: process.env.IRYS_KEYPAIR_PATH ? existsSync(resolve(process.env.IRYS_KEYPAIR_PATH)) : false,
+      network: 'devnet',
+      uploadMax: UPLOAD_MAX,
+      uploadReceiptId: UPLOAD_RECEIPT_ID,
+    };
+    const gateResult = checkUploadGates(gateOpts);
+    if (gateResult.allowed) {
+      console.log(`  \u2705 All gates passed — live upload would proceed`);
+      console.log(`  \u26a0\ufe0f Live upload execution deferred (not wired yet)`);
+      // E6 gate check only — actual upload orchestration wired in future
+    } else {
+      console.log(`  \u274c Live upload BLOCKED:`);
+      for (const b of gateResult.blockers) {
+        console.log(`    - ${b}`);
+      }
+    }
+  }
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
   const summary = buildProofPipelineSummary({
