@@ -28,7 +28,8 @@ import { buildMintPlanBatch } from './ledger/mint-plan.mjs';
 import { renderReceiptSvg, sanitizeFilename } from './ledger/receipt-image-svg.mjs';
 import { buildUploadPackage } from './ledger/upload-package.mjs';
 import { buildDryRunBatch } from './ledger/upload-dry-run.mjs';
-import { checkUploadGates } from './ledger/live-upload.mjs';
+import { checkUploadGates, shouldSkipUpload, uploadSingleReceipt } from './ledger/live-upload.mjs';
+import { selectPackages, loadExistingResults, mergeResults } from './ledger/irys-uploader.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -710,9 +711,9 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  Resolved:    ${allResolved ? '\u2705 all' : '\u274c some unresolved'}`);
   console.log(`  Live ready:  false (dry run only)`);
 
-  // ===== LEDGER DEBUG: Live Upload Gate Check =====
+  // ===== LEDGER DEBUG: Live Upload =====
   if (UPLOAD_LIVE) {
-    console.log(`\n--- Ledger Debug: Live Upload Gate Check ---`);
+    console.log(`\n--- Ledger Debug: Live Upload ---`);
     const gateOpts = {
       ledgerDebug: LEDGER_DEBUG,
       uploadLive: UPLOAD_LIVE,
@@ -725,14 +726,88 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
       uploadReceiptId: UPLOAD_RECEIPT_ID,
     };
     const gateResult = checkUploadGates(gateOpts);
-    if (gateResult.allowed) {
-      console.log(`  \u2705 All gates passed — live upload would proceed`);
-      console.log(`  \u26a0\ufe0f Live upload execution deferred (not wired yet)`);
-      // E6 gate check only — actual upload orchestration wired in future
-    } else {
-      console.log(`  \u274c Live upload BLOCKED:`);
+    if (!gateResult.allowed) {
+      console.log(`  Live upload BLOCKED:`);
       for (const b of gateResult.blockers) {
         console.log(`    - ${b}`);
+      }
+    } else {
+      console.log(`  All gates passed`);
+      const { selected: selectedPkgs, reason: selectReason } = selectPackages(
+        uploadPackages,
+        { uploadReceiptId: UPLOAD_RECEIPT_ID, uploadMax: UPLOAD_MAX }
+      );
+      console.log(`  Selection: ${selectedPkgs.length} receipt(s) (${selectReason})`);
+      if (selectedPkgs.length === 0) {
+        console.log(`  No receipts selected for upload`);
+      } else {
+        const resultsManifestPath = resolve(ROOT, 'data/debug/ledger-upload-results-v12.json');
+        const existingResultsMap = loadExistingResults(resultsManifestPath);
+        console.log(`  Existing results: ${existingResultsMap.size}`);
+        const { createIrysUploader } = await import('./ledger/irys-uploader.mjs');
+        let irysUploader;
+        try {
+          irysUploader = await createIrysUploader({
+            keypairPath: process.env.IRYS_KEYPAIR_PATH,
+            rpcUrl: process.env.IRYS_RPC_URL,
+            devnet: true,
+          });
+          console.log(`  Uploader pubkey: ${irysUploader.address}`);
+        } catch (e) {
+          console.error(`  Irys init failed: ${e.message}`);
+          irysUploader = null;
+        }
+        if (irysUploader) {
+          mkdirSync(resolve(ROOT, 'data/debug/upload-results-v12'), { recursive: true });
+          const uploadResults = [];
+          const templateByReceiptId = new Map();
+          for (const t of uploadTemplates) templateByReceiptId.set(t.receiptId, t.template);
+          for (const pkg of selectedPkgs) {
+            const existing = existingResultsMap.get(pkg.receipt_id);
+            const { skip, reason: skipReason } = shouldSkipUpload(
+              existing, pkg.image_artifact_hash, pkg.metadata_template_hash
+            );
+            if (skip) {
+              console.log(`  SKIP ${pkg.receipt_id}: ${skipReason}`);
+              uploadResults.push(existing);
+              continue;
+            }
+            console.log(`  Uploading ${pkg.receipt_id}...`);
+            const tmpl = templateByReceiptId.get(pkg.receipt_id);
+            if (!tmpl) { console.log(`  No template for ${pkg.receipt_id}`); continue; }
+            const output = await uploadSingleReceipt(pkg, tmpl, irysUploader, {
+              network: 'devnet',
+              uploaderPubkey: irysUploader.address,
+            });
+            if (output.result) {
+              let localWriteOk = false;
+              try {
+                writeFileSync(resolve(ROOT, output.finalMetadataPath), output.finalMetadataStr);
+                localWriteOk = true;
+              } catch (e) {
+                console.error(`  Local write failed: ${e.message}`);
+                output.result.upload_status = 'uploaded_but_local_write_failed';
+              }
+              if (localWriteOk) output.result.upload_status = 'complete';
+              uploadResults.push(output.result);
+              console.log(`  ${pkg.receipt_id}: ${output.result.upload_status}`);
+              if (output.result.final_image_uri) console.log(`    Image:    ${output.result.final_image_uri}`);
+              if (output.result.final_metadata_uri) console.log(`    Metadata: ${output.result.final_metadata_uri}`);
+            } else {
+              uploadResults.push(output);
+              console.log(`  ${pkg.receipt_id}: ${output.upload_status} - ${output.error_message}`);
+            }
+            const mergedResults = mergeResults(existingResultsMap, uploadResults);
+            writeFileSync(resultsManifestPath, JSON.stringify({
+              generated_at: new Date().toISOString(),
+              upload_mode: 'live',
+              network: 'devnet',
+              total_results: mergedResults.length,
+              results: mergedResults,
+            }, null, 2));
+          }
+          console.log(`  Upload complete: ${uploadResults.length} result(s)`);
+        }
       }
     }
   }
