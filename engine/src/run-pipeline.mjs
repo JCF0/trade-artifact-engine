@@ -24,6 +24,7 @@ import { buildValuationContext, validateValuationContext } from './ledger/valuat
 import { buildReceiptPreviews } from './ledger/receipt-preview.mjs';
 import { renderPreviewsHtml } from './ledger/receipt-preview-html.mjs';
 import { buildReceiptMetadataBatch } from './ledger/receipt-metadata.mjs';
+import { buildMintPlanBatch } from './ledger/mint-plan.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -570,6 +571,33 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  Metadata: ${metadataBatch.length} scaffolds`);
   for (const m of metadataBatch) {
     console.log(`  ${m._scaffold.status}: ${m.name}`);
+  }
+
+  // ===== LEDGER DEBUG: Mint Plan =====
+  console.log(`\n--- Ledger Debug: Mint Plan ---`);
+  const mintPlans = buildMintPlanBatch(v12Receipts, metadataBatch);
+  const readyCount = mintPlans.filter(p => p.mint_ready).length;
+  const blockedCount = mintPlans.filter(p => !p.mint_ready).length;
+  const mintPlanDebug = {
+    generated_at: new Date().toISOString(),
+    plan_version: '1.0.0',
+    network: 'devnet',
+    receipt_count: mintPlans.length,
+    ready_count: readyCount,
+    blocked_count: blockedCount,
+    plans: mintPlans,
+  };
+  writeFileSync(
+    resolve(ROOT, 'data/debug/ledger-mint-plan-v12.json'),
+    JSON.stringify(mintPlanDebug, null, 2)
+  );
+  console.log(`  Plans:   ${mintPlans.length}`);
+  console.log(`  Ready:   ${readyCount}`);
+  console.log(`  Blocked: ${blockedCount}`);
+  if (blockedCount > 0 && mintPlans.length <= 10) {
+    for (const p of mintPlans.filter(p => !p.mint_ready)) {
+      console.log(`  \u274c ${p.receipt_id}: [${p.mint_blockers.join(', ')}]`);
+    }
   }
 
   // ===== LEDGER DEBUG: v1.2 Proof Pipeline Summary =====
