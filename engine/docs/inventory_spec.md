@@ -10,6 +10,8 @@ It does not call the network, sign, upload, mint, or mutate receipt artifacts.
 Legacy v1.1 JSONL receipt discovery is optional and separate.
 It is available only through explicit opt-in (`--include-legacy` in the CLI entrypoint, or explicit legacy inventory route usage).
 
+Inventory is part of the broader v1.3 local read-only proof surfaces release and should be treated as a local artifact index around committed v1.2 proof outputs.
+
 ## Primary Key
 
 - v1.2 inventory primary key: `receipt_hash`
@@ -56,6 +58,8 @@ Default production inventory excludes legacy files located inside:
 
 Those paths may be included only when explicitly requested.
 
+Legacy inventory is not shown by default in the v1.3 UI or default proof routes.
+
 ## Read-only API
 
 Slice 1 adds read-only inventory routes:
@@ -64,5 +68,12 @@ Slice 1 adds read-only inventory routes:
 - `GET /inventory/:receiptHash`
 - `GET /inventory/legacy`
 - `GET /inventory/legacy/:verificationHash`
+- `GET /api/inventory`
+- `GET /api/inventory/summary`
 
 These routes read local artifacts only and do not mutate pipeline state.
+
+## Release Boundaries
+
+Inventory is local-only and read-only.
+It does not add hosting, upload, minting, signing, account login, wallet linking, price fetching, or USD normalization.

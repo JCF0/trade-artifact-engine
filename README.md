@@ -36,6 +36,15 @@ http://localhost:3000/ui/
 
 The UI supports wallet scanning, position browsing, closed/open position status, receipt generation, and verified/custom receipt views.
 
+V1.3 also adds local read-only proof surfaces around committed v1.2 artifacts:
+- `GET /api/inventory`
+- `GET /api/inventory/summary`
+- `GET /api/proof/:receiptHash`
+- `GET /api/proof/:receiptHash/export`
+- `node engine/src/proof-export/cli.mjs --receipt-hash <hash> --stdout|--output <path>`
+
+These v1.3 proof surfaces are local-only and read-only. They do not add hosting, account login, wallet linking, upload, minting, signing, price fetching, USD normalization, or Helius balance-at integration.
+
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)

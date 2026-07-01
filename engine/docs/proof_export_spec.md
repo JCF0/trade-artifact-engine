@@ -54,6 +54,7 @@ Rules:
 - non-zero exit for invalid args or missing receipt
 - no legacy lookup by default
 - writes only when `--output` is explicitly provided
+- generated/exported files are local artifacts and should not be committed unless intentionally curated
 
 ## API
 
@@ -73,6 +74,11 @@ Static proof pages must include all of the following:
 - selected receipt only
 - local export scaffold, not hosted proof delivery
 - no upload, mint, or signing occurs through this export path
+
+## Release Boundaries
+
+Proof export is local-only.
+It is share-ready in structure but does not add hosting, deployment, wallet workflows, or live proof publication.
 
 ## Tests
 

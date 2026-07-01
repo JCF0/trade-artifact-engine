@@ -7,6 +7,8 @@ Slice 2A adds a local, read-only proof detail API for one v1.2 receipt selected 
 This slice uses the committed v1.3 Slice 1 inventory module as its only data source.
 It does not read legacy receipts by default, does not perform uploads or minting, and does not add any network calls.
 
+Proof detail is one of the v1.3 local proof surfaces added around committed v1.2 proof artifacts.
+
 ## Route
 
 - `GET /api/proof/:receiptHash`
@@ -55,6 +57,11 @@ The API includes explicit disclosure text:
 This is explanatory display text for the existing v1.2 valuation semantics.
 It does not add new valuation logic or any USD normalization.
 
+## Release Boundaries
+
+Proof detail is local-only and read-only.
+It is a selected-receipt surface, not a full track-record view.
+
 ## Non-Goals
 
 Slice 2A does not add:
@@ -63,6 +70,8 @@ Slice 2A does not add:
 - hosting
 - account login
 - wallet linking
+- proof wallet creation
+- mainnet release orchestration
 - price fetching
 - USD normalization
 - upload
