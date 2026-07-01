@@ -149,8 +149,28 @@
     .proof-grid { grid-template-columns: 1fr 1fr; }
   }
 
+  .section-copy { color: var(--text-dim); font-size: 12px; line-height: 1.5; margin-top: -2px; }
+  .section-copy + .section-copy { margin-top: 6px; }
+  .proof-lede { margin-top: 10px; display: grid; gap: 6px; }
+  .proof-mini-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .proof-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .proof-meta-inline { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; color: var(--text-dim); font-size: 11px; }
+  .proof-meta-inline span strong { color: var(--text); font-size: 11px; }
+  .proof-detail-header { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: rgba(88,166,255,0.04); margin-bottom: 14px; }
+  .proof-detail-title { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .proof-detail-title h3 { font-size: 15px; margin: 0; }
+  .proof-subtle { color: var(--text-dim); font-size: 11px; margin-top: 4px; line-height: 1.5; }
+  .proof-collapsible { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px; }
+  .proof-collapsible summary { cursor: pointer; color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; }
+  .proof-collapsible summary:hover { color: var(--accent); }
+  .proof-collapsible-body { margin-top: 12px; }
+  .proof-bullet-list { margin: 6px 0 0 18px; color: var(--text); font-size: 12px; }
+  .proof-bullet-list li { margin-bottom: 5px; }
+  .proof-link-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .proof-note-stack { display: grid; gap: 8px; }
   .proof-link { color: var(--accent); text-decoration: none; }
   .proof-link:hover { text-decoration: underline; }
+
 </style>
 </head>
 <body>
@@ -163,7 +183,8 @@
 
   <!-- Wallet / Filters -->
   <div class="card" id="filters-card">
-    <div class="card-title">Wallet &amp; Filters</div>
+    <div class="card-title">Wallet Scanner</div>
+    <div class="section-copy">Scan a wallet to reconstruct positions and generate local receipts. This area does not control the Local Proof Inventory below.</div>
     <div class="input-row">
       <input type="text" id="inp-wallet" placeholder="Wallet address" />
       <button class="btn" id="btn-scan" onclick="scanWallet()">Scan</button>
@@ -229,7 +250,10 @@
   <!-- Local Proof Inventory -->
   <div class="card proof-browser" id="proof-browser-card">
     <div class="card-title">Local Proof Inventory</div>
-    <div style="font-size:12px;color:var(--text-dim)">Read-only view of committed v1.2 proof receipts. Legacy inventory is not shown here by default.</div>
+    <div class="proof-lede">
+      <div class="section-copy">Local Proof Inventory shows v1.2 proof artifacts already generated in this workspace. It is not automatically filtered to the wallet currently scanned above.</div>
+      <div class="section-copy">This is a local read-only index of existing proof artifacts. Legacy inventory is not shown here by default.</div>
+    </div>
 
     <div id="proof-api-error" class="proof-error hidden" style="margin-top:12px"></div>
 
@@ -252,7 +276,7 @@
 
     <div class="proof-panels">
       <div class="proof-panel">
-        <div class="proof-section-title">Inventory</div>
+        <div class="proof-section-title">Workspace Receipts</div>
         <div id="proof-inventory-loading" class="proof-loading">Loading receipts...</div>
         <div id="proof-inventory-empty" class="proof-empty hidden">No receipts found.</div>
         <div id="proof-inventory-list" class="proof-list hidden"></div>
@@ -262,7 +286,7 @@
         <div class="proof-actions">
           <button class="btn btn-outline hidden" id="proof-back-btn" type="button">Back to Inventory</button>
         </div>
-        <div id="proof-detail-status" class="proof-empty">Select a receipt to view proof detail.</div>
+        <div id="proof-detail-status" class="proof-empty">Select a workspace receipt to inspect proof detail. This read-only view is separate from the Wallet Scanner above.</div>
         <div id="proof-detail-content" class="hidden"></div>
       </div>
     </div>
@@ -838,7 +862,7 @@ function renderProofInventoryList() {
   loadingEl.classList.add('hidden');
   if (proofState.filteredReceipts.length === 0) {
     listEl.classList.add('hidden');
-    emptyEl.textContent = proofState.receipts.length === 0 ? 'No receipts found.' : 'No receipts match the current filters.';
+    emptyEl.textContent = proofState.receipts.length === 0 ? 'No workspace proof receipts found.' : 'No receipts match the current filters.';
     emptyEl.classList.remove('hidden');
     return;
   }
@@ -852,23 +876,23 @@ function renderProofInventoryList() {
         <div class="proof-head">
           <div>
             <div class="proof-id">${escHtml(receipt.receipt_id || 'Not available')}</div>
-            <div class="proof-hash">${escHtml(shortHash(receipt.receipt_hash, 20))}</div>
+            <div class="proof-hash">${escHtml(shortHash(receipt.receipt_hash, 20))}  /  ${escHtml(receipt.receipt_type || 'Not available')}</div>
           </div>
           <div class="status-row">
             ${makePill(receipt.verification_status || 'unknown', categorizeStatus(receipt.verification_status))}
-            ${makePill(`hash ${receipt.hash_valid === true ? 'valid' : receipt.hash_valid === false ? 'invalid' : 'n/a'}`, boolKind(receipt.hash_valid))}
-            ${makePill(`verifier ${receipt.verifier_passed === true ? 'passed' : receipt.verifier_passed === false ? 'failed' : 'n/a'}`, boolKind(receipt.verifier_passed))}
+            ${makePill(receipt.valuation_status || 'unknown', categorizeStatus(receipt.valuation_status))}
           </div>
         </div>
-        <div class="proof-meta-grid">
-          <div class="proof-meta">Receipt Type<strong>${escHtml(receipt.receipt_type || 'Not available')}</strong></div>
-          <div class="proof-meta">Valuation<strong>${escHtml(receipt.valuation_status || 'Not available')}</strong></div>
-          <div class="proof-meta">Upload<strong>${escHtml(receipt.upload_status || 'Not available')}</strong></div>
-          <div class="proof-meta">Mint<strong>${escHtml(receipt.mint_status || 'Not available')}</strong></div>
-          <div class="proof-meta">Token<strong>${escHtml(shortHash(receipt.token_mint, 16))}</strong></div>
-          <div class="proof-meta">Quote<strong>${escHtml(receipt.quote_symbol || 'Not available')}</strong></div>
-          <div class="proof-meta">Timestamp<strong>${escHtml(timestamp ? tsFull(timestamp) : 'Not available')}</strong></div>
-          <div class="proof-meta">Position<strong>${escHtml(receipt.position_status || 'Not available')}</strong></div>
+        <div class="proof-chip-row">
+          ${makePill(`hash ${receipt.hash_valid === true ? 'valid' : receipt.hash_valid === false ? 'invalid' : 'n/a'}`, boolKind(receipt.hash_valid))}
+          ${makePill(`verifier ${receipt.verifier_passed === true ? 'passed' : receipt.verifier_passed === false ? 'failed' : 'n/a'}`, boolKind(receipt.verifier_passed))}
+          ${makePill(`upload ${receipt.upload_status || 'n/a'}`, categorizeStatus(receipt.upload_status))}
+          ${makePill(`mint ${receipt.mint_status || 'n/a'}`, categorizeStatus(receipt.mint_status))}
+        </div>
+        <div class="proof-meta-inline">
+          <span>Token <strong>${escHtml(shortHash(receipt.token_mint, 14))}</strong></span>
+          <span>Quote <strong>${escHtml(receipt.quote_symbol || 'Not available')}</strong></span>
+          <span>Time <strong>${escHtml(timestamp ? tsShort(timestamp) : 'Not available')}</strong></span>
         </div>
       </div>`;
   }).join('');
@@ -891,11 +915,27 @@ function renderProofStatus(message, kind = 'empty') {
 
 function renderProofArray(title, values) {
   const items = Array.isArray(values) ? values.filter(value => value != null && value !== '') : [];
+  if (items.length === 0) {
+    return `
+      <div class="proof-line">
+        <div class="proof-line-label">${escHtml(title)}</div>
+        <div class="proof-line-value">Not available</div>
+      </div>`;
+  }
+  return `
+    <div class="proof-line">
+      <div class="proof-line-label">${escHtml(title)}</div>
+      <div class="array-list">${items.map(value => `<div class="array-item">${escHtml(displayValue(value))}</div>`).join('')}</div>
+    </div>`;
+}
+
+function renderProofBulletList(title, values) {
+  const items = Array.isArray(values) ? values.filter(value => value != null && value !== '') : [];
   return `
     <div class="proof-line">
       <div class="proof-line-label">${escHtml(title)}</div>
       ${items.length > 0
-        ? `<div class="array-list">${items.map(value => `<div class="array-item">${escHtml(displayValue(value))}</div>`).join('')}</div>`
+        ? `<ul class="proof-bullet-list">${items.map(value => `<li>${escHtml(displayValue(value))}</li>`).join('')}</ul>`
         : '<div class="proof-line-value">Not available</div>'}
     </div>`;
 }
@@ -916,9 +956,31 @@ function renderProofSection(title, content) {
     </div>`;
 }
 
+function renderProofCollapsible(title, content) {
+  return `
+    <details class="proof-collapsible">
+      <summary>${escHtml(title)}</summary>
+      <div class="proof-collapsible-body">${content}</div>
+    </details>`;
+}
+
+function renderReadableLimitations(limitations) {
+  if (!limitations || typeof limitations !== 'object') {
+    return '<div class="proof-line-value">Not available</div>';
+  }
+
+  const items = Object.entries(limitations)
+    .filter(([key, value]) => key !== 'disclosures' && value != null && value !== '')
+    .map(([key, value]) => `<li>${escHtml(key.replace(/_/g, ' '))}: ${escHtml(displayValue(value))}</li>`);
+
+  return items.length > 0
+    ? `<ul class="proof-bullet-list">${items.join('')}</ul>`
+    : '<div class="proof-line-value">Not available</div>';
+}
+
 function renderProofDetail() {
   if (!proofState.detail) {
-    renderProofStatus('Select a receipt to view proof detail.');
+    renderProofStatus('Select a workspace receipt to inspect proof detail. This read-only view is separate from the Wallet Scanner above.');
     return;
   }
 
@@ -930,23 +992,39 @@ function renderProofDetail() {
   const artifacts = detail.artifacts || {};
   const flags = detail.flags_and_limitations || {};
   const links = detail.links || {};
+  const exportPath = `/api/proof/${encodeURIComponent(receipt.receipt_hash || '')}/export`;
 
-  const html = [
+  const visibleSections = [
+    `<div class="proof-detail-header">
+      <div class="proof-detail-title">
+        <div>
+          <h3>${escHtml(receipt.receipt_id || 'Selected Receipt')}</h3>
+          <div class="proof-subtle">${escHtml(shortHash(receipt.receipt_hash, 20))}  /  ${escHtml(receipt.receipt_type || 'Not available')}</div>
+        </div>
+        <div class="proof-link-row">
+          <a class="btn btn-outline" href="${escAttr(exportPath)}" target="_blank" rel="noopener noreferrer">Open Static Export</a>
+        </div>
+      </div>
+      <div class="proof-chip-row">
+        ${makePill(receipt.verification_status || 'unknown', categorizeStatus(receipt.verification_status))}
+        ${makePill(`hash ${verification.hash_valid === true ? 'valid' : verification.hash_valid === false ? 'invalid' : 'n/a'}`, boolKind(verification.hash_valid))}
+        ${makePill(`verifier ${verification.verifier_passed === true ? 'passed' : verification.verifier_passed === false ? 'failed' : 'n/a'}`, boolKind(verification.verifier_passed))}
+        ${makePill(`upload ${lifecycle.upload_status || 'n/a'}`, categorizeStatus(lifecycle.upload_status))}
+        ${makePill(`mint ${lifecycle.mint_status || 'n/a'}`, categorizeStatus(lifecycle.mint_status))}
+      </div>
+      <div class="proof-subtle">Selected receipt only. This local proof detail view reflects one existing workspace artifact and is not a full track-record view.</div>
+    </div>`,
     renderProofSection('Receipt', `
       <div class="proof-grid">
         ${renderProofFields([
           ['Receipt ID', receipt.receipt_id],
-          ['Receipt Hash', receipt.receipt_hash],
-          ['Receipt Version', receipt.receipt_version],
           ['Receipt Type', receipt.receipt_type],
           ['Verification Status', receipt.verification_status],
-          ['Display Status', receipt.display_status],
           ['Wallet', receipt.wallet],
           ['Chain', receipt.chain],
-          ['Token Mint', receipt.token_mint],
-          ['Quote Mint', receipt.quote_mint],
+          ['Token Mint', shortHash(receipt.token_mint, 18)],
+          ['Quote Mint', shortHash(receipt.quote_mint, 18)],
           ['Quote Symbol', receipt.quote_symbol],
-          ['Candidate Hash', receipt.candidate_hash],
           ['Valuation Status', receipt.valuation_status],
           ['Position Status', receipt.position_status],
           ['First Event At', receipt.first_event_at ? tsFull(receipt.first_event_at) : null],
@@ -959,7 +1037,6 @@ function renderProofDetail() {
         ${renderProofFields([
           ['Verification Status', verification.verification_status],
           ['Hash Valid', verification.hash_valid],
-          ['Recomputed Hash', verification.recomputed_hash],
           ['Verifier Passed', verification.verifier_passed],
           ['Schema Valid', verification.verifier_schema_valid],
           ['Consistency Valid', verification.verifier_consistency_valid],
@@ -967,7 +1044,7 @@ function renderProofDetail() {
           ['Proof Summary Violations', verification.proof_summary ? verification.proof_summary.violations : null],
         ])}
       </div>
-      ${renderProofArray('Verifier Rule Violations', verification.verifier_rule_violations)}`),
+      ${renderProofBulletList('Verifier Rule Violations', verification.verifier_rule_violations)}`),
     renderProofSection('Valuation', `
       <div class="proof-grid">
         ${renderProofFields([
@@ -977,7 +1054,7 @@ function renderProofDetail() {
           ['Quote Is USD Stable', valuation.valuation_context ? valuation.valuation_context.quote_is_usd_stable : null],
         ])}
       </div>
-      ${renderProofArray('Valuation Violations', valuation.valuation_context ? valuation.valuation_context.violations : [])}
+      ${renderProofBulletList('Valuation Violations', valuation.valuation_context ? valuation.valuation_context.violations : [])}
       <div class="notice-box">${escHtml(valuation.disclosure_text || 'Raw quote only. No USD normalization.')}</div>`),
     renderProofSection('Proof Lifecycle', `
       <div class="proof-grid">
@@ -987,21 +1064,29 @@ function renderProofDetail() {
           ['Upload Mode', lifecycle.upload_mode],
           ['Upload Network', lifecycle.upload_network],
           ['Uploaded At', lifecycle.uploaded_at],
-          ['Uploader Pubkey', lifecycle.uploader_pubkey],
           ['Mint Ready', lifecycle.mint_ready],
           ['Mint Status', lifecycle.mint_status],
           ['Mint Network', lifecycle.mint_network],
-          ['Proof Wallet Pubkey', lifecycle.proof_wallet_pubkey],
-          ['Mint Authority Pubkey', lifecycle.mint_authority_pubkey],
-          ['Mint Address', lifecycle.mint_address],
-          ['Token Account', lifecycle.token_account],
-          ['Transaction Signature', lifecycle.transaction_signature],
           ['Minted At', lifecycle.minted_at],
         ])}
       </div>
-      ${renderProofArray('Mint Blockers', lifecycle.mint_blockers)}
-      ${renderProofArray('Mint Required Steps', lifecycle.mint_required_steps)}`),
-    renderProofSection('Artifacts', `
+      ${renderProofBulletList('Mint Blockers', lifecycle.mint_blockers)}
+      ${renderProofBulletList('Mint Required Steps', lifecycle.mint_required_steps)}`),
+    renderProofSection('Warnings & Disclosures', `
+      <div class="proof-note-stack">
+        <div class="notice-box">${escHtml(flags.raw_quote_only_disclosure || 'Raw quote only. No USD normalization.')}</div>
+        <div class="notice-box">Selected receipt only. This detail view is not a full wallet track record or portfolio statement.</div>
+      </div>
+      ${renderProofBulletList('Flags', flags.flags)}
+      <div class="proof-line" style="margin-top:8px">
+        <div class="proof-line-label">Limitations</div>
+        ${renderReadableLimitations(flags.limitations)}
+      </div>
+      ${renderProofBulletList('Disclosures', flags.disclosures)}`),
+  ].join('');
+
+  const collapsedSections = [
+    renderProofCollapsible('Artifacts', `
       <div class="proof-grid">
         ${renderProofFields([
           ['Image Artifact Path', artifacts.image_artifact_path],
@@ -1017,31 +1102,40 @@ function renderProofDetail() {
           ['External URL', artifacts.external_url],
         ])}
       </div>`),
-    renderProofSection('Flags & Limitations', `
-      ${renderProofArray('Flags', flags.flags)}
-      <div class="proof-grid" style="margin-top:8px">
-        ${renderProofFields([
-          ['Limitations', flags.limitations ? JSON.stringify(flags.limitations) : null],
-          ['Raw Quote Disclosure', flags.raw_quote_only_disclosure],
-        ])}
-      </div>
-      ${renderProofArray('Disclosures', flags.disclosures)}`),
-    renderProofSection('Links', `
+    renderProofCollapsible('Links', `
       <div class="proof-grid">
         ${[
           ['Inventory Path', links.inventory_path],
           ['Inventory API Path', links.inventory_api_path],
           ['Proof API Path', links.proof_api_path],
+          ['Static Export Path', exportPath],
         ].map(([label, value]) => `
           <div class="proof-line">
             <div class="proof-line-label">${escHtml(label)}</div>
-            <div class="proof-line-value">${value ? `<a class="proof-link" href="${escAttr(value)}">${escHtml(value)}</a>` : 'Not available'}</div>
+            <div class="proof-line-value">${value ? `<a class="proof-link" href="${escAttr(value)}"${label === 'Static Export Path' ? ' target="_blank" rel="noopener noreferrer"' : ''}>${escHtml(value)}</a>` : 'Not available'}</div>
           </div>`).join('')}
+      </div>`),
+    renderProofCollapsible('Advanced Details', `
+      <div class="proof-grid">
+        ${renderProofFields([
+          ['Receipt Hash', receipt.receipt_hash],
+          ['Candidate Hash', receipt.candidate_hash],
+          ['Recomputed Hash', verification.recomputed_hash],
+          ['Receipt Version', receipt.receipt_version],
+          ['Display Status', receipt.display_status],
+          ['Uploader Pubkey', lifecycle.uploader_pubkey],
+          ['Proof Wallet Pubkey', lifecycle.proof_wallet_pubkey],
+          ['Mint Authority Pubkey', lifecycle.mint_authority_pubkey],
+          ['Mint Address', lifecycle.mint_address],
+          ['Token Account', lifecycle.token_account],
+          ['Transaction Signature', lifecycle.transaction_signature],
+          ['Raw Limitations JSON', flags.limitations ? JSON.stringify(flags.limitations, null, 2) : null],
+        ])}
       </div>`),
   ].join('');
 
   const detailEl = document.getElementById('proof-detail-content');
-  detailEl.innerHTML = html;
+  detailEl.innerHTML = `${visibleSections}${collapsedSections}`;
   detailEl.classList.remove('hidden');
   document.getElementById('proof-detail-status').classList.add('hidden');
 }
