@@ -192,6 +192,56 @@ function getInventoryRoot() {
     : ROOT;
 }
 
+function buildInventoryApiSnapshot(query, { includeLegacy = false } = {}) {
+  const parsed = parseInventoryQuery(query);
+  return buildInventorySnapshot({
+    engineRoot: getInventoryRoot(),
+    includeLegacy,
+    includeExcluded: parsed.includeExcluded,
+    filters: parsed.filters,
+    limit: parsed.limit,
+    offset: parsed.offset,
+  });
+}
+
+function buildInventorySummary(snapshot) {
+  const byReceiptType = {};
+  const byVerificationStatus = {};
+  const byUploadStatus = {};
+  const byMintStatus = {};
+  const byValuationStatus = {};
+  let hashValidTrue = 0;
+  let hashValidFalse = 0;
+  let verifierPassedTrue = 0;
+  let verifierPassedFalse = 0;
+
+  for (const receipt of snapshot.receipts) {
+    byReceiptType[receipt.receipt_type] = (byReceiptType[receipt.receipt_type] || 0) + 1;
+    byVerificationStatus[receipt.verification_status] = (byVerificationStatus[receipt.verification_status] || 0) + 1;
+    byUploadStatus[receipt.upload_status || 'not_available'] = (byUploadStatus[receipt.upload_status || 'not_available'] || 0) + 1;
+    byMintStatus[receipt.mint_status || 'not_minted'] = (byMintStatus[receipt.mint_status || 'not_minted'] || 0) + 1;
+    byValuationStatus[receipt.valuation_status || 'unknown'] = (byValuationStatus[receipt.valuation_status || 'unknown'] || 0) + 1;
+
+    if (receipt.hash_valid === true) hashValidTrue += 1;
+    if (receipt.hash_valid === false) hashValidFalse += 1;
+    if (receipt.verifier_passed === true) verifierPassedTrue += 1;
+    if (receipt.verifier_passed === false) verifierPassedFalse += 1;
+  }
+
+  return {
+    inventory_version: snapshot.inventory_version,
+    total_receipts: snapshot.counts.receipts,
+    returned_receipts: snapshot.counts.returned_receipts,
+    by_receipt_type: byReceiptType,
+    by_verification_status: byVerificationStatus,
+    by_upload_status: byUploadStatus,
+    by_mint_status: byMintStatus,
+    by_valuation_status: byValuationStatus,
+    hash_valid: { true: hashValidTrue, false: hashValidFalse },
+    verifier_passed: { true: verifierPassedTrue, false: verifierPassedFalse },
+  };
+}
+
 // ── GET /positions ──
 app.get('/positions', asyncHandler(async (req, res) => {
   const { wallet, token, from, to, maxTxns } = req.query;
@@ -435,6 +485,20 @@ app.get('/rebuild', asyncHandler(async (req, res) => {
   });
 }));
 
+// ── GET /api/inventory ──
+app.get('/api/inventory', asyncHandler(async (req, res) => {
+  const snapshot = buildInventoryApiSnapshot(req.query);
+  res.json(snapshot);
+}));
+
+// ── GET /api/inventory/summary ──
+app.get('/api/inventory/summary', asyncHandler(async (req, res) => {
+  const snapshot = buildInventoryApiSnapshot(req.query);
+  res.json({
+    summary: buildInventorySummary(snapshot),
+  });
+}));
+
 // ── GET /api/proof/:receiptHash ──
 app.get('/api/proof/:receiptHash', asyncHandler(async (req, res) => {
   const receipt = getInventoryReceipt(req.params.receiptHash, {
@@ -605,6 +669,9 @@ if (!process.env.TRADE_ARTIFACT_TEST) {
     console.log(`    GET  /positions/:id?wallet=...`);
     console.log(`    POST /positions/:id/receipt`);
     console.log(`    GET  /rebuild?wallet=...`);
+    console.log(`    GET  /api/inventory`);
+    console.log(`    GET  /api/inventory/summary`);
+    console.log(`    GET  /api/proof/:receiptHash`);
     console.log(`    GET  /receipt/:hash/image`);
     console.log(`\n  UI:  http://localhost:${PORT}/ui/`);
     console.log();

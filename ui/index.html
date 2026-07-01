@@ -27,11 +27,11 @@
 
   /* Inputs */
   .input-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-  input[type="text"], input[type="number"] {
+  input[type="text"], input[type="number"], select {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
     padding: 8px 12px; border-radius: 6px; font-family: var(--font); font-size: 13px; flex: 1; min-width: 120px;
   }
-  input:focus { outline: none; border-color: var(--accent); }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
   input::placeholder { color: var(--text-faint); }
   .btn {
     background: var(--accent); color: var(--bg); border: none; padding: 8px 20px;
@@ -104,6 +104,53 @@
   @media (min-width: 700px) {
     .panels { grid-template-columns: 340px 1fr; }
   }
+  /* Proof inventory */
+  .proof-browser { margin-top: 24px; }
+  .proof-panels { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 16px; }
+  .proof-panel { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 12px; }
+  .summary-chip { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
+  .summary-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .summary-value { margin-top: 4px; font-size: 18px; font-weight: 600; }
+  .summary-sub { margin-top: 4px; color: var(--text-dim); font-size: 10px; }
+  .proof-toolbar { margin-top: 12px; }
+  .proof-list { display: grid; gap: 10px; }
+  .proof-item { border: 1px solid var(--border); border-radius: 8px; padding: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  .proof-item:hover { border-color: var(--accent); }
+  .proof-item.active { border-color: var(--accent); background: rgba(88,166,255,0.06); }
+  .proof-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .proof-id { font-size: 13px; font-weight: 600; }
+  .proof-hash { color: var(--text-dim); font-size: 10px; margin-top: 4px; }
+  .proof-meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .proof-meta { font-size: 10px; color: var(--text-dim); }
+  .proof-meta strong { display: block; color: var(--text); font-size: 11px; margin-top: 2px; word-break: break-word; }
+  .status-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 10px; border: 1px solid var(--border); color: var(--text-dim); }
+  .pill.ok { border-color: var(--green); color: var(--green); }
+  .pill.warn { border-color: var(--yellow); color: var(--yellow); }
+  .pill.bad { border-color: var(--red); color: var(--red); }
+  .pill.neutral { border-color: var(--accent); color: var(--accent); }
+  .proof-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 10px; }
+  .proof-section-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px; }
+  .proof-section-block:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+  .proof-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .proof-line { font-size: 12px; }
+  .proof-line-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .proof-line-value { margin-top: 2px; word-break: break-word; }
+  .array-list { display: grid; gap: 6px; margin-top: 6px; }
+  .array-item { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 11px; word-break: break-word; }
+  .notice-box { background: rgba(88,166,255,0.08); border: 1px solid var(--accent); border-radius: 6px; padding: 10px; font-size: 11px; color: var(--text); margin-top: 8px; }
+  .proof-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .proof-empty { color: var(--text-dim); font-size: 12px; padding: 16px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
+  .proof-error { color: var(--red); font-size: 12px; padding: 12px; border: 1px solid rgba(248,81,73,0.4); border-radius: 8px; background: rgba(248,81,73,0.08); }
+  .proof-loading { color: var(--text-dim); font-size: 12px; padding: 16px; text-align: center; }
+  @media (min-width: 900px) {
+    .proof-panels { grid-template-columns: 420px 1fr; }
+    .proof-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  .proof-link { color: var(--accent); text-decoration: none; }
+  .proof-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -177,6 +224,50 @@
       </div>
     </div>
   </div>
+
+
+  <!-- Local Proof Inventory -->
+  <div class="card proof-browser" id="proof-browser-card">
+    <div class="card-title">Local Proof Inventory</div>
+    <div style="font-size:12px;color:var(--text-dim)">Read-only view of committed v1.2 proof receipts. Legacy inventory is not shown here by default.</div>
+
+    <div id="proof-api-error" class="proof-error hidden" style="margin-top:12px"></div>
+
+    <div id="proof-summary-loading" class="proof-loading">Loading proof inventory summary...</div>
+    <div id="proof-summary" class="summary-grid hidden"></div>
+
+    <div class="proof-toolbar">
+      <div class="input-row">
+        <input type="text" id="proof-search" placeholder="Search receipt_id, receipt_hash, token_mint" />
+        <select id="proof-filter-type"></select>
+        <select id="proof-filter-verification"></select>
+      </div>
+      <div class="input-row">
+        <select id="proof-filter-upload"></select>
+        <select id="proof-filter-mint"></select>
+        <select id="proof-filter-valuation"></select>
+        <button class="btn btn-outline" id="proof-clear-filters" type="button">Clear Filters</button>
+      </div>
+    </div>
+
+    <div class="proof-panels">
+      <div class="proof-panel">
+        <div class="proof-section-title">Inventory</div>
+        <div id="proof-inventory-loading" class="proof-loading">Loading receipts...</div>
+        <div id="proof-inventory-empty" class="proof-empty hidden">No receipts found.</div>
+        <div id="proof-inventory-list" class="proof-list hidden"></div>
+      </div>
+
+      <div class="proof-panel">
+        <div class="proof-actions">
+          <button class="btn btn-outline hidden" id="proof-back-btn" type="button">Back to Inventory</button>
+        </div>
+        <div id="proof-detail-status" class="proof-empty">Select a receipt to view proof detail.</div>
+        <div id="proof-detail-content" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -190,6 +281,30 @@ let state = {
   mode: 'verified',
   removedLegs: new Set(),
   receipt: null,
+};
+
+
+let proofState = {
+  receipts: [],
+  filteredReceipts: [],
+  summary: null,
+  selectedReceiptHash: null,
+  detail: null,
+  filters: {
+    search: '',
+    receipt_type: '',
+    verification_status: '',
+    upload_status: '',
+    mint_status: '',
+    valuation_status: '',
+  },
+  loadingInventory: false,
+  loadingSummary: false,
+  loadingDetail: false,
+  apiUnavailable: false,
+  inventoryError: '',
+  summaryError: '',
+  detailError: '',
 };
 
 // ── API calls ──
@@ -584,6 +699,487 @@ function renderReceipt() {
 
 // ── Helpers ──
 
+// Proof inventory browser
+
+function shortHash(value, size = 12) {
+  if (!value) return 'Not available';
+  return value.length <= size ? value : `${value.slice(0, size)}...`;
+}
+
+function displayValue(value) {
+  if (value == null || value === '') return 'Not available';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) return value.length === 0 ? 'Not available' : value.join(', ');
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+function setProofApiError(message) {
+  const el = document.getElementById('proof-api-error');
+  if (!message) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    return;
+  }
+  el.textContent = message;
+  el.classList.remove('hidden');
+}
+
+function refreshProofApiError() {
+  const message = proofState.inventoryError || proofState.summaryError || '';
+  setProofApiError(message);
+}
+
+function makePill(label, kind = 'neutral') {
+  return `<span class="pill ${kind}">${escHtml(label)}</span>`;
+}
+
+function boolKind(value) {
+  if (value === true) return 'ok';
+  if (value === false) return 'bad';
+  return 'neutral';
+}
+
+function categorizeStatus(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (!normalized || normalized === 'not_available' || normalized === 'not_minted') return 'neutral';
+  if (normalized.includes('complete') || normalized.includes('minted') || normalized.includes('verified')) return 'ok';
+  if (normalized.includes('simulated') || normalized.includes('dry') || normalized.includes('missing') || normalized.includes('blocked')) return 'warn';
+  if (normalized.includes('fail') || normalized.includes('error')) return 'bad';
+  return 'neutral';
+}
+
+function fillSelectOptions(id, values, placeholder) {
+  const select = document.getElementById(id);
+  const current = select.value;
+  const options = ['<option value="">' + escHtml(placeholder) + '</option>']
+    .concat(values.map(value => `<option value="${escAttr(value)}">${escHtml(value)}</option>`));
+  select.innerHTML = options.join('');
+  if (values.includes(current)) select.value = current;
+}
+
+function populateProofFilterOptions() {
+  const receipts = proofState.receipts;
+  const valuesFor = key => [...new Set(receipts.map(receipt => receipt[key]).filter(Boolean))].sort();
+  fillSelectOptions('proof-filter-type', valuesFor('receipt_type'), 'All receipt types');
+  fillSelectOptions('proof-filter-verification', valuesFor('verification_status'), 'All verification states');
+  fillSelectOptions('proof-filter-upload', valuesFor('upload_status'), 'All upload states');
+  fillSelectOptions('proof-filter-mint', valuesFor('mint_status'), 'All mint states');
+  fillSelectOptions('proof-filter-valuation', valuesFor('valuation_status'), 'All valuation states');
+}
+
+function applyProofFilters() {
+  const search = proofState.filters.search.trim().toLowerCase();
+  proofState.filteredReceipts = proofState.receipts.filter(receipt => {
+    if (proofState.filters.receipt_type && receipt.receipt_type !== proofState.filters.receipt_type) return false;
+    if (proofState.filters.verification_status && receipt.verification_status !== proofState.filters.verification_status) return false;
+    if (proofState.filters.upload_status && (receipt.upload_status || '') !== proofState.filters.upload_status) return false;
+    if (proofState.filters.mint_status && (receipt.mint_status || '') !== proofState.filters.mint_status) return false;
+    if (proofState.filters.valuation_status && receipt.valuation_status !== proofState.filters.valuation_status) return false;
+    if (!search) return true;
+    return [receipt.receipt_id, receipt.receipt_hash, receipt.token_mint]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(search));
+  });
+  renderProofInventoryList();
+}
+
+function renderProofSummary() {
+  const loadingEl = document.getElementById('proof-summary-loading');
+  const summaryEl = document.getElementById('proof-summary');
+  if (proofState.loadingSummary) {
+    loadingEl.classList.remove('hidden');
+    summaryEl.classList.add('hidden');
+    return;
+  }
+  loadingEl.classList.add('hidden');
+  if (!proofState.summary) {
+    summaryEl.classList.add('hidden');
+    return;
+  }
+
+  const summary = proofState.summary;
+  const minted = summary.by_mint_status?.minted || 0;
+  const uploaded = summary.by_upload_status?.complete || 0;
+  const verified = Object.entries(summary.by_verification_status || {})
+    .filter(([key]) => key && key.startsWith('verified'))
+    .reduce((sum, [, value]) => sum + value, 0);
+
+  const chips = [
+    { label: 'Total Receipts', value: summary.total_receipts, sub: `returned ${summary.returned_receipts}` },
+    { label: 'Verified States', value: verified, sub: Object.entries(summary.by_verification_status || {}).map(([k, v]) => `${k}:${v}`).join(' / ') || 'Not available' },
+    { label: 'Hash Valid', value: summary.hash_valid?.true ?? 0, sub: `invalid ${summary.hash_valid?.false ?? 0}` },
+    { label: 'Verifier Passed', value: summary.verifier_passed?.true ?? 0, sub: `failed ${summary.verifier_passed?.false ?? 0}` },
+    { label: 'Uploads Complete', value: uploaded, sub: Object.entries(summary.by_upload_status || {}).map(([k, v]) => `${k}:${v}`).join(' / ') || 'Not available' },
+    { label: 'Minted', value: minted, sub: Object.entries(summary.by_mint_status || {}).map(([k, v]) => `${k}:${v}`).join(' / ') || 'Not available' },
+  ];
+
+  summaryEl.innerHTML = chips.map(chip => `
+    <div class="summary-chip">
+      <div class="summary-label">${escHtml(chip.label)}</div>
+      <div class="summary-value">${escHtml(String(chip.value))}</div>
+      <div class="summary-sub">${escHtml(chip.sub)}</div>
+    </div>`).join('');
+  summaryEl.classList.remove('hidden');
+}
+
+function renderProofInventoryList() {
+  const loadingEl = document.getElementById('proof-inventory-loading');
+  const emptyEl = document.getElementById('proof-inventory-empty');
+  const listEl = document.getElementById('proof-inventory-list');
+
+  if (proofState.loadingInventory) {
+    loadingEl.classList.remove('hidden');
+    emptyEl.classList.add('hidden');
+    listEl.classList.add('hidden');
+    return;
+  }
+
+  loadingEl.classList.add('hidden');
+  if (proofState.filteredReceipts.length === 0) {
+    listEl.classList.add('hidden');
+    emptyEl.textContent = proofState.receipts.length === 0 ? 'No receipts found.' : 'No receipts match the current filters.';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+
+  emptyEl.classList.add('hidden');
+  listEl.innerHTML = proofState.filteredReceipts.map(receipt => {
+    const active = proofState.selectedReceiptHash === receipt.receipt_hash ? 'active' : '';
+    const timestamp = receipt.last_event_at || receipt.snapshot_at || receipt.first_event_at;
+    return `
+      <div class="proof-item ${active}" data-hash="${escAttr(receipt.receipt_hash)}">
+        <div class="proof-head">
+          <div>
+            <div class="proof-id">${escHtml(receipt.receipt_id || 'Not available')}</div>
+            <div class="proof-hash">${escHtml(shortHash(receipt.receipt_hash, 20))}</div>
+          </div>
+          <div class="status-row">
+            ${makePill(receipt.verification_status || 'unknown', categorizeStatus(receipt.verification_status))}
+            ${makePill(`hash ${receipt.hash_valid === true ? 'valid' : receipt.hash_valid === false ? 'invalid' : 'n/a'}`, boolKind(receipt.hash_valid))}
+            ${makePill(`verifier ${receipt.verifier_passed === true ? 'passed' : receipt.verifier_passed === false ? 'failed' : 'n/a'}`, boolKind(receipt.verifier_passed))}
+          </div>
+        </div>
+        <div class="proof-meta-grid">
+          <div class="proof-meta">Receipt Type<strong>${escHtml(receipt.receipt_type || 'Not available')}</strong></div>
+          <div class="proof-meta">Valuation<strong>${escHtml(receipt.valuation_status || 'Not available')}</strong></div>
+          <div class="proof-meta">Upload<strong>${escHtml(receipt.upload_status || 'Not available')}</strong></div>
+          <div class="proof-meta">Mint<strong>${escHtml(receipt.mint_status || 'Not available')}</strong></div>
+          <div class="proof-meta">Token<strong>${escHtml(shortHash(receipt.token_mint, 16))}</strong></div>
+          <div class="proof-meta">Quote<strong>${escHtml(receipt.quote_symbol || 'Not available')}</strong></div>
+          <div class="proof-meta">Timestamp<strong>${escHtml(timestamp ? tsFull(timestamp) : 'Not available')}</strong></div>
+          <div class="proof-meta">Position<strong>${escHtml(receipt.position_status || 'Not available')}</strong></div>
+        </div>
+      </div>`;
+  }).join('');
+  listEl.classList.remove('hidden');
+
+  listEl.querySelectorAll('.proof-item').forEach(item => {
+    item.addEventListener('click', () => loadProofDetail(item.dataset.hash));
+  });
+}
+
+function renderProofStatus(message, kind = 'empty') {
+  const statusEl = document.getElementById('proof-detail-status');
+  const detailEl = document.getElementById('proof-detail-content');
+  detailEl.classList.add('hidden');
+  detailEl.innerHTML = '';
+  statusEl.className = kind === 'error' ? 'proof-error' : kind === 'loading' ? 'proof-loading' : 'proof-empty';
+  statusEl.textContent = message;
+  statusEl.classList.remove('hidden');
+}
+
+function renderProofArray(title, values) {
+  const items = Array.isArray(values) ? values.filter(value => value != null && value !== '') : [];
+  return `
+    <div class="proof-line">
+      <div class="proof-line-label">${escHtml(title)}</div>
+      ${items.length > 0
+        ? `<div class="array-list">${items.map(value => `<div class="array-item">${escHtml(displayValue(value))}</div>`).join('')}</div>`
+        : '<div class="proof-line-value">Not available</div>'}
+    </div>`;
+}
+
+function renderProofFields(fields) {
+  return fields.map(([label, value]) => `
+    <div class="proof-line">
+      <div class="proof-line-label">${escHtml(label)}</div>
+      <div class="proof-line-value">${escHtml(displayValue(value))}</div>
+    </div>`).join('');
+}
+
+function renderProofSection(title, content) {
+  return `
+    <div class="proof-section-block">
+      <div class="proof-section-title">${escHtml(title)}</div>
+      ${content}
+    </div>`;
+}
+
+function renderProofDetail() {
+  if (!proofState.detail) {
+    renderProofStatus('Select a receipt to view proof detail.');
+    return;
+  }
+
+  const detail = proofState.detail;
+  const receipt = detail.receipt || {};
+  const verification = detail.verification || {};
+  const valuation = detail.valuation || {};
+  const lifecycle = detail.proof_lifecycle || {};
+  const artifacts = detail.artifacts || {};
+  const flags = detail.flags_and_limitations || {};
+  const links = detail.links || {};
+
+  const html = [
+    renderProofSection('Receipt', `
+      <div class="proof-grid">
+        ${renderProofFields([
+          ['Receipt ID', receipt.receipt_id],
+          ['Receipt Hash', receipt.receipt_hash],
+          ['Receipt Version', receipt.receipt_version],
+          ['Receipt Type', receipt.receipt_type],
+          ['Verification Status', receipt.verification_status],
+          ['Display Status', receipt.display_status],
+          ['Wallet', receipt.wallet],
+          ['Chain', receipt.chain],
+          ['Token Mint', receipt.token_mint],
+          ['Quote Mint', receipt.quote_mint],
+          ['Quote Symbol', receipt.quote_symbol],
+          ['Candidate Hash', receipt.candidate_hash],
+          ['Valuation Status', receipt.valuation_status],
+          ['Position Status', receipt.position_status],
+          ['First Event At', receipt.first_event_at ? tsFull(receipt.first_event_at) : null],
+          ['Last Event At', receipt.last_event_at ? tsFull(receipt.last_event_at) : null],
+          ['Snapshot At', receipt.snapshot_at ? tsFull(receipt.snapshot_at) : null],
+        ])}
+      </div>`),
+    renderProofSection('Verification', `
+      <div class="proof-grid">
+        ${renderProofFields([
+          ['Verification Status', verification.verification_status],
+          ['Hash Valid', verification.hash_valid],
+          ['Recomputed Hash', verification.recomputed_hash],
+          ['Verifier Passed', verification.verifier_passed],
+          ['Schema Valid', verification.verifier_schema_valid],
+          ['Consistency Valid', verification.verifier_consistency_valid],
+          ['Proof Summary Status', verification.proof_summary ? verification.proof_summary.verification_status : null],
+          ['Proof Summary Violations', verification.proof_summary ? verification.proof_summary.violations : null],
+        ])}
+      </div>
+      ${renderProofArray('Verifier Rule Violations', verification.verifier_rule_violations)}`),
+    renderProofSection('Valuation', `
+      <div class="proof-grid">
+        ${renderProofFields([
+          ['Valuation Status', valuation.valuation_status],
+          ['Valuation Valid', valuation.valuation_valid],
+          ['Valuation Currency', valuation.valuation_context ? valuation.valuation_context.valuation_currency : null],
+          ['Quote Is USD Stable', valuation.valuation_context ? valuation.valuation_context.quote_is_usd_stable : null],
+        ])}
+      </div>
+      ${renderProofArray('Valuation Violations', valuation.valuation_context ? valuation.valuation_context.violations : [])}
+      <div class="notice-box">${escHtml(valuation.disclosure_text || 'Raw quote only. No USD normalization.')}</div>`),
+    renderProofSection('Proof Lifecycle', `
+      <div class="proof-grid">
+        ${renderProofFields([
+          ['Image Status', lifecycle.image_status],
+          ['Upload Status', lifecycle.upload_status],
+          ['Upload Mode', lifecycle.upload_mode],
+          ['Upload Network', lifecycle.upload_network],
+          ['Uploaded At', lifecycle.uploaded_at],
+          ['Uploader Pubkey', lifecycle.uploader_pubkey],
+          ['Mint Ready', lifecycle.mint_ready],
+          ['Mint Status', lifecycle.mint_status],
+          ['Mint Network', lifecycle.mint_network],
+          ['Proof Wallet Pubkey', lifecycle.proof_wallet_pubkey],
+          ['Mint Authority Pubkey', lifecycle.mint_authority_pubkey],
+          ['Mint Address', lifecycle.mint_address],
+          ['Token Account', lifecycle.token_account],
+          ['Transaction Signature', lifecycle.transaction_signature],
+          ['Minted At', lifecycle.minted_at],
+        ])}
+      </div>
+      ${renderProofArray('Mint Blockers', lifecycle.mint_blockers)}
+      ${renderProofArray('Mint Required Steps', lifecycle.mint_required_steps)}`),
+    renderProofSection('Artifacts', `
+      <div class="proof-grid">
+        ${renderProofFields([
+          ['Image Artifact Path', artifacts.image_artifact_path],
+          ['Image Artifact Hash', artifacts.image_artifact_hash],
+          ['Metadata Name', artifacts.metadata_name],
+          ['Metadata Template Path', artifacts.metadata_template_path],
+          ['Resolved Metadata Path', artifacts.resolved_metadata_path],
+          ['Final Metadata Path', artifacts.final_metadata_path],
+          ['Final Image URI', artifacts.final_image_uri],
+          ['Final Metadata URI', artifacts.final_metadata_uri],
+          ['Metadata URI', artifacts.metadata_uri],
+          ['Image URI', artifacts.image_uri],
+          ['External URL', artifacts.external_url],
+        ])}
+      </div>`),
+    renderProofSection('Flags & Limitations', `
+      ${renderProofArray('Flags', flags.flags)}
+      <div class="proof-grid" style="margin-top:8px">
+        ${renderProofFields([
+          ['Limitations', flags.limitations ? JSON.stringify(flags.limitations) : null],
+          ['Raw Quote Disclosure', flags.raw_quote_only_disclosure],
+        ])}
+      </div>
+      ${renderProofArray('Disclosures', flags.disclosures)}`),
+    renderProofSection('Links', `
+      <div class="proof-grid">
+        ${[
+          ['Inventory Path', links.inventory_path],
+          ['Inventory API Path', links.inventory_api_path],
+          ['Proof API Path', links.proof_api_path],
+        ].map(([label, value]) => `
+          <div class="proof-line">
+            <div class="proof-line-label">${escHtml(label)}</div>
+            <div class="proof-line-value">${value ? `<a class="proof-link" href="${escAttr(value)}">${escHtml(value)}</a>` : 'Not available'}</div>
+          </div>`).join('')}
+      </div>`),
+  ].join('');
+
+  const detailEl = document.getElementById('proof-detail-content');
+  detailEl.innerHTML = html;
+  detailEl.classList.remove('hidden');
+  document.getElementById('proof-detail-status').classList.add('hidden');
+}
+
+function updateProofQuery(receiptHash) {
+  const url = new URL(window.location.href);
+  if (receiptHash) {
+    url.searchParams.set('receipt_hash', receiptHash);
+  } else {
+    url.searchParams.delete('receipt_hash');
+  }
+  window.history.replaceState({}, '', url);
+}
+
+async function loadProofInventory() {
+  proofState.loadingInventory = true;
+  proofState.apiUnavailable = false;
+  renderProofInventoryList();
+  try {
+    const data = await api('/api/inventory');
+    proofState.receipts = Array.isArray(data.receipts) ? data.receipts : [];
+    populateProofFilterOptions();
+    applyProofFilters();
+    proofState.inventoryError = '';
+    refreshProofApiError();
+  } catch (error) {
+    proofState.receipts = [];
+    proofState.filteredReceipts = [];
+    proofState.apiUnavailable = true;
+    proofState.inventoryError = `Proof inventory API unavailable: ${error.message}`;
+    refreshProofApiError();
+    renderProofInventoryList();
+  } finally {
+    proofState.loadingInventory = false;
+    renderProofInventoryList();
+  }
+}
+
+async function loadProofSummary() {
+  proofState.loadingSummary = true;
+  renderProofSummary();
+  try {
+    const data = await api('/api/inventory/summary');
+    proofState.summary = data.summary || null;
+    proofState.summaryError = '';
+    refreshProofApiError();
+  } catch (error) {
+    proofState.summary = null;
+    proofState.summaryError = `Proof inventory API unavailable: ${error.message}`;
+    refreshProofApiError();
+  } finally {
+    proofState.loadingSummary = false;
+    renderProofSummary();
+  }
+}
+
+async function loadProofDetail(receiptHash) {
+  proofState.selectedReceiptHash = receiptHash;
+  proofState.detail = null;
+  proofState.detailError = '';
+  document.getElementById('proof-back-btn').classList.remove('hidden');
+  renderProofInventoryList();
+  renderProofStatus('Loading proof detail...', 'loading');
+  updateProofQuery(receiptHash);
+
+  try {
+    const detail = await api(`/api/proof/${encodeURIComponent(receiptHash)}`);
+    proofState.detail = detail;
+    renderProofDetail();
+  } catch (error) {
+    proofState.detail = null;
+    proofState.detailError = error.message;
+    const notFound = /No proof detail found/i.test(error.message) || /HTTP 404/i.test(error.message);
+    renderProofStatus(notFound ? `Proof detail not found for receipt_hash: ${receiptHash}` : `Proof detail unavailable: ${error.message}`, notFound ? 'empty' : 'error');
+  }
+}
+
+function clearProofDetail() {
+  proofState.selectedReceiptHash = null;
+  proofState.detail = null;
+  proofState.detailError = '';
+  document.getElementById('proof-back-btn').classList.add('hidden');
+  updateProofQuery('');
+  renderProofInventoryList();
+  renderProofStatus('Select a receipt to view proof detail.');
+}
+
+function bindProofFilters() {
+  const searchEl = document.getElementById('proof-search');
+  searchEl.addEventListener('input', event => {
+    proofState.filters.search = event.target.value;
+    applyProofFilters();
+  });
+
+  [
+    ['proof-filter-type', 'receipt_type'],
+    ['proof-filter-verification', 'verification_status'],
+    ['proof-filter-upload', 'upload_status'],
+    ['proof-filter-mint', 'mint_status'],
+    ['proof-filter-valuation', 'valuation_status'],
+  ].forEach(([id, key]) => {
+    document.getElementById(id).addEventListener('change', event => {
+      proofState.filters[key] = event.target.value;
+      applyProofFilters();
+    });
+  });
+
+  document.getElementById('proof-clear-filters').addEventListener('click', () => {
+    proofState.filters = {
+      search: '',
+      receipt_type: '',
+      verification_status: '',
+      upload_status: '',
+      mint_status: '',
+      valuation_status: '',
+    };
+    document.getElementById('proof-search').value = '';
+    document.getElementById('proof-filter-type').value = '';
+    document.getElementById('proof-filter-verification').value = '';
+    document.getElementById('proof-filter-upload').value = '';
+    document.getElementById('proof-filter-mint').value = '';
+    document.getElementById('proof-filter-valuation').value = '';
+    applyProofFilters();
+  });
+
+  document.getElementById('proof-back-btn').addEventListener('click', clearProofDetail);
+}
+
+async function initProofBrowser() {
+  bindProofFilters();
+  await Promise.all([loadProofSummary(), loadProofInventory()]);
+
+  const requestedHash = new URLSearchParams(window.location.search).get('receipt_hash');
+  if (requestedHash) {
+    await loadProofDetail(requestedHash);
+  }
+}
+
 function tsShort(epoch) {
   if (!epoch) return '-';
   const d = new Date(epoch * 1000);
@@ -594,7 +1190,10 @@ function tsFull(epoch) {
   return new Date(epoch * 1000).toISOString().slice(0,19) + 'Z';
 }
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(s) {
+  return escHtml(String(s)).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
@@ -605,6 +1204,8 @@ function hideError() { document.getElementById('scan-error').classList.add('hidd
 document.getElementById('inp-wallet').addEventListener('keydown', e => {
   if (e.key === 'Enter') scanWallet();
 });
+
+initProofBrowser();
 </script>
 </body>
 </html>
