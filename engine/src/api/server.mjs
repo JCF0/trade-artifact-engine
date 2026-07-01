@@ -30,26 +30,44 @@ import { classifyAll, formatCoverageReport } from '../pipeline/classifier.mjs';
 import { TokenMetadataCache, collectMintsFromPositions, enrichPositions } from '../pipeline/token-metadata.mjs';
 import { TransactionCache } from '../pipeline/tx-cache.mjs';
 import { DEX_PROGRAMS } from '../pipeline/constants.mjs';
+import {
+  buildInventorySnapshot,
+  getInventoryReceipt,
+  getLegacyInventoryReceipt,
+  listLegacyInventory,
+  parseInventoryQuery,
+} from '../inventory/inventory.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
 const RENDERS_DIR = resolve(ROOT, 'data', 'renders');
 mkdirSync(RENDERS_DIR, { recursive: true });
 
-// ── Load Helius key ──
+// ── Load Helius key lazily ──
 const envPath = resolve(process.env.USERPROFILE || process.env.HOME, '.openclaw', '.env');
-let API_KEY = '';
-try {
-  const envContent = readFileSync(envPath, 'utf-8');
-  const match = envContent.match(/^HELIUS_API_KEY=(.+)$/m);
-  if (match) API_KEY = match[1].trim().replace(/^["']|["']$/g, '');
-} catch {}
+let API_KEY;
+let tokenMetadataCache;
 
-// ── Token metadata cache (shared across all wallets) ──
-const tokenMetadataCache = new TokenMetadataCache({
-  heliusApiKey: API_KEY,
-  cacheDir: resolve(ROOT, 'data', 'cache'),
-});
+function loadApiKey() {
+  if (API_KEY !== undefined) return API_KEY;
+  API_KEY = '';
+  try {
+    const envContent = readFileSync(envPath, 'utf-8');
+    const match = envContent.match(/^HELIUS_API_KEY=(.+)$/m);
+    if (match) API_KEY = match[1].trim().replace(/^["']|["']$/g, '');
+  } catch {}
+  return API_KEY;
+}
+
+function getTokenMetadataCache() {
+  if (!tokenMetadataCache) {
+    tokenMetadataCache = new TokenMetadataCache({
+      heliusApiKey: loadApiKey(),
+      cacheDir: resolve(ROOT, 'data', 'cache'),
+    });
+  }
+  return tokenMetadataCache;
+}
 
 // ── Transaction cache (per-wallet, disk-persisted) ──
 const txCache = new TransactionCache({
@@ -63,6 +81,7 @@ const txCache = new TransactionCache({
 const pipelineCache = new Map();
 
 async function runPipeline(wallet, { token, from, to, maxTxns = 5000 } = {}) {
+  const API_KEY = loadApiKey();
   if (!API_KEY) throw { status: 500, message: 'HELIUS_API_KEY not configured' };
 
   // Cache key includes wallet (maxTxns affects fetch depth, not cache key)
@@ -121,6 +140,7 @@ async function runPipeline(wallet, { token, from, to, maxTxns = 5000 } = {}) {
 
   // Resolve token metadata for all mints
   const allMints = collectMintsFromPositions(normalized);
+  const tokenMetadataCache = getTokenMetadataCache();
   await tokenMetadataCache.resolve(allMints);
   enrichPositions(normalized, tokenMetadataCache);
 
@@ -163,6 +183,12 @@ function asyncHandler(fn) {
       res.status(status).json({ error: message });
     });
   };
+}
+
+function getInventoryRoot() {
+  return process.env.TRADE_ARTIFACT_INVENTORY_ROOT
+    ? resolve(process.env.TRADE_ARTIFACT_INVENTORY_ROOT)
+    : ROOT;
 }
 
 // ── GET /positions ──
@@ -408,6 +434,66 @@ app.get('/rebuild', asyncHandler(async (req, res) => {
   });
 }));
 
+// ── GET /inventory/legacy ──
+app.get('/inventory/legacy', asyncHandler(async (req, res) => {
+  const { includeExcluded } = parseInventoryQuery(req.query);
+  const legacyReceipts = listLegacyInventory({
+    engineRoot: getInventoryRoot(),
+    includeExcluded,
+  });
+
+  res.json({
+    count: legacyReceipts.length,
+    legacy_receipts: legacyReceipts,
+  });
+}));
+
+// ── GET /inventory/legacy/:verificationHash ──
+app.get('/inventory/legacy/:verificationHash', asyncHandler(async (req, res) => {
+  const { includeExcluded } = parseInventoryQuery(req.query);
+  const legacyReceipt = getLegacyInventoryReceipt(req.params.verificationHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded,
+  });
+
+  if (!legacyReceipt) {
+    return res.status(404).json({ error: `No legacy receipt found for verification_hash: ${req.params.verificationHash}` });
+  }
+
+  res.json({ legacy_receipt: legacyReceipt });
+}));
+
+// ── GET /inventory ──
+app.get('/inventory', asyncHandler(async (req, res) => {
+  const query = parseInventoryQuery(req.query);
+  // Legacy inventory stays explicit and separate on /inventory/legacy routes,
+  // so include_legacy/includeLegacy is intentionally ignored here.
+  const snapshot = buildInventorySnapshot({
+    engineRoot: getInventoryRoot(),
+    includeLegacy: false,
+    includeExcluded: query.includeExcluded,
+    filters: query.filters,
+    limit: query.limit,
+    offset: query.offset,
+  });
+  res.json(snapshot);
+}));
+
+// ── GET /inventory/:receiptHash ──
+app.get('/inventory/:receiptHash', asyncHandler(async (req, res) => {
+  const query = parseInventoryQuery(req.query);
+  const receipt = getInventoryReceipt(req.params.receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: query.includeExcluded,
+  });
+
+  if (!receipt) {
+    return res.status(404).json({ error: `No inventory receipt found for receipt_hash: ${req.params.receiptHash}` });
+  }
+
+  res.json({ receipt });
+}));
+
 // ── GET /receipt/:hash/image ──
 app.get('/receipt/:hash/image', (req, res) => {
   const hash = req.params.hash;
@@ -463,13 +549,18 @@ app.get('/coverage', asyncHandler(async (req, res) => {
 
 // ── GET /token/:mint — resolve token metadata ──
 app.get('/token/:mint', asyncHandler(async (req, res) => {
+  const tokenMetadataCache = getTokenMetadataCache();
   const meta = await tokenMetadataCache.getOrResolve(req.params.mint);
   res.json(meta);
 }));
 
 // ── Health check ──
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', api_key_configured: !!API_KEY, token_cache_size: tokenMetadataCache.size });
+  res.json({
+    status: 'ok',
+    api_key_configured: API_KEY === undefined ? false : !!API_KEY,
+    token_cache_size: tokenMetadataCache ? tokenMetadataCache.size : 0,
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -485,12 +576,13 @@ export default app;
 
 // Listen when run directly. Tests set TRADE_ARTIFACT_TEST=1 to skip.
 if (!process.env.TRADE_ARTIFACT_TEST) {
+  const startupApiKey = loadApiKey();
   const server = app.listen(PORT, () => {
     console.log(`\n╔════════════════════════════════════════════════════════════╗`);
     console.log(`║  Trade Artifact API Server                                ║`);
     console.log(`╚════════════════════════════════════════════════════════════╝`);
     console.log(`  Port:     ${PORT}`);
-    console.log(`  API key:  ${API_KEY ? 'configured' : '⚠️  NOT CONFIGURED'}`);
+    console.log(`  API key:  ${startupApiKey ? 'configured' : '⚠️  NOT CONFIGURED'}`);
     console.log(`  Renders:  ${RENDERS_DIR}`);
     console.log(`\n  Endpoints:`);
     console.log(`    GET  /health`);
