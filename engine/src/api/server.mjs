@@ -38,6 +38,7 @@ import {
   parseInventoryQuery,
 } from '../inventory/inventory.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
+import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
@@ -513,6 +514,22 @@ app.get('/api/proof/:receiptHash', asyncHandler(async (req, res) => {
   res.json(buildProofDetailView(receipt));
 }));
 
+// ── GET /api/proof/:receiptHash/export ──
+app.get('/api/proof/:receiptHash/export', asyncHandler(async (req, res) => {
+  const receipt = getInventoryReceipt(req.params.receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: false,
+  });
+
+  if (!receipt) {
+    return res.status(404).json({ error: `No proof detail export found for receipt_hash: ${req.params.receiptHash}` });
+  }
+
+  const proofDetail = buildProofDetailView(receipt);
+  const html = renderStaticProofPage(proofDetail);
+  res.type('html').send(html);
+}));
+
 // ── GET /inventory/legacy ──
 app.get('/inventory/legacy', asyncHandler(async (req, res) => {
   const { includeExcluded } = parseInventoryQuery(req.query);
@@ -672,6 +689,7 @@ if (!process.env.TRADE_ARTIFACT_TEST) {
     console.log(`    GET  /api/inventory`);
     console.log(`    GET  /api/inventory/summary`);
     console.log(`    GET  /api/proof/:receiptHash`);
+    console.log(`    GET  /api/proof/:receiptHash/export`);
     console.log(`    GET  /receipt/:hash/image`);
     console.log(`\n  UI:  http://localhost:${PORT}/ui/`);
     console.log();
