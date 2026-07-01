@@ -37,6 +37,7 @@ import {
   listLegacyInventory,
   parseInventoryQuery,
 } from '../inventory/inventory.mjs';
+import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
@@ -432,6 +433,20 @@ app.get('/rebuild', asyncHandler(async (req, res) => {
       hold_time_seconds: receipt.hold_time_seconds,
     },
   });
+}));
+
+// ── GET /api/proof/:receiptHash ──
+app.get('/api/proof/:receiptHash', asyncHandler(async (req, res) => {
+  const receipt = getInventoryReceipt(req.params.receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: false,
+  });
+
+  if (!receipt) {
+    return res.status(404).json({ error: `No proof detail found for receipt_hash: ${req.params.receiptHash}` });
+  }
+
+  res.json(buildProofDetailView(receipt));
 }));
 
 // ── GET /inventory/legacy ──
