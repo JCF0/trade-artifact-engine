@@ -2,7 +2,7 @@
 import { applyWalletDisplayPolicy } from './wallet-policy.mjs';
 import { buildPublishSlug } from './slug.mjs';
 
-const VALID_VISIBILITY = new Set(['unlisted', 'private']);
+const VALID_VISIBILITY = new Set(['unlisted', 'public', 'private']);
 
 function normalizeVisibility(value) {
   if (value == null) return 'unlisted';
@@ -12,8 +12,14 @@ function normalizeVisibility(value) {
   return value;
 }
 
+const VALID_WALLET_DISPLAY_MODES = new Set(['truncated', 'redacted', 'full']);
+
 function normalizeWalletDisplayMode(value) {
-  return value == null ? 'truncated' : value;
+  if (value == null) return 'truncated';
+  if (!VALID_WALLET_DISPLAY_MODES.has(value)) {
+    throw new TypeError('Unsupported wallet display mode: ' + value);
+  }
+  return value;
 }
 
 function normalizeBaseUrl(value) {
@@ -86,6 +92,7 @@ export function buildPublishBundle(proofDetail, options = {}) {
     generatedAt,
     hosted: {
       walletDisplayMode,
+      visibility,
     },
   });
 
@@ -103,3 +110,6 @@ export function buildPublishBundle(proofDetail, options = {}) {
     files,
   };
 }
+
+
+

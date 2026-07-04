@@ -8,6 +8,10 @@ const SUITES = [
   { name: 'Slice 2A View Model', file: 'engine/src/proof-detail/view-model.test.mjs' },
   { name: 'Slice 2A Proof Detail API', file: 'engine/src/api/proof-detail-api.test.mjs' },
   { name: 'Slice 4A Wallet Policy', file: 'engine/src/proof-publish/wallet-policy.test.mjs' },
+  { name: 'Slice 4B Publish Slug', file: 'engine/src/proof-publish/slug.test.mjs' },
+  { name: 'Slice 4C Publish Bundle', file: 'engine/src/proof-publish/publish-bundle.test.mjs' },
+  { name: 'Slice 4D FS Adapter', file: 'engine/src/proof-publish/fs-adapter.test.mjs' },
+  { name: 'Slice 4E Publish CLI', file: 'engine/src/proof-publish/cli.test.mjs' },
   { name: 'Slice 4 Static Proof Export', file: 'engine/src/proof-export/render-static-page.test.mjs' },
   { name: 'Slice 4 Proof Export API', file: 'engine/src/api/proof-export-api.test.mjs' },
 ];
@@ -95,4 +99,5 @@ console.log('Ledger runner: excluded from automated wrapper; run separately if c
 console.log(`Result: ${failures === 0 ? 'PASS' : 'FAIL'}`);
 
 process.exit(failures > 0 ? 1 : 0);
+
 

@@ -95,7 +95,26 @@ function getHostedContext(options = {}) {
 
   return {
     walletDisplayMode: options.hosted.walletDisplayMode || 'truncated',
+    visibility: options.hosted.visibility || 'unlisted',
   };
+}
+
+function hostedDisclosureLines(hosted) {
+  const lines = [];
+  if (hosted.visibility === 'public') {
+    lines.push('Public hosted proof page.');
+  } else if (hosted.visibility === 'private') {
+    lines.push('Private draft proof page.');
+    lines.push('Private here means local draft semantics only. Do not assume server-side privacy.');
+  } else {
+    lines.push('Hosted proof page.');
+    lines.push('Unlisted does not mean private. Anyone with the link can view.');
+  }
+
+  lines.push('Selected receipt only. Not a portfolio statement.');
+  lines.push('Raw quote only. No USD normalization.');
+  lines.push('Wallet may be truncated or redacted by publisher.');
+  return lines;
 }
 
 export function renderStaticProofPage(proofDetail, options = {}) {
@@ -227,28 +246,20 @@ export function renderStaticProofPage(proofDetail, options = {}) {
       ];
 
   const headerLede = hosted
-    ? 'Hosted proof page.'
+    ? hostedDisclosureLines(hosted)[0]
     : 'Selected receipt only. This static proof page is a local export scaffold, not hosted proof delivery.';
 
   const disclosureNotice = hosted
     ? `
       <div class="notice">
-        <p>Hosted proof page.</p>
-        <p>Unlisted does not mean private. Anyone with the link can view.</p>
-        <p>Selected receipt only. Not a portfolio statement.</p>
-        <p>Raw quote only. No USD normalization.</p>
-        <p>Wallet may be truncated or redacted by publisher.</p>
+        ${hostedDisclosureLines(hosted).map(line => `<p>${escapeHtml(line)}</p>`).join('')}
         <p>Wallet display mode: ${escapeHtml(formatValue(hosted.walletDisplayMode))}.</p>
       </div>`
     : '';
 
   const footerNotes = hosted
     ? `
-      <p>Hosted proof page.</p>
-      <p>Unlisted does not mean private. Anyone with the link can view.</p>
-      <p>Selected receipt only. Not a portfolio statement.</p>
-      <p>Raw quote only. No USD normalization.</p>
-      <p>Wallet may be truncated or redacted by publisher.</p>`
+      ${hostedDisclosureLines(hosted).map(line => `<p>${escapeHtml(line)}</p>`).join('')}`
     : `
       <p>Raw quote only. No USD normalization.</p>
       <p>Selected receipt only. This page does not represent a portfolio-wide statement.</p>
@@ -333,5 +344,6 @@ export function renderStaticProofPage(proofDetail, options = {}) {
 </body>
 </html>`;
 }
+
 
 

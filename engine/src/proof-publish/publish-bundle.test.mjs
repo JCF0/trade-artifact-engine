@@ -109,23 +109,42 @@ try {
     assert.equal(bundle.proofJson.proof.flags_and_limitations.raw_quote_only_disclosure, 'Raw quote only. No USD normalization.');
   });
 
-  test('index.html includes hosted, unlisted, raw quote, and selected receipt disclosures', () => {
-    const bundle = buildPublishBundle(proofDetail, { generatedAt: '2026-07-02T00:00:00.000Z' });
+  test('unlisted bundle is internally consistent across manifest, proof.json, and index.html', () => {
+    const bundle = buildPublishBundle(proofDetail, {
+      generatedAt: '2026-07-02T00:00:00.000Z',
+      visibility: 'unlisted',
+    });
+    assert.equal(bundle.manifest.visibility, 'unlisted');
+    assert.equal(bundle.proofJson.publish.visibility, 'unlisted');
     assert.ok(bundle.indexHtml.includes('Hosted proof page.'));
     assert.ok(bundle.indexHtml.includes('Unlisted does not mean private. Anyone with the link can view.'));
-    assert.ok(bundle.indexHtml.includes('Raw quote only. No USD normalization.'));
-    assert.ok(bundle.indexHtml.includes('Selected receipt only. Not a portfolio statement.'));
   });
 
-  test('private visibility is manifest-only with no behavior side effects', () => {
-    const unlistedBundle = buildPublishBundle(proofDetail, { generatedAt: '2026-07-02T00:00:00.000Z' });
-    const privateBundle = buildPublishBundle(proofDetail, {
+  test('public bundle is internally consistent across manifest, proof.json, and index.html', () => {
+    const bundle = buildPublishBundle(proofDetail, {
+      generatedAt: '2026-07-02T00:00:00.000Z',
+      visibility: 'public',
+    });
+    assert.equal(bundle.manifest.visibility, 'public');
+    assert.equal(bundle.proofJson.publish.visibility, 'public');
+    assert.equal(bundle.manifest.render_context.unlisted_not_private, false);
+    assert.ok(bundle.indexHtml.includes('Public hosted proof page.'));
+    assert.ok(!bundle.indexHtml.includes('Unlisted does not mean private. Anyone with the link can view.'));
+    assert.ok(bundle.indexHtml.includes('Selected receipt only. Not a portfolio statement.'));
+    assert.ok(bundle.indexHtml.includes('Raw quote only. No USD normalization.'));
+  });
+
+  test('private bundle is internally consistent across manifest, proof.json, and index.html', () => {
+    const bundle = buildPublishBundle(proofDetail, {
       generatedAt: '2026-07-02T00:00:00.000Z',
       visibility: 'private',
     });
-    assert.equal(privateBundle.manifest.visibility, 'private');
-    assert.equal(privateBundle.manifest.render_context.unlisted_not_private, false);
-    assert.equal(privateBundle.indexHtml, unlistedBundle.indexHtml);
+    assert.equal(bundle.manifest.visibility, 'private');
+    assert.equal(bundle.proofJson.publish.visibility, 'private');
+    assert.equal(bundle.manifest.render_context.unlisted_not_private, false);
+    assert.ok(bundle.indexHtml.includes('Private draft proof page.'));
+    assert.ok(bundle.indexHtml.includes('Private here means local draft semantics only. Do not assume server-side privacy.'));
+    assert.ok(!bundle.indexHtml.includes('Unlisted does not mean private. Anyone with the link can view.'));
   });
 
   test('no filesystem writes occur during bundle build', () => {

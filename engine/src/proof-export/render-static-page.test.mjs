@@ -61,13 +61,14 @@ try {
     assert.ok(html.includes('local export scaffold'));
   });
 
-  await test('hosted render includes required disclosures', async () => {
+  await test('hosted unlisted render includes required disclosures', async () => {
     const hostedDetail = structuredClone(proofDetail);
     hostedDetail.receipt.wallet = 'TESTWALLET12345678901234567890123456789012345';
     const hostedHtml = renderStaticProofPage(hostedDetail, {
       generatedAt: '2026-07-01T00:00:00.000Z',
       hosted: {
         walletDisplayMode: 'truncated',
+        visibility: 'unlisted',
       },
     });
 
@@ -78,6 +79,21 @@ try {
     assert.ok(hostedHtml.includes('Wallet may be truncated or redacted by publisher.'));
     assert.ok(hostedHtml.includes('TESTWA...2345'));
     assert.ok(!hostedHtml.includes('TESTWALLET12345678901234567890123456789012345'));
+  });
+
+  await test('hosted public render omits unlisted disclosure and uses public framing', async () => {
+    const hostedHtml = renderStaticProofPage(proofDetail, {
+      generatedAt: '2026-07-01T00:00:00.000Z',
+      hosted: {
+        walletDisplayMode: 'full',
+        visibility: 'public',
+      },
+    });
+
+    assert.ok(hostedHtml.includes('Public hosted proof page.'));
+    assert.ok(!hostedHtml.includes('Unlisted does not mean private. Anyone with the link can view.'));
+    assert.ok(hostedHtml.includes('Selected receipt only. Not a portfolio statement.'));
+    assert.ok(hostedHtml.includes('Raw quote only. No USD normalization.'));
   });
 
   await test('hosted render keeps verification status, hash validity, verifier result, and lifecycle separate', async () => {
