@@ -514,6 +514,52 @@ app.get('/api/proof/:receiptHash', asyncHandler(async (req, res) => {
   res.json(buildProofDetailView(receipt));
 }));
 
+// ── GET /api/proof/:receiptHash/hosted-preview ──
+function parseHostedPreviewQuery(query = {}) {
+  const visibility = query.visibility || 'unlisted';
+  const walletDisplayMode = query.wallet_display || 'truncated';
+  const baseUrl = query.base_url == null || query.base_url === ''
+    ? null
+    : String(query.base_url);
+
+  if (!['unlisted', 'public', 'private'].includes(visibility)) {
+    throw { status: 400, message: 'Invalid visibility: ' + visibility };
+  }
+  if (!['truncated', 'redacted', 'full'].includes(walletDisplayMode)) {
+    throw { status: 400, message: 'Invalid wallet_display: ' + walletDisplayMode };
+  }
+  if (baseUrl != null && !/^https?:\/\//.test(baseUrl)) {
+    throw { status: 400, message: 'base_url must start with http:// or https://' };
+  }
+
+  return {
+    visibility,
+    walletDisplayMode,
+    baseUrl,
+  };
+}
+
+app.get('/api/proof/:receiptHash/hosted-preview', asyncHandler(async (req, res) => {
+  const receipt = getInventoryReceipt(req.params.receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: false,
+  });
+
+  if (!receipt) {
+    return res.status(404).json({ error: `No hosted proof preview found for receipt_hash: ${req.params.receiptHash}` });
+  }
+
+  const hostedPreview = parseHostedPreviewQuery(req.query);
+  const proofDetail = buildProofDetailView(receipt);
+  const html = renderStaticProofPage(proofDetail, {
+    hosted: {
+      visibility: hostedPreview.visibility,
+      walletDisplayMode: hostedPreview.walletDisplayMode,
+    },
+  });
+  res.type('html').send(html);
+}));
+
 // ── GET /api/proof/:receiptHash/export ──
 app.get('/api/proof/:receiptHash/export', asyncHandler(async (req, res) => {
   const receipt = getInventoryReceipt(req.params.receiptHash, {

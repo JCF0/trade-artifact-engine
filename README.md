@@ -45,6 +45,16 @@ V1.3 also adds local read-only proof surfaces around committed v1.2 artifacts:
 
 These v1.3 proof surfaces are local-only and read-only. They do not add hosting, account login, wallet linking, upload, minting, signing, price fetching, USD normalization, or Helius balance-at integration.
 
+V1.4 extends this into a local hosted-proof scaffold:
+- `GET /api/proof/:receiptHash/hosted-preview`
+- `node engine/src/proof-publish/cli.mjs --receipt-hash <hash>`
+- `node engine/src/proof-publish/cli.mjs --receipt-hash <hash> --write`
+
+These v1.4 surfaces remain local-only and preview-only. They do not add remote deployment, hosted delivery, account login, wallet linking, upload, minting, signing, price fetching, USD normalization, or Helius balance-at integration. See:
+- `engine/docs/v1.4-release-notes.md`
+- `engine/docs/v1.4-limitations.md`
+- `engine/docs/v1.4-regression-checklist.md`
+
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
