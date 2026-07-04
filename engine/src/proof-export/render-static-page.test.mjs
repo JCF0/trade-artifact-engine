@@ -1,4 +1,4 @@
-import assert from 'assert';
+﻿import assert from 'assert';
 import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -59,6 +59,51 @@ try {
     assert.ok(html.includes('Raw quote only. No USD normalization.'));
     assert.ok(html.includes('Selected receipt only.'));
     assert.ok(html.includes('local export scaffold'));
+  });
+
+  await test('hosted render includes required disclosures', async () => {
+    const hostedDetail = structuredClone(proofDetail);
+    hostedDetail.receipt.wallet = 'TESTWALLET12345678901234567890123456789012345';
+    const hostedHtml = renderStaticProofPage(hostedDetail, {
+      generatedAt: '2026-07-01T00:00:00.000Z',
+      hosted: {
+        walletDisplayMode: 'truncated',
+      },
+    });
+
+    assert.ok(hostedHtml.includes('Hosted proof page.'));
+    assert.ok(hostedHtml.includes('Unlisted does not mean private. Anyone with the link can view.'));
+    assert.ok(hostedHtml.includes('Selected receipt only. Not a portfolio statement.'));
+    assert.ok(hostedHtml.includes('Raw quote only. No USD normalization.'));
+    assert.ok(hostedHtml.includes('Wallet may be truncated or redacted by publisher.'));
+    assert.ok(hostedHtml.includes('TESTWA...2345'));
+    assert.ok(!hostedHtml.includes('TESTWALLET12345678901234567890123456789012345'));
+  });
+
+  await test('hosted render keeps verification status, hash validity, verifier result, and lifecycle separate', async () => {
+    const hostedHtml = renderStaticProofPage(proofDetail, {
+      generatedAt: '2026-07-01T00:00:00.000Z',
+      hosted: {
+        walletDisplayMode: 'full',
+      },
+    });
+
+    assert.ok(hostedHtml.includes('<strong>Verification Status</strong>'));
+    assert.ok(hostedHtml.includes('<strong>Hash Valid</strong>'));
+    assert.ok(hostedHtml.includes('<strong>Verifier Passed</strong>'));
+    assert.ok(hostedHtml.includes('<strong>Proof Lifecycle</strong>'));
+    assert.ok(!hostedHtml.includes('Hash Valid / Verifier Passed'));
+  });
+
+  await test('local render remains unchanged when hosted options are omitted', async () => {
+    const localHtml = renderStaticProofPage(proofDetail, {
+      generatedAt: '2026-07-01T00:00:00.000Z',
+    });
+
+    assert.ok(localHtml.includes('Selected receipt only. This static proof page is a local export scaffold, not hosted proof delivery.'));
+    assert.ok(localHtml.includes('Hash Valid / Verifier Passed'));
+    assert.ok(!localHtml.includes('Hosted proof page.'));
+    assert.ok(localHtml.includes(proofDetail.receipt.wallet));
   });
 
   await test('renderer shows missing fields as Not available', async () => {

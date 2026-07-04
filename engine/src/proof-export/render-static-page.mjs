@@ -1,9 +1,11 @@
+﻿import { applyWalletDisplayPolicy } from '../proof-publish/wallet-policy.mjs';
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/\"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
 
@@ -57,6 +59,17 @@ function renderSection(title, body) {
     </section>`;
 }
 
+function renderSummaryCards(cards) {
+  return `
+      <div class="summary">
+        ${cards.map(card => `
+        <div class="summary-card ${escapeHtml(card.className)}">
+          <strong>${escapeHtml(card.label)}</strong>
+          <span>${escapeHtml(card.value)}</span>
+        </div>`).join('')}
+      </div>`;
+}
+
 function renderLinks(links) {
   const rows = [
     ['Inventory Path', links.inventory_path],
@@ -77,88 +90,169 @@ function renderLinks(links) {
   }).join('');
 }
 
+function getHostedContext(options = {}) {
+  if (!options.hosted || typeof options.hosted !== 'object') return null;
+
+  return {
+    walletDisplayMode: options.hosted.walletDisplayMode || 'truncated',
+  };
+}
+
 export function renderStaticProofPage(proofDetail, options = {}) {
   if (!proofDetail || typeof proofDetail !== 'object') {
     throw new TypeError('proofDetail is required');
   }
 
+  const hosted = getHostedContext(options);
+  const renderedProofDetail = hosted
+    ? applyWalletDisplayPolicy(proofDetail, { mode: hosted.walletDisplayMode })
+    : proofDetail;
   const generatedAt = options.generatedAt || new Date().toISOString();
-  const pageTitle = options.title || `Trade Artifact Static Proof - ${proofDetail.receipt?.receipt_id || 'Selected Receipt'}`;
+  const pageTitle = options.title || `Trade Artifact Static Proof - ${renderedProofDetail.receipt?.receipt_id || 'Selected Receipt'}`;
 
   const receiptRows = [
-    ['Receipt ID', formatValue(proofDetail.receipt?.receipt_id)],
-    ['Receipt Hash', formatValue(proofDetail.receipt?.receipt_hash)],
-    ['Receipt Version', formatValue(proofDetail.receipt?.receipt_version)],
-    ['Receipt Type', formatValue(proofDetail.receipt?.receipt_type)],
-    ['Verification Status', formatValue(proofDetail.receipt?.verification_status)],
-    ['Display Status', formatValue(proofDetail.receipt?.display_status)],
-    ['Wallet', formatValue(proofDetail.receipt?.wallet)],
-    ['Chain', formatValue(proofDetail.receipt?.chain)],
-    ['Token Mint', formatValue(proofDetail.receipt?.token_mint)],
-    ['Quote Mint', formatValue(proofDetail.receipt?.quote_mint)],
-    ['Quote Symbol', formatValue(proofDetail.receipt?.quote_symbol)],
-    ['Candidate Hash', formatValue(proofDetail.receipt?.candidate_hash)],
-    ['Valuation Status', formatValue(proofDetail.receipt?.valuation_status)],
-    ['Position Status', formatValue(proofDetail.receipt?.position_status)],
-    ['First Event At', formatTime(proofDetail.receipt?.first_event_at)],
-    ['Last Event At', formatTime(proofDetail.receipt?.last_event_at)],
-    ['Snapshot At', formatTime(proofDetail.receipt?.snapshot_at)],
+    ['Receipt ID', formatValue(renderedProofDetail.receipt?.receipt_id)],
+    ['Receipt Hash', formatValue(renderedProofDetail.receipt?.receipt_hash)],
+    ['Receipt Version', formatValue(renderedProofDetail.receipt?.receipt_version)],
+    ['Receipt Type', formatValue(renderedProofDetail.receipt?.receipt_type)],
+    ['Verification Status', formatValue(renderedProofDetail.receipt?.verification_status)],
+    ['Display Status', formatValue(renderedProofDetail.receipt?.display_status)],
+    ['Wallet', formatValue(renderedProofDetail.receipt?.wallet)],
+    ['Chain', formatValue(renderedProofDetail.receipt?.chain)],
+    ['Token Mint', formatValue(renderedProofDetail.receipt?.token_mint)],
+    ['Quote Mint', formatValue(renderedProofDetail.receipt?.quote_mint)],
+    ['Quote Symbol', formatValue(renderedProofDetail.receipt?.quote_symbol)],
+    ['Candidate Hash', formatValue(renderedProofDetail.receipt?.candidate_hash)],
+    ['Valuation Status', formatValue(renderedProofDetail.receipt?.valuation_status)],
+    ['Position Status', formatValue(renderedProofDetail.receipt?.position_status)],
+    ['First Event At', formatTime(renderedProofDetail.receipt?.first_event_at)],
+    ['Last Event At', formatTime(renderedProofDetail.receipt?.last_event_at)],
+    ['Snapshot At', formatTime(renderedProofDetail.receipt?.snapshot_at)],
   ];
 
   const verificationRows = [
-    ['Verification Status', formatValue(proofDetail.verification?.verification_status)],
-    ['Hash Valid', formatValue(proofDetail.verification?.hash_valid)],
-    ['Recomputed Hash', formatValue(proofDetail.verification?.recomputed_hash)],
-    ['Verifier Passed', formatValue(proofDetail.verification?.verifier_passed)],
-    ['Schema Valid', formatValue(proofDetail.verification?.verifier_schema_valid)],
-    ['Consistency Valid', formatValue(proofDetail.verification?.verifier_consistency_valid)],
-    ['Proof Summary Status', formatValue(proofDetail.verification?.proof_summary?.verification_status)],
-    ['Proof Summary Violations', formatValue(proofDetail.verification?.proof_summary?.violations)],
+    ['Verification Status', formatValue(renderedProofDetail.verification?.verification_status)],
+    ['Hash Valid', formatValue(renderedProofDetail.verification?.hash_valid)],
+    ['Recomputed Hash', formatValue(renderedProofDetail.verification?.recomputed_hash)],
+    ['Verifier Passed', formatValue(renderedProofDetail.verification?.verifier_passed)],
+    ['Schema Valid', formatValue(renderedProofDetail.verification?.verifier_schema_valid)],
+    ['Consistency Valid', formatValue(renderedProofDetail.verification?.verifier_consistency_valid)],
+    ['Proof Summary Status', formatValue(renderedProofDetail.verification?.proof_summary?.verification_status)],
+    ['Proof Summary Violations', formatValue(renderedProofDetail.verification?.proof_summary?.violations)],
   ];
 
   const valuationRows = [
-    ['Valuation Status', formatValue(proofDetail.valuation?.valuation_status)],
-    ['Valuation Valid', formatValue(proofDetail.valuation?.valuation_valid)],
-    ['Valuation Currency', formatValue(proofDetail.valuation?.valuation_context?.valuation_currency)],
-    ['Quote Is USD Stable', formatValue(proofDetail.valuation?.valuation_context?.quote_is_usd_stable)],
+    ['Valuation Status', formatValue(renderedProofDetail.valuation?.valuation_status)],
+    ['Valuation Valid', formatValue(renderedProofDetail.valuation?.valuation_valid)],
+    ['Valuation Currency', formatValue(renderedProofDetail.valuation?.valuation_context?.valuation_currency)],
+    ['Quote Is USD Stable', formatValue(renderedProofDetail.valuation?.valuation_context?.quote_is_usd_stable)],
   ];
 
   const lifecycleRows = [
-    ['Image Status', formatValue(proofDetail.proof_lifecycle?.image_status)],
-    ['Upload Status', formatValue(proofDetail.proof_lifecycle?.upload_status)],
-    ['Upload Mode', formatValue(proofDetail.proof_lifecycle?.upload_mode)],
-    ['Upload Network', formatValue(proofDetail.proof_lifecycle?.upload_network)],
-    ['Uploaded At', formatTime(proofDetail.proof_lifecycle?.uploaded_at)],
-    ['Uploader Pubkey', formatValue(proofDetail.proof_lifecycle?.uploader_pubkey)],
-    ['Mint Ready', formatValue(proofDetail.proof_lifecycle?.mint_ready)],
-    ['Mint Status', formatValue(proofDetail.proof_lifecycle?.mint_status)],
-    ['Mint Network', formatValue(proofDetail.proof_lifecycle?.mint_network)],
-    ['Proof Wallet Pubkey', formatValue(proofDetail.proof_lifecycle?.proof_wallet_pubkey)],
-    ['Mint Authority Pubkey', formatValue(proofDetail.proof_lifecycle?.mint_authority_pubkey)],
-    ['Mint Address', formatValue(proofDetail.proof_lifecycle?.mint_address)],
-    ['Token Account', formatValue(proofDetail.proof_lifecycle?.token_account)],
-    ['Transaction Signature', formatValue(proofDetail.proof_lifecycle?.transaction_signature)],
-    ['Minted At', formatTime(proofDetail.proof_lifecycle?.minted_at)],
+    ['Image Status', formatValue(renderedProofDetail.proof_lifecycle?.image_status)],
+    ['Upload Status', formatValue(renderedProofDetail.proof_lifecycle?.upload_status)],
+    ['Upload Mode', formatValue(renderedProofDetail.proof_lifecycle?.upload_mode)],
+    ['Upload Network', formatValue(renderedProofDetail.proof_lifecycle?.upload_network)],
+    ['Uploaded At', formatTime(renderedProofDetail.proof_lifecycle?.uploaded_at)],
+    ['Uploader Pubkey', formatValue(renderedProofDetail.proof_lifecycle?.uploader_pubkey)],
+    ['Mint Ready', formatValue(renderedProofDetail.proof_lifecycle?.mint_ready)],
+    ['Mint Status', formatValue(renderedProofDetail.proof_lifecycle?.mint_status)],
+    ['Mint Network', formatValue(renderedProofDetail.proof_lifecycle?.mint_network)],
+    ['Proof Wallet Pubkey', formatValue(renderedProofDetail.proof_lifecycle?.proof_wallet_pubkey)],
+    ['Mint Authority Pubkey', formatValue(renderedProofDetail.proof_lifecycle?.mint_authority_pubkey)],
+    ['Mint Address', formatValue(renderedProofDetail.proof_lifecycle?.mint_address)],
+    ['Token Account', formatValue(renderedProofDetail.proof_lifecycle?.token_account)],
+    ['Transaction Signature', formatValue(renderedProofDetail.proof_lifecycle?.transaction_signature)],
+    ['Minted At', formatTime(renderedProofDetail.proof_lifecycle?.minted_at)],
   ];
 
   const artifactRows = [
-    ['Image Artifact Path', formatValue(proofDetail.artifacts?.image_artifact_path)],
-    ['Image Artifact Hash', formatValue(proofDetail.artifacts?.image_artifact_hash)],
-    ['Metadata Name', formatValue(proofDetail.artifacts?.metadata_name)],
-    ['Metadata Template Path', formatValue(proofDetail.artifacts?.metadata_template_path)],
-    ['Resolved Metadata Path', formatValue(proofDetail.artifacts?.resolved_metadata_path)],
-    ['Final Metadata Path', formatValue(proofDetail.artifacts?.final_metadata_path)],
-    ['Final Image URI', formatValue(proofDetail.artifacts?.final_image_uri)],
-    ['Final Metadata URI', formatValue(proofDetail.artifacts?.final_metadata_uri)],
-    ['Metadata URI', formatValue(proofDetail.artifacts?.metadata_uri)],
-    ['Image URI', formatValue(proofDetail.artifacts?.image_uri)],
-    ['External URL', formatValue(proofDetail.artifacts?.external_url)],
+    ['Image Artifact Path', formatValue(renderedProofDetail.artifacts?.image_artifact_path)],
+    ['Image Artifact Hash', formatValue(renderedProofDetail.artifacts?.image_artifact_hash)],
+    ['Metadata Name', formatValue(renderedProofDetail.artifacts?.metadata_name)],
+    ['Metadata Template Path', formatValue(renderedProofDetail.artifacts?.metadata_template_path)],
+    ['Resolved Metadata Path', formatValue(renderedProofDetail.artifacts?.resolved_metadata_path)],
+    ['Final Metadata Path', formatValue(renderedProofDetail.artifacts?.final_metadata_path)],
+    ['Final Image URI', formatValue(renderedProofDetail.artifacts?.final_image_uri)],
+    ['Final Metadata URI', formatValue(renderedProofDetail.artifacts?.final_metadata_uri)],
+    ['Metadata URI', formatValue(renderedProofDetail.artifacts?.metadata_uri)],
+    ['Image URI', formatValue(renderedProofDetail.artifacts?.image_uri)],
+    ['External URL', formatValue(renderedProofDetail.artifacts?.external_url)],
   ];
 
   const limitationRows = [
-    ['Limitations', formatValue(proofDetail.flags_and_limitations?.limitations)],
-    ['Raw Quote Disclosure', formatValue(proofDetail.flags_and_limitations?.raw_quote_only_disclosure)],
+    ['Limitations', formatValue(renderedProofDetail.flags_and_limitations?.limitations)],
+    ['Raw Quote Disclosure', formatValue(renderedProofDetail.flags_and_limitations?.raw_quote_only_disclosure)],
   ];
+
+  const summaryCards = hosted
+    ? [
+        {
+          className: 'verification-status',
+          label: 'Verification Status',
+          value: formatValue(renderedProofDetail.receipt?.verification_status),
+        },
+        {
+          className: 'hash-check',
+          label: 'Hash Valid',
+          value: formatValue(renderedProofDetail.verification?.hash_valid),
+        },
+        {
+          className: 'verifier-check',
+          label: 'Verifier Passed',
+          value: formatValue(renderedProofDetail.verification?.verifier_passed),
+        },
+        {
+          className: 'lifecycle',
+          label: 'Proof Lifecycle',
+          value: `${formatValue(renderedProofDetail.proof_lifecycle?.upload_status)} / ${formatValue(renderedProofDetail.proof_lifecycle?.mint_status)}`,
+        },
+      ]
+    : [
+        {
+          className: 'verification-status',
+          label: 'Verification Status',
+          value: formatValue(renderedProofDetail.receipt?.verification_status),
+        },
+        {
+          className: 'hash-check',
+          label: 'Hash Valid / Verifier Passed',
+          value: `${formatValue(renderedProofDetail.verification?.hash_valid)} / ${formatValue(renderedProofDetail.verification?.verifier_passed)}`,
+        },
+        {
+          className: 'lifecycle',
+          label: 'Proof Lifecycle',
+          value: `${formatValue(renderedProofDetail.proof_lifecycle?.upload_status)} / ${formatValue(renderedProofDetail.proof_lifecycle?.mint_status)}`,
+        },
+      ];
+
+  const headerLede = hosted
+    ? 'Hosted proof page.'
+    : 'Selected receipt only. This static proof page is a local export scaffold, not hosted proof delivery.';
+
+  const disclosureNotice = hosted
+    ? `
+      <div class="notice">
+        <p>Hosted proof page.</p>
+        <p>Unlisted does not mean private. Anyone with the link can view.</p>
+        <p>Selected receipt only. Not a portfolio statement.</p>
+        <p>Raw quote only. No USD normalization.</p>
+        <p>Wallet may be truncated or redacted by publisher.</p>
+        <p>Wallet display mode: ${escapeHtml(formatValue(hosted.walletDisplayMode))}.</p>
+      </div>`
+    : '';
+
+  const footerNotes = hosted
+    ? `
+      <p>Hosted proof page.</p>
+      <p>Unlisted does not mean private. Anyone with the link can view.</p>
+      <p>Selected receipt only. Not a portfolio statement.</p>
+      <p>Raw quote only. No USD normalization.</p>
+      <p>Wallet may be truncated or redacted by publisher.</p>`
+    : `
+      <p>Raw quote only. No USD normalization.</p>
+      <p>Selected receipt only. This page does not represent a portfolio-wide statement.</p>
+      <p>Local export scaffold only. No hosting, upload, minting, or signing is performed by this artifact.</p>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -195,6 +289,7 @@ export function renderStaticProofPage(proofDetail, options = {}) {
     .summary-card span { font-size: 18px; font-weight: 600; }
     .summary-card.verification-status { border-left: 6px solid var(--accent); }
     .summary-card.hash-check { border-left: 6px solid var(--ok); }
+    .summary-card.verifier-check { border-left: 6px solid #245b8f; }
     .summary-card.lifecycle { border-left: 6px solid var(--warn); }
     dl.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0; }
     .field { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #fffaf1; }
@@ -217,38 +312,25 @@ export function renderStaticProofPage(proofDetail, options = {}) {
   <main>
     <header>
       <h1>${escapeHtml(pageTitle)}</h1>
-      <p class="lede">Selected receipt only. This static proof page is a local export scaffold, not hosted proof delivery.</p>
+      <p class="lede">${escapeHtml(headerLede)}</p>
       <p class="lede">Generated at ${escapeHtml(generatedAt)}</p>
-      <div class="summary">
-        <div class="summary-card verification-status">
-          <strong>Verification Status</strong>
-          <span>${escapeHtml(formatValue(proofDetail.receipt?.verification_status))}</span>
-        </div>
-        <div class="summary-card hash-check">
-          <strong>Hash Valid / Verifier Passed</strong>
-          <span>${escapeHtml(formatValue(proofDetail.verification?.hash_valid))} / ${escapeHtml(formatValue(proofDetail.verification?.verifier_passed))}</span>
-        </div>
-        <div class="summary-card lifecycle">
-          <strong>Proof Lifecycle</strong>
-          <span>${escapeHtml(formatValue(proofDetail.proof_lifecycle?.upload_status))} / ${escapeHtml(formatValue(proofDetail.proof_lifecycle?.mint_status))}</span>
-        </div>
-      </div>
+      ${disclosureNotice}
+      ${renderSummaryCards(summaryCards)}
     </header>
 
     ${renderSection('Receipt', `<dl class="grid">${renderDefinitionRows(receiptRows)}</dl>`)}
-    ${renderSection('Verification', `<dl class="grid">${renderDefinitionRows(verificationRows)}</dl>${renderList('Verifier Rule Violations', proofDetail.verification?.verifier_rule_violations)}`)}
-    ${renderSection('Valuation', `<div class="notice"><p>${escapeHtml(formatValue(proofDetail.valuation?.disclosure_text))}</p></div><dl class="grid">${renderDefinitionRows(valuationRows)}</dl>${renderList('Valuation Violations', proofDetail.valuation?.valuation_context?.violations)}`)}
-    ${renderSection('Proof Lifecycle', `<dl class="grid">${renderDefinitionRows(lifecycleRows)}</dl>${renderList('Mint Blockers', proofDetail.proof_lifecycle?.mint_blockers)}${renderList('Mint Required Steps', proofDetail.proof_lifecycle?.mint_required_steps)}`)}
+    ${renderSection('Verification', `<dl class="grid">${renderDefinitionRows(verificationRows)}</dl>${renderList('Verifier Rule Violations', renderedProofDetail.verification?.verifier_rule_violations)}`)}
+    ${renderSection('Valuation', `<div class="notice"><p>${escapeHtml(formatValue(renderedProofDetail.valuation?.disclosure_text))}</p></div><dl class="grid">${renderDefinitionRows(valuationRows)}</dl>${renderList('Valuation Violations', renderedProofDetail.valuation?.valuation_context?.violations)}`)}
+    ${renderSection('Proof Lifecycle', `<dl class="grid">${renderDefinitionRows(lifecycleRows)}</dl>${renderList('Mint Blockers', renderedProofDetail.proof_lifecycle?.mint_blockers)}${renderList('Mint Required Steps', renderedProofDetail.proof_lifecycle?.mint_required_steps)}`)}
     ${renderSection('Artifacts', `<dl class="grid">${renderDefinitionRows(artifactRows)}</dl>`)}
-    ${renderSection('Flags & Limitations', `<dl class="grid">${renderDefinitionRows(limitationRows)}</dl>${renderList('Flags', proofDetail.flags_and_limitations?.flags)}${renderList('Disclosures', proofDetail.flags_and_limitations?.disclosures)}`)}
-    ${renderSection('Links', `<dl class="grid">${renderLinks(proofDetail.links || {})}</dl>`)}
+    ${renderSection('Flags & Limitations', `<dl class="grid">${renderDefinitionRows(limitationRows)}</dl>${renderList('Flags', renderedProofDetail.flags_and_limitations?.flags)}${renderList('Disclosures', renderedProofDetail.flags_and_limitations?.disclosures)}`)}
+    ${renderSection('Links', `<dl class="grid">${renderLinks(renderedProofDetail.links || {})}</dl>`)}
 
     <footer class="footer-notes">
-      <p>Raw quote only. No USD normalization.</p>
-      <p>Selected receipt only. This page does not represent a portfolio-wide statement.</p>
-      <p>Local export scaffold only. No hosting, upload, minting, or signing is performed by this artifact.</p>
+      ${footerNotes}
     </footer>
   </main>
 </body>
 </html>`;
 }
+
