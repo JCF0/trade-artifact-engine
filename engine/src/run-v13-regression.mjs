@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 import { pathToFileURL } from 'url';
 import { resolve } from 'path';
 
@@ -7,6 +7,7 @@ const SUITES = [
   { name: 'Slice 1 Inventory API', file: 'engine/src/api/inventory-api.test.mjs' },
   { name: 'Slice 2A View Model', file: 'engine/src/proof-detail/view-model.test.mjs' },
   { name: 'Slice 2A Proof Detail API', file: 'engine/src/api/proof-detail-api.test.mjs' },
+  { name: 'Slice 4A Wallet Policy', file: 'engine/src/proof-publish/wallet-policy.test.mjs' },
   { name: 'Slice 4 Static Proof Export', file: 'engine/src/proof-export/render-static-page.test.mjs' },
   { name: 'Slice 4 Proof Export API', file: 'engine/src/api/proof-export-api.test.mjs' },
 ];
@@ -94,3 +95,4 @@ console.log('Ledger runner: excluded from automated wrapper; run separately if c
 console.log(`Result: ${failures === 0 ? 'PASS' : 'FAIL'}`);
 
 process.exit(failures > 0 ? 1 : 0);
+
