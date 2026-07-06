@@ -41,6 +41,8 @@ import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofVerifierView } from '../proof-verifier/view-model.mjs';
 import { buildProofCardView } from '../proof-card/view-model.mjs';
 import { renderProofCardHtml } from '../proof-card/render-html.mjs';
+import { buildProofGalleryView } from '../proof-gallery/view-model.mjs';
+import { renderProofGalleryHtml } from '../proof-gallery/render-html.mjs';
 import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -590,6 +592,20 @@ function parseProofCardQuery(query = {}) {
     walletDisplayMode,
   };
 }
+
+function parseGalleryQuery(query = {}) {
+  const walletDisplayMode = query.wallet_display || 'full';
+  if (!['truncated', 'redacted', 'full'].includes(walletDisplayMode)) {
+    throw { status: 400, message: 'Invalid wallet_display: ' + walletDisplayMode };
+  }
+
+  return {
+    limit: query.limit,
+    offset: query.offset,
+    receiptType: query.receipt_type || null,
+    walletDisplayMode,
+  };
+}
 function parseHostedPreviewQuery(query = {}) {
   const visibility = query.visibility || 'unlisted';
   const walletDisplayMode = query.wallet_display || 'truncated';
@@ -636,6 +652,23 @@ app.get('/api/proof/:receiptHash/hosted-preview', asyncHandler(async (req, res) 
 }));
 
 // ── GET /api/proof/:receiptHash/export ──
+app.get('/api/gallery', asyncHandler(async (req, res) => {
+  const galleryQuery = parseGalleryQuery(req.query);
+  res.json(buildProofGalleryView({
+    engineRoot: getInventoryRoot(),
+    ...galleryQuery,
+  }));
+}));
+
+app.get('/api/gallery/preview', asyncHandler(async (req, res) => {
+  const galleryQuery = parseGalleryQuery(req.query);
+  const galleryView = buildProofGalleryView({
+    engineRoot: getInventoryRoot(),
+    ...galleryQuery,
+  });
+  res.type('html').send(renderProofGalleryHtml(galleryView));
+}));
+
 app.get('/api/proof/:receiptHash/export', asyncHandler(async (req, res) => {
   const receipt = getInventoryReceipt(req.params.receiptHash, {
     engineRoot: getInventoryRoot(),

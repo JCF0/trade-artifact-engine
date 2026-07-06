@@ -23,3 +23,6 @@ engine/data/pnl/
 engine/data/receipts/
 engine/data/renders/
 engine/data/arweave/
+# Artifact tracked sample gallery manifest
+!engine/samples/
+!engine/samples/sample-gallery.manifest.json
