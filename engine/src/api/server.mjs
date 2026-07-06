@@ -38,6 +38,7 @@ import {
   parseInventoryQuery,
 } from '../inventory/inventory.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
+import { buildProofVerifierView } from '../proof-verifier/view-model.mjs';
 import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -203,6 +204,10 @@ function buildInventoryApiSnapshot(query, { includeLegacy = false } = {}) {
     limit: parsed.limit,
     offset: parsed.offset,
   });
+}
+
+function isCanonicalReceiptHash(value) {
+  return /^[a-f0-9]{64}$/.test(value);
 }
 
 function buildInventorySummary(snapshot) {
@@ -515,6 +520,23 @@ app.get('/api/proof/:receiptHash', asyncHandler(async (req, res) => {
 }));
 
 // ── GET /api/proof/:receiptHash/hosted-preview ──
+app.get('/api/verifier/:receiptHash', asyncHandler(async (req, res) => {
+  const { receiptHash } = req.params;
+  if (!isCanonicalReceiptHash(receiptHash)) {
+    return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
+  }
+
+  const receipt = getInventoryReceipt(receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: false,
+  });
+
+  if (!receipt) {
+    return res.status(404).json({ error: `No verifier record found for receipt_hash: ${receiptHash}` });
+  }
+
+  res.json(buildProofVerifierView(receipt));
+}));
 function parseHostedPreviewQuery(query = {}) {
   const visibility = query.visibility || 'unlisted';
   const walletDisplayMode = query.wallet_display || 'truncated';
