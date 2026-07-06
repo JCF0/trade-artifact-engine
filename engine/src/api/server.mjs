@@ -39,6 +39,8 @@ import {
 } from '../inventory/inventory.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofVerifierView } from '../proof-verifier/view-model.mjs';
+import { buildProofCardView } from '../proof-card/view-model.mjs';
+import { renderProofCardHtml } from '../proof-card/render-html.mjs';
 import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -537,6 +539,57 @@ app.get('/api/verifier/:receiptHash', asyncHandler(async (req, res) => {
 
   res.json(buildProofVerifierView(receipt));
 }));
+app.get('/api/proof/:receiptHash/card', asyncHandler(async (req, res) => {
+  const { receiptHash } = req.params;
+  if (!isCanonicalReceiptHash(receiptHash)) {
+    return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
+  }
+
+  const receipt = getInventoryReceipt(receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: false,
+  });
+
+  if (!receipt) {
+    return res.status(404).json({ error: `No proof card found for receipt_hash: ${receiptHash}` });
+  }
+
+  const cardQuery = parseProofCardQuery(req.query);
+  const proofDetail = buildProofDetailView(receipt);
+  res.json(buildProofCardView(proofDetail, cardQuery));
+}));
+
+app.get('/api/proof/:receiptHash/card/preview', asyncHandler(async (req, res) => {
+  const { receiptHash } = req.params;
+  if (!isCanonicalReceiptHash(receiptHash)) {
+    return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
+  }
+
+  const receipt = getInventoryReceipt(receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: false,
+  });
+
+  if (!receipt) {
+    return res.status(404).json({ error: `No proof card preview found for receipt_hash: ${receiptHash}` });
+  }
+
+  const cardQuery = parseProofCardQuery(req.query);
+  const proofDetail = buildProofDetailView(receipt);
+  const cardView = buildProofCardView(proofDetail, cardQuery);
+  res.type('html').send(renderProofCardHtml(cardView));
+}));
+
+function parseProofCardQuery(query = {}) {
+  const walletDisplayMode = query.wallet_display || 'full';
+  if (!['truncated', 'redacted', 'full'].includes(walletDisplayMode)) {
+    throw { status: 400, message: 'Invalid wallet_display: ' + walletDisplayMode };
+  }
+
+  return {
+    walletDisplayMode,
+  };
+}
 function parseHostedPreviewQuery(query = {}) {
   const visibility = query.visibility || 'unlisted';
   const walletDisplayMode = query.wallet_display || 'truncated';
