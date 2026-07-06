@@ -35,6 +35,7 @@ try {
       'artifacts',
       'legacy',
       'links',
+      'trust',
       'flags_and_limitations',
     ]);
     assert.equal(detail.receipt.receipt_hash, fixture.hashes.receiptAHash);
@@ -47,6 +48,8 @@ try {
     assert.equal(detail.valuation.valuation_status, 'raw_quote');
     assert.equal(detail.valuation.disclosure_text, RAW_QUOTE_DISCLOSURE_TEXT);
     assert.equal(detail.flags_and_limitations.raw_quote_only_disclosure, RAW_QUOTE_DISCLOSURE_TEXT);
+    assert.ok(detail.flags_and_limitations.shared_surface_disclosures.includes('Selected receipt only. Not a portfolio statement.'));
+    assert.ok(detail.flags_and_limitations.shared_surface_disclosures.includes('Raw quote only. No USD normalization.'));
   });
 
   test('view-model keeps verification fields separate from lifecycle fields', () => {
@@ -57,6 +60,15 @@ try {
     assert.equal(detail.proof_lifecycle.mint_status, 'minted');
     assert.equal(detail.proof_lifecycle.upload_status, 'complete');
     assert.equal(detail.verification.mint_status, undefined);
+  });
+
+  test('view-model adds trust summary additively without changing existing sections', () => {
+    const detail = buildProofDetailView(knownRecord);
+    assert.equal(detail.trust.current_level, 4);
+    assert.equal(detail.trust.current_code, 'source_anchored');
+    assert.equal(detail.trust.current_label, 'Source Anchored');
+    assert.equal(detail.trust.coverage_statement_present, false);
+    assert.ok(detail.trust.disclosures.includes('Hosted, unlisted, and private labels describe display or distribution choices only. They do not increase proof strength.'));
   });
 
   test('view-model does not expose raw legacy record blobs', () => {
@@ -89,6 +101,8 @@ try {
     assert.deepEqual(detail.proof_lifecycle.mint_blockers, []);
     assert.deepEqual(detail.proof_lifecycle.mint_required_steps, []);
     assert.deepEqual(detail.verification.verifier_rule_violations, []);
+    assert.equal(detail.trust.current_level, 3);
+    assert.equal(detail.trust.correlatable, false);
   });
 } finally {
   removeInventoryFixture(fixture.root);

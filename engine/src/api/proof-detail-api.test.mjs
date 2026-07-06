@@ -75,6 +75,7 @@ try {
       'artifacts',
       'legacy',
       'links',
+      'trust',
       'flags_and_limitations',
     ]);
   });

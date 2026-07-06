@@ -1,3 +1,6 @@
+import { buildDisclosureSet } from '../proof-trust/disclosures.mjs';
+import { deriveTrustLevel } from '../proof-trust/trust-model.mjs';
+
 export const RAW_QUOTE_DISCLOSURE_TEXT = 'Raw quote only. No USD normalization.';
 
 function asArray(value) {
@@ -12,6 +15,8 @@ export function buildProofDetailView(inventoryRecord) {
   if (!inventoryRecord || typeof inventoryRecord !== 'object') {
     throw new TypeError('inventoryRecord is required');
   }
+
+  const trust = deriveTrustLevel(inventoryRecord);
 
   return {
     receipt: {
@@ -102,11 +107,16 @@ export function buildProofDetailView(inventoryRecord) {
       proof_api_path: `/api/proof/${inventoryRecord.receipt_hash}`,
       legacy_path: null,
     },
+    trust,
     flags_and_limitations: {
       flags: asArray(inventoryRecord.flags),
       limitations: inventoryRecord.limitations || null,
       disclosures: asArray(inventoryRecord.limitations?.disclosures),
       raw_quote_only_disclosure: RAW_QUOTE_DISCLOSURE_TEXT,
+      shared_surface_disclosures: buildDisclosureSet({
+        includeHostedSemantics: true,
+        includeCorrelatableDisclosure: trust.correlatable,
+      }),
     },
   };
 }

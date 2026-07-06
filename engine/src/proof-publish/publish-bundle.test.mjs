@@ -1,4 +1,4 @@
-﻿import assert from 'assert';
+import assert from 'assert';
 import { mkdtempSync, readdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -97,6 +97,7 @@ try {
       'artifacts',
       'legacy',
       'links',
+      'trust',
       'flags_and_limitations',
     ]);
     assert.equal(bundle.proofJson.proof.verification.verification_status, 'verified');
