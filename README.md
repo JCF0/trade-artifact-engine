@@ -55,6 +55,19 @@ These v1.4 surfaces remain local-only and preview-only. They do not add remote d
 - `engine/docs/v1.4-limitations.md`
 - `engine/docs/v1.4-regression-checklist.md`
 
+
+V1.5 adds local verifier/card/gallery proof browsing surfaces:
+- `GET /api/verifier/:receiptHash`
+- `GET /api/proof/:receiptHash/card`
+- `GET /api/proof/:receiptHash/card/preview`
+- `GET /api/gallery`
+- `GET /api/gallery/preview`
+
+These v1.5 surfaces remain local-only and read-only. They do not add hosted platform delivery, leaderboards, profiles, accounts, upload, minting, signing, price fetching, or USD normalization. See:
+- `engine/docs/v1.5-release-notes.md`
+- `engine/docs/v1.5-limitations.md`
+- `engine/docs/v1.5-regression-checklist.md`
+- `engine/docs/v1.5-demo-flow.md`
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
