@@ -1,4 +1,4 @@
-﻿import assert from 'assert';
+import assert from 'assert';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -24,6 +24,10 @@ function test(name, fn) {
   }
 }
 
+function expectedSuffix(...segments) {
+  return join(...segments);
+}
+
 const fixture = createInventoryFixture();
 
 try {
@@ -34,13 +38,13 @@ try {
   test('fs adapter computes published/p/<slug> for unlisted and public', () => {
     const unlisted = resolvePublishTarget({ slug: bundle.slug, visibility: 'unlisted', engineRoot: fixture.root });
     const pub = resolvePublishTarget({ slug: bundle.slug, visibility: 'public', engineRoot: fixture.root });
-    assert.ok(unlisted.targetDir.endsWith(`data\\published\\p\\${bundle.slug}`));
+    assert.ok(unlisted.targetDir.endsWith(expectedSuffix('data', 'published', 'p', bundle.slug)));
     assert.equal(pub.targetDir, unlisted.targetDir);
   });
 
   test('fs adapter computes drafts/p/<slug> for private', () => {
     const plan = resolvePublishTarget({ slug: bundle.slug, visibility: 'private', engineRoot: fixture.root });
-    assert.ok(plan.targetDir.endsWith(`data\\drafts\\p\\${bundle.slug}`));
+    assert.ok(plan.targetDir.endsWith(expectedSuffix('data', 'drafts', 'p', bundle.slug)));
   });
 
   test('dry-run planning creates no files or directories', () => {
@@ -96,3 +100,5 @@ try {
 
 console.log(`\n${pass}/${pass + fail} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
+
+
