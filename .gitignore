@@ -2,7 +2,6 @@ node_modules/
 target/
 .env
 *.key
-*.json
 .DS_Store
 
 # Engine (Node pipeline)
@@ -11,6 +10,19 @@ engine/data/
 engine/.env
 engine/.env.*
 engine/*.log
+
+# Keep generated JSON ignored by default
+*.json
+
+# But track package manifests required to install/run
+!package.json
+!package-lock.json
+!engine/package.json
+!engine/package-lock.json
+
+# Track curated sample manifest
+!engine/samples/
+!engine/samples/sample-gallery.manifest.json
 
 trade-artifact-build-specs/
 
