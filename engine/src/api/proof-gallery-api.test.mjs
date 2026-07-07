@@ -105,6 +105,15 @@ try {
     assert.ok(response.body.includes('Artifact Sample Gallery'));
   });
 
+  await test('API returns 400 for invalid wallet_display on gallery routes', async () => {
+    const jsonResponse = await httpGet(port, '/api/gallery?wallet_display=bad');
+    const htmlResponse = await httpGet(port, '/api/gallery/preview?wallet_display=bad');
+    assert.equal(jsonResponse.status, 400);
+    assert.equal(jsonResponse.body.error, 'Invalid wallet_display: bad');
+    assert.equal(htmlResponse.status, 400);
+    assert.equal(htmlResponse.body.error, 'Invalid wallet_display: bad');
+  });
+
   await test('API creates no files or directories during request handling', async () => {
     const before = listTree(fixture.root);
     const response = await httpGet(port, '/api/gallery?receipt_type=closed_position');

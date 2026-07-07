@@ -136,6 +136,13 @@ try {
     assert.equal(response.body.error, 'Malformed receipt_hash: not-a-hash');
   });
 
+  await test('GET /api/verifier/:receiptHash returns 400 for uppercase 64-char receipt_hash', async () => {
+    const uppercaseHash = 'A'.repeat(64);
+    const response = await httpGet(port, `/api/verifier/${uppercaseHash}`);
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error, `Malformed receipt_hash: ${uppercaseHash}`);
+  });
+
   await test('GET /api/verifier/:receiptHash does not resolve legacy verification_hash values', async () => {
     const response = await httpGet(port, `/api/verifier/${fixture.hashes.legacyHash}`);
     assert.equal(response.status, 404);

@@ -3,6 +3,8 @@ import { readFileSync } from 'fs';
 import http from 'http';
 import { resolve } from 'path';
 
+import { getInventoryReceipt } from './inventory/inventory.mjs';
+
 process.env.TRADE_ARTIFACT_TEST = '1';
 
 const manifestPath = resolve('engine', 'samples', 'sample-gallery.manifest.json');
@@ -15,6 +17,16 @@ if (receiptHashes.length === 0) {
 }
 
 const sampleHash = receiptHashes[0];
+const sampleReceipt = getInventoryReceipt(sampleHash, {
+  engineRoot: resolve('engine'),
+  includeExcluded: false,
+});
+
+if (!sampleReceipt) {
+  console.error('sample manifest hash not found in local inventory; run/generate sample inventory first');
+  process.exit(1);
+}
+
 const originalFetch = globalThis.fetch;
 let fetchCalls = 0;
 globalThis.fetch = async (...args) => {

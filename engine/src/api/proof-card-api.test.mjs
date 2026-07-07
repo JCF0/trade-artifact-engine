@@ -108,6 +108,25 @@ try {
     assert.equal(preview.status, 400);
   });
 
+  await test('API card routes return 400 for uppercase 64-char hash', async () => {
+    const uppercaseHash = 'A'.repeat(64);
+    const card = await httpGet(port, `/api/proof/${uppercaseHash}/card`);
+    const preview = await httpGet(port, `/api/proof/${uppercaseHash}/card/preview`);
+    assert.equal(card.status, 400);
+    assert.equal(card.body.error, `Malformed receipt_hash: ${uppercaseHash}`);
+    assert.equal(preview.status, 400);
+    assert.equal(preview.body.error, `Malformed receipt_hash: ${uppercaseHash}`);
+  });
+
+  await test('API card routes return 400 for invalid wallet_display', async () => {
+    const card = await httpGet(port, `/api/proof/${fixture.hashes.receiptAHash}/card?wallet_display=bad`);
+    const preview = await httpGet(port, `/api/proof/${fixture.hashes.receiptAHash}/card/preview?wallet_display=bad`);
+    assert.equal(card.status, 400);
+    assert.equal(card.body.error, 'Invalid wallet_display: bad');
+    assert.equal(preview.status, 400);
+    assert.equal(preview.body.error, 'Invalid wallet_display: bad');
+  });
+
   await test('API card routes do not use legacy verification_hash fallback', async () => {
     const response = await httpGet(port, `/api/proof/${fixture.hashes.legacyHash}/card`);
     assert.equal(response.status, 404);
