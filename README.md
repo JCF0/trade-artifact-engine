@@ -68,6 +68,14 @@ These v1.5 surfaces remain local-only and read-only. They do not add hosted plat
 - `engine/docs/v1.5-limitations.md`
 - `engine/docs/v1.5-regression-checklist.md`
 - `engine/docs/v1.5-demo-flow.md`
+
+V1.6 adds a local Historical Verified Receipt Board for selected receipt entries:
+- `GET /api/receipt-board`
+- `GET /api/receipt-board/preview`
+- `node engine/src/run-v16-regression.mjs`
+- `node engine/src/check-v16-receipt-board-demo.mjs`
+
+These v1.6 surfaces remain local-only and read-only. They do not add public hosting, live trading, prize competition behavior, profiles, accounts, upload, minting, signing, price fetching, USD normalization, PnL ranking, or trader/wallet skill claims.
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
