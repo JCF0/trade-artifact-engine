@@ -78,6 +78,11 @@ function isSupportedRanking(ranking = {}) {
     && ranking.pnl_scope === 'none';
 }
 
+function toInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function buildExcludedEntry(entry, reason) {
   return {
     receipt_hash: entry.receipt_hash,
@@ -181,6 +186,9 @@ export function readReceiptBoardManifest({ engineRoot = DEFAULT_ENGINE_ROOT } = 
 
 export function buildReceiptBoardView(options = {}) {
   const engineRoot = options.engineRoot || DEFAULT_ENGINE_ROOT;
+  const includeExcluded = options.includeExcluded !== false;
+  const offset = Math.max(0, toInteger(options.offset, 0));
+  const limit = options.limit == null ? null : Math.max(0, toInteger(options.limit, Number.MAX_SAFE_INTEGER));
   const manifest = normalizeManifest(
     options.manifest === undefined
       ? readReceiptBoardManifest({ engineRoot })
@@ -223,6 +231,9 @@ export function buildReceiptBoardView(options = {}) {
   });
 
   const rankedRows = finalizeRows(rows);
+  const pagedRows = limit == null
+    ? rankedRows.slice(offset)
+    : rankedRows.slice(offset, offset + limit);
 
   return {
     board_type: BOARD_TYPE,
@@ -230,10 +241,10 @@ export function buildReceiptBoardView(options = {}) {
     subtitle: manifest.subtitle,
     selection_scope: manifest.selection_scope,
     ranking: manifest.ranking,
-    count: rankedRows.length,
-    empty: rankedRows.length === 0,
+    count: pagedRows.length,
+    empty: pagedRows.length === 0,
     disclosures: [...RECEIPT_BOARD_DISCLOSURES],
-    rows: rankedRows,
-    excluded_entries: excludedEntries,
+    rows: pagedRows,
+    excluded_entries: includeExcluded ? excludedEntries : [],
   };
 }

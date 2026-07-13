@@ -44,6 +44,8 @@ import { renderProofCardHtml } from '../proof-card/render-html.mjs';
 import { buildProofGalleryView } from '../proof-gallery/view-model.mjs';
 import { renderProofGalleryHtml } from '../proof-gallery/render-html.mjs';
 import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
+import { buildReceiptBoardView } from '../receipt-board/view-model.mjs';
+import { renderReceiptBoardHtml } from '../receipt-board/render-html.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
@@ -606,6 +608,36 @@ function parseGalleryQuery(query = {}) {
     walletDisplayMode,
   };
 }
+
+function parseBooleanQuery(value, fallback) {
+  if (value == null || value === '') return fallback;
+  const normalized = String(value).toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  throw { status: 400, message: 'Invalid include_excluded: ' + value };
+}
+
+function parseNonNegativeIntegerQuery(value, name) {
+  if (value == null || value === '') return undefined;
+  if (!/^\d+$/.test(String(value))) {
+    throw { status: 400, message: `Invalid ${name}: ${value}` };
+  }
+  return value;
+}
+
+function parseReceiptBoardQuery(query = {}) {
+  const walletDisplayMode = query.wallet_display || 'full';
+  if (!['truncated', 'redacted', 'full'].includes(walletDisplayMode)) {
+    throw { status: 400, message: 'Invalid wallet_display: ' + walletDisplayMode };
+  }
+
+  return {
+    walletDisplayMode,
+    includeExcluded: parseBooleanQuery(query.include_excluded, true),
+    limit: parseNonNegativeIntegerQuery(query.limit, 'limit'),
+    offset: parseNonNegativeIntegerQuery(query.offset, 'offset'),
+  };
+}
 function parseHostedPreviewQuery(query = {}) {
   const visibility = query.visibility || 'unlisted';
   const walletDisplayMode = query.wallet_display || 'truncated';
@@ -667,6 +699,23 @@ app.get('/api/gallery/preview', asyncHandler(async (req, res) => {
     ...galleryQuery,
   });
   res.type('html').send(renderProofGalleryHtml(galleryView));
+}));
+
+app.get('/api/receipt-board', asyncHandler(async (req, res) => {
+  const boardQuery = parseReceiptBoardQuery(req.query);
+  res.json(buildReceiptBoardView({
+    engineRoot: getInventoryRoot(),
+    ...boardQuery,
+  }));
+}));
+
+app.get('/api/receipt-board/preview', asyncHandler(async (req, res) => {
+  const boardQuery = parseReceiptBoardQuery(req.query);
+  const boardView = buildReceiptBoardView({
+    engineRoot: getInventoryRoot(),
+    ...boardQuery,
+  });
+  res.type('html').send(renderReceiptBoardHtml(boardView));
 }));
 
 app.get('/api/proof/:receiptHash/export', asyncHandler(async (req, res) => {
