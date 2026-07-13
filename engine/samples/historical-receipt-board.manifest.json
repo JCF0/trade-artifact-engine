@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "board_id": "historical_verified_receipt_board_demo",
+  "title": "Historical Verified Receipt Board",
+  "subtitle": "Selected historical receipts only. Not a trader leaderboard.",
+  "selection_scope": {
+    "mode": "publisher_selected",
+    "statement": "Publisher-selected sample receipts for local prototype demonstration."
+  },
+  "ranking": {
+    "metric": "trust_then_time",
+    "direction": "desc",
+    "rank_subject": "receipt",
+    "pnl_scope": "none"
+  },
+  "entries": [
+    {
+      "receipt_hash": "8d67206c7d78ffac92b0a1b0f908aa8f7ecabe491715e335cff32af0e9c6f3e9",
+      "display_name": "Entry 1",
+      "participant_ref": "local-entry-1",
+      "selection_note": "Demo receipt selected by publisher."
+    }
+  ]
+}

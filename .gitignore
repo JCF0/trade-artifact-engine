@@ -23,6 +23,7 @@ engine/*.log
 # Track curated sample manifest
 !engine/samples/
 !engine/samples/sample-gallery.manifest.json
+!engine/samples/historical-receipt-board.manifest.json
 
 trade-artifact-build-specs/
 
@@ -38,3 +39,5 @@ engine/data/arweave/
 # Artifact tracked sample gallery manifest
 !engine/samples/
 !engine/samples/sample-gallery.manifest.json
+!engine/samples/historical-receipt-board.manifest.json
+
