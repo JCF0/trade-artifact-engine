@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs';
+﻿import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
 import { buildInventorySnapshot } from '../inventory/inventory.mjs';
@@ -9,6 +9,7 @@ import { buildProofCardView } from '../proof-card/view-model.mjs';
 export const RECEIPT_BOARD_MANIFEST_PATH = 'samples/historical-receipt-board.manifest.json';
 export const BOARD_TYPE = 'artifact_historical_verified_receipt_board';
 export const SUPPORTED_RANKING_METRIC = 'trust_then_time';
+export const BOARD_ELIGIBLE_VERIFICATION_STATUSES = new Set(['verified']);
 
 export const RECEIPT_BOARD_DISCLOSURES = [
   'Ranks selected receipts only. Not traders, wallets, portfolios, or skill.',
@@ -109,6 +110,9 @@ function validateVerifiedReceipt(receipt) {
   if (receipt.verifier_passed !== true) return 'verifier_failed';
   if (receipt.verifier_schema_valid !== true) return 'schema_invalid';
   if (receipt.verifier_consistency_valid !== true) return 'consistency_invalid';
+  if (!BOARD_ELIGIBLE_VERIFICATION_STATUSES.has(receipt.verification_status)) {
+    return 'verification_status_not_board_eligible';
+  }
   return null;
 }
 

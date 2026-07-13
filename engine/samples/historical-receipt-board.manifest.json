@@ -15,10 +15,10 @@
   },
   "entries": [
     {
-      "receipt_hash": "8d67206c7d78ffac92b0a1b0f908aa8f7ecabe491715e335cff32af0e9c6f3e9",
-      "display_name": "Entry 1",
-      "participant_ref": "local-entry-1",
-      "selection_note": "Demo receipt selected by publisher."
+      "receipt_hash": "5fb5732d248af4e8f9214a3b074c3bf711a776e8445bf14eae735ddf02a0bbca",
+      "display_name": "JUP Receipt 1",
+      "participant_ref": "local-receipt-1",
+      "selection_note": "Verified closed-position receipt selected for local prototype demonstration."
     }
   ]
 }

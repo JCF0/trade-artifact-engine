@@ -1,5 +1,5 @@
-import assert from 'assert';
-import { mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
+﻿import assert from 'assert';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import http from 'http';
 import { join, relative } from 'path';
 
@@ -52,6 +52,14 @@ function entry(receiptHash, displayName = 'Entry 1') {
     participant_ref: 'local-entry-1',
     selection_note: 'Demo receipt selected by publisher.',
   };
+}
+
+function mutateReceipt(root, receiptHash, patch) {
+  const path = join(root, 'data', 'debug', 'ledger-receipts-v12.json');
+  const receipts = JSON.parse(readFileSync(path, 'utf8')).map(receipt => (
+    receipt.receipt_hash === receiptHash ? { ...receipt, ...patch } : receipt
+  ));
+  writeFileSync(path, JSON.stringify(receipts, null, 2) + '\n', 'utf8');
 }
 
 function httpGet(port, path) {
@@ -228,6 +236,7 @@ try {
   });
 
   await test('limit and offset page ranked rows', async () => {
+    mutateReceipt(fixture.root, fixture.hashes.receiptBHash, { verification_status: 'verified' });
     writeManifest(fixture.root, [
       entry(fixture.hashes.receiptAHash, 'Entry A'),
       entry(fixture.hashes.receiptBHash, 'Entry B'),

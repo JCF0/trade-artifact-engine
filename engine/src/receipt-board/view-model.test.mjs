@@ -1,9 +1,12 @@
-import assert from 'assert';
+﻿import assert from 'assert';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
 
 import { createInventoryFixture, removeInventoryFixture } from '../inventory/test-fixtures.mjs';
 import { buildReceiptBoardView } from './view-model.mjs';
+
+const MIXED_QUOTE_RECEIPT_HASH = '9d58768108a17c64ffb4a01fcf072c141728282b9d3761401b2d10994d795fed';
+const CLEAN_VERIFIED_JUP_RECEIPT_HASH = '5fb5732d248af4e8f9214a3b074c3bf711a776e8445bf14eae735ddf02a0bbca';
 
 let pass = 0;
 let fail = 0;
@@ -126,6 +129,7 @@ try {
   });
 
   await test('ranks receipt entries by trust, time, then hash without trader or wallet ranking', () => {
+    mutateReceipt(fixture.root, fixture.hashes.receiptBHash, { verification_status: 'verified' });
     writeManifest(fixture.root, baseManifest([
       manifestEntry(fixture.hashes.receiptAHash, { display_name: 'Older Stronger' }),
       manifestEntry(fixture.hashes.receiptBHash, { display_name: 'Newer Weaker' }),
@@ -255,6 +259,76 @@ try {
     assert.equal(board.rows.length, 0);
     assert.equal(board.excluded_entries[0].reason, 'consistency_invalid');
     mutateVerifyResult(fixture.root, fixture.hashes.receiptAHash, { consistency_valid: true });
+  });
+
+
+  await test('mixed-quote receipt hash is excluded despite verifier pass true', () => {
+    const localFixture = createInventoryFixture();
+    try {
+      mutateReceipt(localFixture.root, localFixture.hashes.receiptAHash, {
+        receipt_hash: MIXED_QUOTE_RECEIPT_HASH,
+        verification_status: 'unverified',
+        display_status: 'Unverified - See Limitations',
+        quote_mint: 'MIXED',
+        quote_symbol: 'MIXED',
+        flags: ['mixed_quote'],
+      });
+      mutateVerifyResult(localFixture.root, localFixture.hashes.receiptAHash, {
+        receipt_hash: MIXED_QUOTE_RECEIPT_HASH,
+        recomputed_hash: MIXED_QUOTE_RECEIPT_HASH,
+        hash_valid: true,
+        schema_valid: true,
+        consistency_valid: true,
+        pass: true,
+      });
+      writeManifest(localFixture.root, baseManifest([
+        manifestEntry(MIXED_QUOTE_RECEIPT_HASH, { display_name: 'Mixed Quote' }),
+      ]));
+
+      const board = buildReceiptBoardView({ engineRoot: localFixture.root });
+
+      assert.equal(board.rows.length, 0);
+      assert.equal(board.excluded_entries.length, 1);
+      assert.equal(board.excluded_entries[0].receipt_hash, MIXED_QUOTE_RECEIPT_HASH);
+      assert.equal(board.excluded_entries[0].reason, 'verification_status_not_board_eligible');
+    } finally {
+      removeInventoryFixture(localFixture.root);
+    }
+  });
+
+  await test('clean verified JUP receipt hash remains board eligible', () => {
+    const localFixture = createInventoryFixture();
+    try {
+      mutateReceipt(localFixture.root, localFixture.hashes.receiptAHash, {
+        receipt_hash: CLEAN_VERIFIED_JUP_RECEIPT_HASH,
+        receipt_id: 'art_v12_cp_JUPyiwrY_0',
+        token_mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+        verification_status: 'verified',
+        display_status: 'Verified Closed Position',
+        receipt_type: 'closed_position',
+      });
+      mutateVerifyResult(localFixture.root, localFixture.hashes.receiptAHash, {
+        receipt_id: 'art_v12_cp_JUPyiwrY_0',
+        receipt_hash: CLEAN_VERIFIED_JUP_RECEIPT_HASH,
+        recomputed_hash: CLEAN_VERIFIED_JUP_RECEIPT_HASH,
+        hash_valid: true,
+        schema_valid: true,
+        consistency_valid: true,
+        pass: true,
+      });
+      writeManifest(localFixture.root, baseManifest([
+        manifestEntry(CLEAN_VERIFIED_JUP_RECEIPT_HASH, { display_name: 'Clean JUP' }),
+      ]));
+
+      const board = buildReceiptBoardView({ engineRoot: localFixture.root });
+
+      assert.equal(board.rows.length, 1);
+      assert.equal(board.rows[0].receipt_hash, CLEAN_VERIFIED_JUP_RECEIPT_HASH);
+      assert.equal(board.rows[0].verification_status, 'verified');
+      assert.equal(board.excluded_entries.length, 0);
+    } finally {
+      removeInventoryFixture(localFixture.root);
+    }
   });
 
   await test('unsupported metric excludes rows instead of silently ranking', () => {
