@@ -7,6 +7,34 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function formatCoverageTime(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed * 1000).toISOString();
+}
+
+function renderCoverageStatement(coverage) {
+  if (!coverage || typeof coverage !== 'object') return '';
+  const openedAt = formatCoverageTime(coverage.position_episode?.opened_at);
+  const closedAt = formatCoverageTime(coverage.position_episode?.closed_at);
+  const bounds = openedAt && closedAt
+    ? `Receipt event bounds: ${openedAt} to ${closedAt}.`
+    : 'Receipt event bounds incomplete.';
+  const selectionLine = coverage.publication_context?.selection_mode === 'publisher_selected'
+    ? '<p>Publisher-selected board entry.</p>'
+    : '';
+
+  return `<section class="coverage-statement" aria-label="Coverage Statement">
+      <h3>Coverage Statement</h3>
+      <p>Receipt-scoped coverage only.</p>
+      <p>${escapeHtml(bounds)}</p>
+      <p>Raw quote only. No USD normalization.</p>
+      ${selectionLine}
+      <p>Not wallet, trader, portfolio, or track-record coverage.</p>
+    </section>`;
+}
+
 function renderValue(value) {
   if (value == null || value === '') return 'Not available';
   return escapeHtml(value);
@@ -49,6 +77,7 @@ function renderRow(row) {
       <div><dt>Trust</dt><dd>${renderValue(row.trust?.current_label)}</dd></div>
       <div><dt>Ranking Metric</dt><dd>${renderValue(row.ranking_metric?.display)}</dd></div>
     </dl>
+    ${renderCoverageStatement(row.coverage_statement)}
     <nav class="links">${renderLinks(row.links)}</nav>
   </article>`;
 }

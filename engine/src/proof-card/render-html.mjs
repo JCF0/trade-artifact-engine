@@ -7,6 +7,26 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function renderCoverageSummary(summary) {
+  if (!summary || typeof summary !== 'object') return '';
+  const rows = [
+    ['Scope', summary.scope],
+    ['Event Bounds', summary.event_bounds],
+    ['Valuation', summary.valuation],
+    ['Limitation', summary.limitation],
+  ];
+  return `<section class="coverage-summary" aria-label="Coverage Statement">
+        <h2>${escapeHtml(summary.heading || 'Coverage Statement')}</h2>
+        <dl class="metrics">
+          ${rows.map(([label, value]) => `
+          <div class="metric">
+            <dt>${escapeHtml(label)}</dt>
+            <dd>${escapeHtml(value || 'Not available')}</dd>
+          </div>`).join('')}
+        </dl>
+      </section>`;
+}
+
 function renderList(items) {
   return items.map(item => `<li>${escapeHtml(item)}</li>`).join('');
 }
@@ -22,6 +42,7 @@ export function renderProofCardHtml(cardView) {
   const links = cardView.links || {};
   const summaryFields = Array.isArray(cardView.summary_fields) ? cardView.summary_fields : [];
   const disclosures = Array.isArray(cardView.disclosures) ? cardView.disclosures : [];
+  const coverageSummary = cardView.coverage_summary || null;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -218,6 +239,7 @@ export function renderProofCardHtml(cardView) {
           <dd>${escapeHtml(receipt.wallet || 'Not available')}</dd>
         </div>
       </div>
+      ${renderCoverageSummary(coverageSummary)}
       <div class="hash-row">
         <div class="hash-card">
           <div class="hash-label">Receipt Hash</div>

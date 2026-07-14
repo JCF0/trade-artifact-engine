@@ -83,6 +83,9 @@ try {
     assert.equal(response.status, 200);
     assert.equal(response.body.card_type, 'artifact_proof_card');
     assert.equal(response.body.receipt.receipt_hash, fixture.hashes.receiptAHash);
+    assert.equal(response.body.coverage_summary.heading, 'Coverage Statement');
+    assert.equal(response.body.coverage_summary.scope, 'Receipt-scoped coverage only.');
+    assert.equal(response.body.coverage_summary.valuation, 'Raw quote only. No USD normalization.');
   });
 
   await test('GET /api/proof/:receiptHash/card/preview returns standalone HTML', async () => {

@@ -19,6 +19,53 @@ function test(name, fn) {
     });
 }
 
+function sampleCoverageStatement(overrides = {}) {
+  return {
+    coverage_statement_version: 'receipt_coverage_v1',
+    coverage_status: 'complete',
+    coverage_codes: ['receipt_scope_only', 'event_bounds_complete'],
+    scope: {
+      scope_type: 'receipt',
+      coverage_basis: 'canonical_inventory_receipt',
+    },
+    receipt: {
+      receipt_hash: 'a'.repeat(64),
+      receipt_id: 'art_v12_cp_TEST_0',
+      receipt_type: 'closed_position',
+      receipt_version: '1.2.0',
+    },
+    position_episode: {
+      semantic: 'closed_position_receipt_episode',
+      opened_at: 1700000000,
+      closed_at: 1700000300,
+      snapshot_at: null,
+      time_basis: 'receipt_first_last_event_at',
+      descriptive_only: true,
+    },
+    verification_basis: {
+      verification_status: 'verified',
+      hash_valid: true,
+      verifier_passed: true,
+      schema_valid: true,
+      consistency_valid: true,
+      rule_violations: [],
+    },
+    valuation_basis: {
+      valuation_status: 'raw_quote',
+      valuation_currency: 'raw_quote',
+      quote_symbol: 'SOL',
+      quote_mint: 'So11111111111111111111111111111111111111112',
+      usd_normalized: false,
+    },
+    publication_context: {
+      surface: 'historical_receipt_board',
+      selection_mode: 'publisher_selected',
+    },
+    limitations: [],
+    ...overrides,
+  };
+}
+
 function sampleBoard(overrides = {}) {
   return {
     board_type: 'artifact_historical_verified_receipt_board',
@@ -66,6 +113,7 @@ function sampleBoard(overrides = {}) {
           value: 4,
           display: 'Source Anchored',
         },
+        coverage_statement: sampleCoverageStatement(),
         links: {
           proof_api_path: '/api/proof/' + 'a'.repeat(64),
           verifier_api_path: '/api/verifier/' + 'a'.repeat(64),
@@ -104,6 +152,34 @@ await test('renders rows with receipt-entry framing', () => {
   assert.ok(html.includes('Verification'));
   assert.ok(html.includes('Valuation'));
   assert.ok(html.includes('Trust'));
+});
+
+
+await test('renders compact coverage statement from row coverage without internal codes', () => {
+  const html = renderReceiptBoardHtml(sampleBoard());
+
+  assert.ok(html.includes('Coverage Statement'));
+  assert.ok(html.includes('Receipt-scoped coverage only.'));
+  assert.ok(html.includes('Receipt event bounds: 2023-11-14T22:13:20.000Z to 2023-11-14T22:18:20.000Z.'));
+  assert.ok(html.includes('Raw quote only. No USD normalization.'));
+  assert.ok(html.includes('Publisher-selected board entry.'));
+  assert.ok(html.includes('Not wallet, trader, portfolio, or track-record coverage.'));
+  assert.ok(!html.includes('coverage_codes'));
+  assert.ok(!html.includes('event_bounds_complete'));
+});
+
+await test('renders incomplete board coverage bounds deterministically', () => {
+  const board = sampleBoard();
+  board.rows[0].coverage_statement = sampleCoverageStatement({
+    position_episode: {
+      ...sampleCoverageStatement().position_episode,
+      opened_at: null,
+      closed_at: null,
+    },
+  });
+  const html = renderReceiptBoardHtml(board);
+
+  assert.ok(html.includes('Receipt event bounds incomplete.'));
 });
 
 await test('includes all required links', () => {
@@ -156,6 +232,7 @@ await test('escapes display, participant, selection, title, subtitle, token, and
         participant_ref: '<ref>',
         selection_note: '<note>',
         token_display: '<TOKEN>',
+        coverage_statement: sampleCoverageStatement(),
         links: {
           proof_api_path: '/api/proof/<bad>',
           verifier_api_path: '/api/verifier/"bad"',

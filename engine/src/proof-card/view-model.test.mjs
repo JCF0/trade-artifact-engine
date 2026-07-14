@@ -40,6 +40,7 @@ try {
       'verification',
       'summary_fields',
       'pnl_summary',
+      'coverage_summary',
       'disclosures',
       'links',
     ]);
@@ -60,6 +61,41 @@ try {
     assert.ok(card.disclosures.includes('Selected receipt only. Not a portfolio statement.'));
     assert.ok(card.disclosures.includes('Raw quote only. No USD normalization.'));
     assert.ok(card.disclosures.includes('Source anchors make this proof correlatable and should not be treated as private.'));
+  });
+
+
+  test('coverage_summary is derived from existing coverage_statement only', () => {
+    const card = buildProofCardView(proofDetail);
+    assert.deepEqual(card.coverage_summary, {
+      heading: 'Coverage Statement',
+      scope: 'Receipt-scoped coverage only.',
+      event_bounds: 'Receipt event bounds: 2023-11-14T22:13:20.000Z to 2023-11-14T22:18:20.000Z.',
+      valuation: 'Raw quote only. No USD normalization.',
+      limitation: 'Not wallet, trader, portfolio, or track-record coverage.',
+    });
+  });
+
+  test('coverage_summary renders incomplete bounds deterministically', () => {
+    const clone = structuredClone(proofDetail);
+    clone.coverage_statement.position_episode.opened_at = null;
+    clone.coverage_statement.position_episode.closed_at = null;
+    const card = buildProofCardView(clone);
+    assert.equal(card.coverage_summary.event_bounds, 'Receipt event bounds incomplete.');
+  });
+
+  test('coverage_summary omits internal codes, verifier diagnostics, wallet, PnL, upload, mint, and signing fields', () => {
+    const card = buildProofCardView(proofDetail);
+    const serialized = JSON.stringify(card.coverage_summary).toLowerCase();
+    assert.ok(!serialized.includes('coverage_codes'));
+    assert.ok(!serialized.includes('verifier'));
+    assert.ok(!serialized.includes('test_wallet'));
+    assert.ok(!serialized.includes('wallet_address'));
+    assert.ok(!serialized.includes('pnl'));
+    assert.ok(!serialized.includes('usd_value'));
+    assert.ok(!serialized.includes('usd_amount'));
+    assert.ok(!serialized.includes('upload'));
+    assert.ok(!serialized.includes('mint'));
+    assert.ok(!serialized.includes('signing'));
   });
 
   test('verification_status, hash_valid, and verifier_passed remain distinct', () => {

@@ -31,6 +31,32 @@ function buildDisclosures(trust) {
   return disclosures;
 }
 
+function formatCoverageTime(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed * 1000).toISOString();
+}
+
+function buildCoverageSummary(proofDetail) {
+  const coverage = proofDetail?.coverage_statement;
+  if (!coverage || typeof coverage !== 'object') return null;
+
+  const openedAt = formatCoverageTime(coverage.position_episode?.opened_at);
+  const closedAt = formatCoverageTime(coverage.position_episode?.closed_at);
+  const eventBounds = openedAt && closedAt
+    ? `Receipt event bounds: ${openedAt} to ${closedAt}.`
+    : 'Receipt event bounds incomplete.';
+
+  return {
+    heading: 'Coverage Statement',
+    scope: 'Receipt-scoped coverage only.',
+    event_bounds: eventBounds,
+    valuation: 'Raw quote only. No USD normalization.',
+    limitation: 'Not wallet, trader, portfolio, or track-record coverage.',
+  };
+}
+
 function buildPnlSummary(proofDetail) {
   const summary = proofDetail?.pnl_summary;
   if (!summary || typeof summary !== 'object') return null;
@@ -85,6 +111,7 @@ export function buildProofCardView(proofDetail, options = {}) {
       { label: 'Valuation', value: receipt.valuation_status || null },
     ],
     pnl_summary: buildPnlSummary(renderedProofDetail),
+    coverage_summary: buildCoverageSummary(renderedProofDetail),
     disclosures: buildDisclosures(trust),
     links: {
       proof_api_path: links.proof_api_path || null,
