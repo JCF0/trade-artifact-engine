@@ -89,6 +89,13 @@ V1.7 adds receipt-scoped Coverage Statements across local proof and receipt-boar
 - `node engine/src/check-v17-coverage-demo.mjs`
 
 These v1.7 surfaces remain local-only and read-only. Coverage is receipt-scoped only, raw-quote only, and does not add public hosting, live trading, prize competition behavior, profiles, accounts, upload, minting, signing, USD normalization, PnL ranking, wallet coverage, portfolio coverage, track-record claims, or trader skill claims.
+
+V1.8 adds deterministic same-mint multi-input swap normalization for local receipt generation:
+- `node engine/src/run-v18-regression.mjs`
+- `node engine/src/pipeline/same-mint-input-real-shape.test.mjs`
+
+These v1.8 changes are normalization-only. They accept multiple wallet-side token inputs only when all inputs share the same mint and decimals and exactly one wallet-side output transfer exists. V1.8 does not add new swap shapes, mixed quotes, native+token support, USD normalization, board changes, accounts, profiles, upload, minting, signing, or public competition behavior.
+
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
