@@ -200,6 +200,14 @@ function getInventoryRoot() {
     : ROOT;
 }
 
+function getArchiveEnabledReceipt(receiptHash) {
+  return getInventoryReceipt(receiptHash, {
+    engineRoot: getInventoryRoot(),
+    includeExcluded: false,
+    includeArchive: true,
+  });
+}
+
 function buildInventoryApiSnapshot(query, { includeLegacy = false } = {}) {
   const parsed = parseInventoryQuery(query);
   return buildInventorySnapshot({
@@ -513,10 +521,7 @@ app.get('/api/inventory/summary', asyncHandler(async (req, res) => {
 
 // ── GET /api/proof/:receiptHash ──
 app.get('/api/proof/:receiptHash', asyncHandler(async (req, res) => {
-  const receipt = getInventoryReceipt(req.params.receiptHash, {
-    engineRoot: getInventoryRoot(),
-    includeExcluded: false,
-  });
+  const receipt = getArchiveEnabledReceipt(req.params.receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof detail found for receipt_hash: ${req.params.receiptHash}` });
@@ -532,10 +537,7 @@ app.get('/api/verifier/:receiptHash', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
   }
 
-  const receipt = getInventoryReceipt(receiptHash, {
-    engineRoot: getInventoryRoot(),
-    includeExcluded: false,
-  });
+  const receipt = getArchiveEnabledReceipt(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No verifier record found for receipt_hash: ${receiptHash}` });
@@ -549,10 +551,7 @@ app.get('/api/proof/:receiptHash/card', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
   }
 
-  const receipt = getInventoryReceipt(receiptHash, {
-    engineRoot: getInventoryRoot(),
-    includeExcluded: false,
-  });
+  const receipt = getArchiveEnabledReceipt(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof card found for receipt_hash: ${receiptHash}` });
@@ -569,10 +568,7 @@ app.get('/api/proof/:receiptHash/card/preview', asyncHandler(async (req, res) =>
     return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
   }
 
-  const receipt = getInventoryReceipt(receiptHash, {
-    engineRoot: getInventoryRoot(),
-    includeExcluded: false,
-  });
+  const receipt = getArchiveEnabledReceipt(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof card preview found for receipt_hash: ${receiptHash}` });
@@ -663,10 +659,7 @@ function parseHostedPreviewQuery(query = {}) {
 }
 
 app.get('/api/proof/:receiptHash/hosted-preview', asyncHandler(async (req, res) => {
-  const receipt = getInventoryReceipt(req.params.receiptHash, {
-    engineRoot: getInventoryRoot(),
-    includeExcluded: false,
-  });
+  const receipt = getArchiveEnabledReceipt(req.params.receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No hosted proof preview found for receipt_hash: ${req.params.receiptHash}` });
@@ -719,10 +712,7 @@ app.get('/api/receipt-board/preview', asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/proof/:receiptHash/export', asyncHandler(async (req, res) => {
-  const receipt = getInventoryReceipt(req.params.receiptHash, {
-    engineRoot: getInventoryRoot(),
-    includeExcluded: false,
-  });
+  const receipt = getArchiveEnabledReceipt(req.params.receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof detail export found for receipt_hash: ${req.params.receiptHash}` });

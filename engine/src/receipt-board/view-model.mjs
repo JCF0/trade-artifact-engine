@@ -212,6 +212,7 @@ export function buildReceiptBoardView(options = {}) {
     engineRoot,
     includeLegacy: false,
     includeExcluded: false,
+    includeArchive: true,
   });
   const receiptByHash = new Map(snapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
 

@@ -233,7 +233,7 @@ test('non-verified archived receipt remains in inventory but gains no board elig
 
     assert.equal(snapshot.receipts.some(receipt => receipt.receipt_hash === rayHash), true);
     assert.equal(board.rows.some(row => row.receipt_hash === rayHash), false);
-    assert.equal(board.excluded_entries[0].reason, 'missing_receipt');
+    assert.equal(board.excluded_entries[0].reason, 'verification_status_not_board_eligible');
   } finally {
     removeInventoryFixture(fixture.root);
   }
