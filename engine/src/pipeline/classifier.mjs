@@ -1,27 +1,31 @@
 /**
- * Pipeline — Transaction Classifier
+ * Pipeline â€” Transaction Classifier
  *
  * Classifies every transaction into an explicit bucket.
  * No silent drops. Every tx gets a classification.
  *
  * Classifications:
- *   classified         — clean swap with one quote-mint side, fully processable
- *   token_to_token     — swap where neither side is a known quote mint
- *   quote_to_quote     — swap between two quote mints (e.g., SOL→USDC)
- *   multi_leg          — swap with multiple token inputs or outputs
- *   unsupported_swap   — identified as swap but extraction failed
- *   errored            — transaction had an error on-chain
- *   non_swap           — not a swap transaction (transfer, NFT mint, etc.)
- *   unknown            — can't determine what this transaction is
+ *   classified         â€” clean swap with one quote-mint side, fully processable
+ *   token_to_token     â€” swap where neither side is a known quote mint
+ *   quote_to_quote     â€” swap between two quote mints (e.g., SOLâ†’USDC)
+ *   multi_leg          â€” swap with multiple token inputs or outputs
+ *   unsupported_swap   â€” identified as swap but extraction failed
+ *   errored            â€” transaction had an error on-chain
+ *   non_swap           â€” not a swap transaction (transfer, NFT mint, etc.)
+ *   unknown            â€” can't determine what this transaction is
  *
  * The classifier wraps the existing normalizer and reconstructor,
  * adding classification metadata without changing their behavior.
  */
 import { QUOTE_MINTS, SYMS, SOL_MINT } from './constants.mjs';
+import {
+  aggregateSameMintInputsFromSwapEvent,
+  aggregateSameMintInputsFromWalletTransfers,
+} from './same-mint-input-aggregation.mjs';
 
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Classification types
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export const CLASSIFICATION = {
   CLASSIFIED: 'classified',
@@ -34,9 +38,9 @@ export const CLASSIFICATION = {
   UNKNOWN: 'unknown',
 };
 
-// ═══════════════════════════════════════════════════════════════
-// classifyTransaction — single tx classification
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// classifyTransaction â€” single tx classification
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * Classify a single raw Helius transaction.
@@ -69,7 +73,7 @@ export function classifyTransaction(tx, index, wallet, dexPrograms) {
     return { ...base, classification: CLASSIFICATION.NON_SWAP, reason: `helius_type=${tx.type}` };
   }
 
-  // It's swap-related — try to extract the swap details
+  // It's swap-related â€” try to extract the swap details
   const swapDetail = extractSwapDetail(tx, wallet);
 
   if (!swapDetail) {
@@ -99,7 +103,7 @@ export function classifyTransaction(tx, index, wallet, dexPrograms) {
     return {
       ...base,
       classification: CLASSIFICATION.QUOTE_TO_QUOTE,
-      reason: `${symOf(swapDetail.token_in_mint)}→${symOf(swapDetail.token_out_mint)}`,
+      reason: `${symOf(swapDetail.token_in_mint)}â†’${symOf(swapDetail.token_out_mint)}`,
       swap_detail: swapDetail,
     };
   }
@@ -108,12 +112,12 @@ export function classifyTransaction(tx, index, wallet, dexPrograms) {
     return {
       ...base,
       classification: CLASSIFICATION.TOKEN_TO_TOKEN,
-      reason: `${symOf(swapDetail.token_in_mint)}→${symOf(swapDetail.token_out_mint)} (no quote mint)`,
+      reason: `${symOf(swapDetail.token_in_mint)}â†’${symOf(swapDetail.token_out_mint)} (no quote mint)`,
       swap_detail: swapDetail,
     };
   }
 
-  // One side is quote, one is token — fully classified
+  // One side is quote, one is token â€” fully classified
   return {
     ...base,
     classification: CLASSIFICATION.CLASSIFIED,
@@ -124,9 +128,9 @@ export function classifyTransaction(tx, index, wallet, dexPrograms) {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// classifyAll — batch classification with coverage stats
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// classifyAll â€” batch classification with coverage stats
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * Classify all transactions for a wallet.
@@ -173,9 +177,9 @@ export function classifyAll(rawTxns, wallet, dexPrograms) {
   return { classifications, coverage };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// formatCoverageReport — human-readable summary
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// formatCoverageReport â€” human-readable summary
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * Format a coverage report as a human-readable string.
@@ -186,7 +190,7 @@ export function formatCoverageReport(coverage) {
   const c = coverage;
   const b = c.breakdown;
   const lines = [
-    `── Coverage Report ──`,
+    `â”€â”€ Coverage Report â”€â”€`,
     `  Total transactions:    ${c.total_transactions}`,
     `  Swap-related:          ${c.swap_related}`,
     `  Fully classified:      ${c.fully_classified} (${c.coverage_pct}% of all, ${c.swap_coverage_pct}% of swaps)`,
@@ -206,20 +210,20 @@ export function formatCoverageReport(coverage) {
   const unprocTotal = unproc.token_to_token + unproc.quote_to_quote + unproc.multi_leg + unproc.unsupported_swap + unproc.unknown;
   if (unprocTotal > 0) {
     lines.push(``);
-    lines.push(`  ⚠️  ${unprocTotal} swap(s) not processable:`);
-    if (unproc.token_to_token > 0) lines.push(`    • ${unproc.token_to_token} token-to-token (no quote mint on either side)`);
-    if (unproc.quote_to_quote > 0) lines.push(`    • ${unproc.quote_to_quote} quote-to-quote (e.g., SOL↔USDC)`);
-    if (unproc.multi_leg > 0)      lines.push(`    • ${unproc.multi_leg} multi-leg (multiple inputs/outputs)`);
-    if (unproc.unsupported_swap > 0) lines.push(`    • ${unproc.unsupported_swap} unsupported swap (extraction failed)`);
-    if (unproc.unknown > 0)        lines.push(`    • ${unproc.unknown} unknown`);
+    lines.push(`  âš ï¸  ${unprocTotal} swap(s) not processable:`);
+    if (unproc.token_to_token > 0) lines.push(`    â€¢ ${unproc.token_to_token} token-to-token (no quote mint on either side)`);
+    if (unproc.quote_to_quote > 0) lines.push(`    â€¢ ${unproc.quote_to_quote} quote-to-quote (e.g., SOLâ†”USDC)`);
+    if (unproc.multi_leg > 0)      lines.push(`    â€¢ ${unproc.multi_leg} multi-leg (multiple inputs/outputs)`);
+    if (unproc.unsupported_swap > 0) lines.push(`    â€¢ ${unproc.unsupported_swap} unsupported swap (extraction failed)`);
+    if (unproc.unknown > 0)        lines.push(`    â€¢ ${unproc.unknown} unknown`);
   }
 
   return lines.join('\n');
 }
 
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Helpers (shared with ingest.mjs logic, duplicated to avoid circular deps)
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function txTouchesDex(tx, dexPrograms) {
   for (const ix of (tx.instructions || [])) {
@@ -243,8 +247,6 @@ function extractSwapDetail(tx, wallet) {
       const ti = sw.tokenInputs[0];
       inMint = ti.mint; inDec = ti.rawTokenAmount?.decimals ?? null;
       inAmt = Number(ti.rawTokenAmount.tokenAmount) / Math.pow(10, inDec || 0);
-    } else {
-      return null; // multi-input
     }
 
     if (sw.nativeOutput) {
@@ -253,11 +255,14 @@ function extractSwapDetail(tx, wallet) {
       const to = sw.tokenOutputs[0];
       outMint = to.mint; outDec = to.rawTokenAmount?.decimals ?? null;
       outAmt = Number(to.rawTokenAmount.tokenAmount) / Math.pow(10, outDec || 0);
-    } else {
-      return null; // multi-output
     }
 
-    return { token_in_mint: inMint, token_in_amount: inAmt, token_in_decimals: inDec, token_out_mint: outMint, token_out_amount: outAmt, token_out_decimals: outDec };
+    if (inMint && outMint) {
+      return { token_in_mint: inMint, token_in_amount: inAmt, token_in_decimals: inDec, token_out_mint: outMint, token_out_amount: outAmt, token_out_decimals: outDec };
+    }
+
+    const aggregated = aggregateSameMintInputsFromSwapEvent(sw);
+    return aggregated.ok ? aggregated.event_fields : null;
   }
 
   // Fallback: token-transfer analysis
@@ -281,6 +286,9 @@ function extractSwapDetail(tx, wallet) {
       token_out_decimals: null,
     };
   }
+
+  const aggregated = aggregateSameMintInputsFromWalletTransfers(tx, wallet);
+  if (aggregated.ok) return aggregated.event_fields;
 
   if (sent.length === 1 && recv.length === 0 && netNative > 0) {
     const solReceived = netNative / 1e9;

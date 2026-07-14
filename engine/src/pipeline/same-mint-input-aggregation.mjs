@@ -1,7 +1,6 @@
-/**
+﻿/**
  * Deterministic same-mint multi-input aggregation helper.
  *
- * This module is intentionally not wired into runtime normalization yet.
  * It returns existing normalized swap-event fields separately from diagnostic
  * metadata so raw transfer references do not become canonical receipt inputs.
  */
@@ -22,6 +21,50 @@ const FAILURE = Object.freeze({
 });
 
 export const SAME_MINT_INPUT_AGGREGATION_FAILURES = FAILURE;
+
+export function aggregateSameMintInputsFromSwapEvent(swapEvent) {
+  if (!swapEvent) return fail(FAILURE.NOT_MULTI_INPUT);
+  const inputs = (swapEvent.tokenInputs || []).map((tokenInput, index) => tokenInputFromSwap(tokenInput, index));
+  const outputs = (swapEvent.tokenOutputs || []).map((tokenOutput, index) => tokenOutputFromSwap(tokenOutput, index));
+  return aggregateSameMintMultiInputSwap({
+    inputs,
+    outputs,
+    nativeInput: swapEvent.nativeInput || null,
+    nativeOutput: swapEvent.nativeOutput || null,
+  });
+}
+
+export function aggregateSameMintInputsFromWalletTransfers(tx, wallet) {
+  const transfers = Array.isArray(tx?.tokenTransfers) ? tx.tokenTransfers : [];
+  const sent = [];
+  const received = [];
+
+  for (let index = 0; index < transfers.length; index++) {
+    const transfer = transfers[index];
+    if (transfer.fromUserAccount === wallet && transfer.toUserAccount === wallet) {
+      return fail(FAILURE.AMBIGUOUS_OWNERSHIP);
+    }
+    if (transfer.fromUserAccount === wallet) {
+      sent.push(tokenInputFromTransfer(tx, transfer, index));
+    } else if (transfer.toUserAccount === wallet) {
+      received.push(tokenOutputFromTransfer(tx, transfer, index));
+    }
+  }
+
+  let nativeInput = null;
+  let nativeOutput = null;
+  for (const nativeTransfer of (tx?.nativeTransfers || [])) {
+    if (nativeTransfer.fromUserAccount === wallet) nativeInput = nativeTransfer;
+    if (nativeTransfer.toUserAccount === wallet) nativeOutput = nativeTransfer;
+  }
+
+  return aggregateSameMintMultiInputSwap({
+    inputs: sent,
+    outputs: received,
+    nativeInput,
+    nativeOutput,
+  });
+}
 
 /**
  * Aggregate multiple wallet-side token inputs into one existing normalized
@@ -144,4 +187,70 @@ function buildInputRef(input) {
     raw_amount: parseRawAmount(input.rawAmount).toString(),
     decimals: input.decimals,
   };
+}
+
+function tokenInputFromSwap(tokenInput, index) {
+  return {
+    mint: tokenInput?.mint,
+    rawAmount: tokenInput?.rawTokenAmount?.tokenAmount,
+    decimals: tokenInput?.rawTokenAmount?.decimals,
+    direction: 'in',
+    wallet_side: true,
+    ref: { source: 'events.swap.tokenInputs', index },
+  };
+}
+
+function tokenOutputFromSwap(tokenOutput, index) {
+  return {
+    mint: tokenOutput?.mint,
+    rawAmount: tokenOutput?.rawTokenAmount?.tokenAmount,
+    decimals: tokenOutput?.rawTokenAmount?.decimals,
+    direction: 'out',
+    wallet_side: true,
+    ref: { source: 'events.swap.tokenOutputs', index },
+  };
+}
+
+function tokenInputFromTransfer(tx, transfer, index) {
+  const decimals = transfer?.rawTokenAmount?.decimals ?? guessDecimals(tx, transfer?.mint);
+  return {
+    mint: transfer?.mint,
+    rawAmount: transfer?.rawTokenAmount?.tokenAmount ?? decimalAmountToRaw(transfer?.tokenAmount, decimals),
+    decimals,
+    direction: 'in',
+    wallet_side: true,
+    ref: { source: 'tokenTransfers', index, signature: tx?.signature ?? null },
+  };
+}
+
+function tokenOutputFromTransfer(tx, transfer, index) {
+  const decimals = transfer?.rawTokenAmount?.decimals ?? guessDecimals(tx, transfer?.mint);
+  return {
+    mint: transfer?.mint,
+    rawAmount: transfer?.rawTokenAmount?.tokenAmount ?? decimalAmountToRaw(transfer?.tokenAmount, decimals),
+    decimals,
+    direction: 'out',
+    wallet_side: true,
+    ref: { source: 'tokenTransfers', index, signature: tx?.signature ?? null },
+  };
+}
+
+function guessDecimals(tx, mint) {
+  for (const account of (tx?.accountData || [])) {
+    for (const change of (account.tokenBalanceChanges || [])) {
+      if (change.mint === mint && change.rawTokenAmount?.decimals !== undefined) {
+        return change.rawTokenAmount.decimals;
+      }
+    }
+  }
+  return null;
+}
+
+function decimalAmountToRaw(amount, decimals) {
+  if (!isValidDecimals(decimals)) return null;
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) return null;
+
+  const raw = amount * Math.pow(10, decimals);
+  if (!Number.isSafeInteger(raw)) return null;
+  return String(raw);
 }

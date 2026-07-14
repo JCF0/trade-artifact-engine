@@ -1,7 +1,7 @@
 /**
  * Full Pipeline Runner
  * 
- * Runs: ingest → normalize → reconstruct → pnl → receipts → render [→ claim]
+ * Runs: ingest â†’ normalize â†’ reconstruct â†’ pnl â†’ receipts â†’ render [â†’ claim]
  * for a given wallet address.
  * 
  * Usage: node src/run-pipeline.mjs <wallet> [maxTxns] [--keypair <path>] [--recipient <pubkey>] [--ledger-debug]
@@ -33,6 +33,10 @@ import { selectPackages, loadExistingResults, mergeResults } from './ledger/irys
 import { resolveMintPlanBatch } from './ledger/mint-ready-resolver.mjs';
 import { checkMintGates, validatePlanForMint, shouldSkipMint, executeSingleMint } from './ledger/devnet-mint-adapter.mjs';
 import { buildE2EProofManifest } from './ledger/e2e-proof-manifest.mjs';
+import {
+  aggregateSameMintInputsFromSwapEvent,
+  aggregateSameMintInputsFromWalletTransfers,
+} from './pipeline/same-mint-input-aggregation.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -78,7 +82,7 @@ if (!WALLET) {
 const MAX_TXNS = parseInt(positional[1] || '10000', 10);
 
 console.log(`\n${'='.repeat(60)}`);
-console.log(`TRADE ARTIFACT ENGINE — Full Pipeline`);
+console.log(`TRADE ARTIFACT ENGINE â€” Full Pipeline`);
 console.log(`Wallet:  ${WALLET}`);
 console.log(`Max txn: ${MAX_TXNS}`);
 if (KEYPAIR_PATH) console.log(`Keypair: ${KEYPAIR_PATH}`);
@@ -196,6 +200,13 @@ for (let i = 0; i < rawLines.length; i++) {
         token_in_mint: inMint, token_in_amount: inAmt, token_in_decimals: inDec,
         token_out_mint: outMint, token_out_amount: outAmt, token_out_decimals: outDec,
         extraction_method: 'events_swap', raw_index: i };
+    } else {
+      const aggregated = aggregateSameMintInputsFromSwapEvent(sw);
+      if (aggregated.ok) {
+        event = { wallet: WALLET, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'UNKNOWN',
+          ...aggregated.event_fields,
+          extraction_method: 'events_swap_same_mint_aggregated', raw_index: i };
+      }
     }
   }
 
@@ -217,6 +228,13 @@ for (let i = 0; i < rawLines.length; i++) {
         token_in_mint: sent[0].mint, token_in_amount: sent[0].tokenAmount, token_in_decimals: guessDecimals(sent[0].mint),
         token_out_mint: recv[0].mint, token_out_amount: recv[0].tokenAmount, token_out_decimals: guessDecimals(recv[0].mint),
         extraction_method: 'token_transfers', raw_index: i };
+    } else {
+      const aggregated = aggregateSameMintInputsFromWalletTransfers(tx, WALLET);
+      if (aggregated.ok) {
+        event = { wallet: WALLET, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'UNKNOWN',
+          ...aggregated.event_fields,
+          extraction_method: 'token_transfers_same_mint_aggregated', raw_index: i };
+      }
     }
   }
 
@@ -327,7 +345,7 @@ let ledgerComparison = null;
 if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`\n--- Ledger Debug: Comparison ---`);
 
-  // Build comparison — diagnostic only, not proof logic.
+  // Build comparison â€” diagnostic only, not proof logic.
   // Matching by token_mint may be imperfect for repeated close/reopen segments.
   const ledgerClosed = ledgerDebugResult.closedSegments;
   const v1Closed = cyclesOutput.filter(c => c.status === 'closed');
@@ -464,7 +482,7 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
   console.log(`  Eligible verified: ${eligibleVerified}/${candidates.length}`);
   console.log(`  Eligible closed:   ${eligibleClosed}/${candidates.length}`);
 
-  // ── Promote candidates to v1.2 receipts ──
+  // â”€â”€ Promote candidates to v1.2 receipts â”€â”€
   const v12Receipts = promoteReceiptCandidates(candidates, {
     promotedAt: Math.floor(Date.now() / 1000),
   });
@@ -537,11 +555,11 @@ if (LEDGER_DEBUG && ledgerDebugResult) {
     JSON.stringify(valuationDebug, null, 2)
   );
   console.log(`  Total:      ${valuationContexts.length}`);
-  console.log(`  All valid:  ${valuationDebug.all_valid ? '✅' : '❌'}`);
+  console.log(`  All valid:  ${valuationDebug.all_valid ? 'âœ…' : 'âŒ'}`);
   console.log(`  USD-stable: ${valUsdStableCount}`);
   if (valInvalidCount > 0) {
     for (const c of valuationContexts.filter(c => !c.valid)) {
-      console.log(`  ❌ ${c.receipt_id}: ${c.violations.map(v => v.rule).join(', ')}`);
+      console.log(`  âŒ ${c.receipt_id}: ${c.violations.map(v => v.rule).join(', ')}`);
     }
   }
 
@@ -1040,7 +1058,7 @@ const pnlCycles = cyclesOutput.map(c => {
     realized_pnl_pct: parseFloat(pnlPct.toPrecision(6)),
     hold_time_seconds: c.closed_at - c.opened_at,
     quote_currency: quoteCurrency,
-    // Raw doubles for verification hash — no display rounding applied
+    // Raw doubles for verification hash â€” no display rounding applied
     _raw_entry_price_avg: entryAvg,
     _raw_exit_price_avg: exitAvg,
   };
@@ -1120,9 +1138,9 @@ for (const r of receipts) {
   let y=40;
   ctx.fillStyle='#8899a6';ctx.font='600 13px "Segoe UI", Arial, sans-serif';ctx.fillText('TRADE RECEIPT',32,y);
   ctx.fillStyle='#00c076';ctx.font='600 13px "Segoe UI", Arial, sans-serif';
-  const st=`● ${r.status.toUpperCase()}`;ctx.fillText(st,W-32-ctx.measureText(st).width,y);
+  const st=`â— ${r.status.toUpperCase()}`;ctx.fillText(st,W-32-ctx.measureText(st).width,y);
   y+=44;ctx.fillStyle='#ffffff';ctx.font='700 36px "Segoe UI", Arial, sans-serif';ctx.fillText(`${tSym} / ${qSym}`,32,y);
-  y+=28;ctx.fillStyle='#8899a6';ctx.font='400 14px "Segoe UI", Arial, sans-serif';ctx.fillText(`${r.chain.toUpperCase()}  •  ${shortW(r.wallet)}`,32,y);
+  y+=28;ctx.fillStyle='#8899a6';ctx.font='400 14px "Segoe UI", Arial, sans-serif';ctx.fillText(`${r.chain.toUpperCase()}  â€¢  ${shortW(r.wallet)}`,32,y);
   y+=20;ctx.strokeStyle='#2a3040';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(32,y);ctx.lineTo(W-32,y);ctx.stroke();
   y+=48;const pc=isProfit?'#00c076':'#ff4d4d',ps=isProfit?'+':'';
   ctx.fillStyle=pc;ctx.font='700 48px "Segoe UI", Arial, sans-serif';ctx.fillText(`${ps}${r.realized_pnl_pct.toFixed(3)}%`,32,y);
@@ -1137,8 +1155,8 @@ for (const r of receipts) {
   drawStat(ctx,c2,y,'Trades',`${r.num_buys} ${bL} / ${r.num_sells} ${sL}`);
   y+=rh+10;ctx.strokeStyle='#2a3040';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(32,y);ctx.lineTo(W-32,y);ctx.stroke();
   y+=24;ctx.fillStyle='#556677';ctx.font='400 12px "Consolas", "Courier New", monospace';
-  ctx.fillText(`${r.receipt_id}  •  hash: ${r.verification_hash.slice(0,12)}...`,32,y);
-  y+=18;ctx.fillText(`${fmtDate(r.opened_at)} → ${fmtDate(r.closed_at)}`,32,y);
+  ctx.fillText(`${r.receipt_id}  â€¢  hash: ${r.verification_hash.slice(0,12)}...`,32,y);
+  y+=18;ctx.fillText(`${fmtDate(r.opened_at)} â†’ ${fmtDate(r.closed_at)}`,32,y);
   const fn=`${r.receipt_id}.png`;
   writeFileSync(resolve(ROOT,'data/renders',fn),canvas.toBuffer('image/png'));
   console.log(`  Rendered: ${fn}`);
@@ -1230,7 +1248,7 @@ if (KEYPAIR_PATH && receipts.length > 0) {
 
 // ===== PHASE 8: ARWEAVE UPLOAD (optional) =====
 let uploadCount = 0;
-const uploadsMap = new Map();  // verification_hash → upload record (for Phase 9)
+const uploadsMap = new Map();  // verification_hash â†’ upload record (for Phase 9)
 if (KEYPAIR_PATH && receipts.length > 0) {
   console.log(`\n--- Phase 8: Arweave Upload ---`);
 
@@ -1272,17 +1290,17 @@ if (KEYPAIR_PATH && receipts.length > 0) {
 
     for (const receipt of receipts) {
       if (uploadsMap.has(receipt.verification_hash)) {
-        console.log(`  ⏭️  SKIP ${receipt.receipt_id}: already uploaded`);
+        console.log(`  â­ï¸  SKIP ${receipt.receipt_id}: already uploaded`);
         continue;
       }
 
       const pngPath = resolve(ROOT, 'data/renders', `${receipt.receipt_id}.png`);
       if (!existsSync(pngPath)) {
-        console.log(`  ⚠️  SKIP ${receipt.receipt_id}: no PNG`);
+        console.log(`  âš ï¸  SKIP ${receipt.receipt_id}: no PNG`);
         continue;
       }
 
-      console.log(`  📤 ${receipt.receipt_id}...`);
+      console.log(`  ðŸ“¤ ${receipt.receipt_id}...`);
 
       // Upload PNG
       const pngResult = await irys.uploadFile(pngPath, { tags: [
@@ -1363,7 +1381,7 @@ if (KEYPAIR_PATH && receipts.length > 0) {
       };
       newUploads.push(uploadRecord);
       uploadsMap.set(receipt.verification_hash, uploadRecord);
-      console.log(`     ✅ ${metadataUri}`);
+      console.log(`     âœ… ${metadataUri}`);
     }
 
     if (newUploads.length > 0) {

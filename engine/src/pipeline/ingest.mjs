@@ -1,5 +1,5 @@
 /**
- * Pipeline — Ingest + Normalize
+ * Pipeline â€” Ingest + Normalize
  * Extracted from mint-one.mjs v1 (Phase 0.5).
  *
  * Fetches wallet transactions from Helius, normalizes swap events.
@@ -11,6 +11,10 @@ import {
   SOL_MINT, QUOTE_MINTS, DEX_PROGRAMS,
   BASE_URL, PAGE_SIZE, RATE_DELAY_MS,
 } from './constants.mjs';
+import {
+  aggregateSameMintInputsFromSwapEvent,
+  aggregateSameMintInputsFromWalletTransfers,
+} from './same-mint-input-aggregation.mjs';
 
 // ---------------------------------------------------------------------------
 // Helpers (identical to mint-one.mjs)
@@ -39,6 +43,11 @@ function extractSwapFromTransfers(tx, idx, wallet) {
 
   if (sent.length === 1 && recv.length === 1 && sent[0].mint !== recv[0].mint) {
     return { wallet, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: sent[0].mint || SOL_MINT, token_in_amount: Math.abs(sent[0].tokenAmount), token_in_decimals: null, token_out_mint: recv[0].mint || SOL_MINT, token_out_amount: Math.abs(recv[0].tokenAmount), token_out_decimals: null, extraction_method: 'token_transfers', raw_index: idx };
+  }
+
+  const aggregated = aggregateSameMintInputsFromWalletTransfers(tx, wallet);
+  if (aggregated.ok) {
+    return { wallet, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', ...aggregated.event_fields, extraction_method: 'token_transfers_same_mint_aggregated', raw_index: idx };
   }
 
   if (sent.length === 1 && recv.length === 0 && netNative > 0) {
@@ -152,13 +161,18 @@ export function normalizeTransactions(rawTxns, wallet, opts = {}) {
       let inMint, inAmt, inDec, outMint, outAmt, outDec;
       if (sw.nativeInput) { inMint = SOL_MINT; inDec = 9; inAmt = Number(sw.nativeInput.amount) / 1e9; }
       else if (sw.tokenInputs?.length === 1) { const ti = sw.tokenInputs[0]; inMint = ti.mint; inDec = ti.rawTokenAmount?.decimals ?? null; inAmt = Number(ti.rawTokenAmount.tokenAmount) / Math.pow(10, inDec || 0); }
-      else { skipped.ambiguous++; continue; }
 
       if (sw.nativeOutput) { outMint = SOL_MINT; outDec = 9; outAmt = Number(sw.nativeOutput.amount) / 1e9; }
       else if (sw.tokenOutputs?.length === 1) { const to = sw.tokenOutputs[0]; outMint = to.mint; outDec = to.rawTokenAmount?.decimals ?? null; outAmt = Number(to.rawTokenAmount.tokenAmount) / Math.pow(10, outDec || 0); }
-      else { skipped.ambiguous++; continue; }
 
-      event = { wallet, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: inMint, token_in_amount: inAmt, token_in_decimals: inDec, token_out_mint: outMint, token_out_amount: outAmt, token_out_decimals: outDec, extraction_method: 'events_swap', raw_index: i };
+      if (inMint && outMint) {
+        event = { wallet, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', token_in_mint: inMint, token_in_amount: inAmt, token_in_decimals: inDec, token_out_mint: outMint, token_out_amount: outAmt, token_out_decimals: outDec, extraction_method: 'events_swap', raw_index: i };
+      } else {
+        const aggregated = aggregateSameMintInputsFromSwapEvent(sw);
+        if (aggregated.ok) {
+          event = { wallet, timestamp: tx.timestamp, tx_hash: tx.signature, source: tx.source || 'unknown', ...aggregated.event_fields, extraction_method: 'events_swap_same_mint_aggregated', raw_index: i };
+        }
+      }
     }
 
     // Fallback: token-transfer analysis

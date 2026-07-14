@@ -1,5 +1,5 @@
 /**
- * Phase 2 — Event Normalization
+ * Phase 2 â€” Event Normalization
  *
  * Converts raw Helius enhanced transactions into normalized swap events.
  *
@@ -10,6 +10,10 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
+import {
+  aggregateSameMintInputsFromSwapEvent,
+  aggregateSameMintInputsFromWalletTransfers,
+} from '../pipeline/same-mint-input-aggregation.mjs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -69,8 +73,16 @@ function extractFromSwapEvent(tx, rawIndex) {
     tokenInDecimals = ti.rawTokenAmount.decimals;
     tokenInAmount = normalizeAmount(ti.rawTokenAmount.tokenAmount, ti.rawTokenAmount.decimals);
   } else if (sw.tokenInputs && sw.tokenInputs.length > 1) {
-    // Multiple token inputs — ambiguous, skip
-    return null;
+    const aggregated = aggregateSameMintInputsFromSwapEvent(sw);
+    if (!aggregated.ok) return null;
+    return makeEvent({
+      timestamp: tx.timestamp,
+      tx_hash: tx.signature,
+      source: tx.source || 'UNKNOWN',
+      ...aggregated.event_fields,
+      extraction_method: 'events_swap_same_mint_aggregated',
+      raw_index: rawIndex,
+    });
   } else {
     return null; // No input detected
   }
@@ -87,7 +99,7 @@ function extractFromSwapEvent(tx, rawIndex) {
     tokenOutDecimals = to.rawTokenAmount.decimals;
     tokenOutAmount = normalizeAmount(to.rawTokenAmount.tokenAmount, to.rawTokenAmount.decimals);
   } else if (sw.tokenOutputs && sw.tokenOutputs.length > 1) {
-    // Multiple token outputs — ambiguous, skip
+    // Multiple token outputs â€” ambiguous, skip
     return null;
   } else {
     return null; // No output detected
@@ -151,11 +163,22 @@ function extractFromTokenTransfers(tx, rawIndex) {
     // This shouldn't happen in fallback path since wrapped SOL shows as token
     return null;
   } else if (sent.length === 1 && nativeSent > 0) {
-    // Token sent + some native SOL (probably fees) — use the token as input
+    // Token sent + some native SOL (probably fees) â€” use the token as input
     tokenInMint = sent[0].mint;
     tokenInAmount = sent[0].tokenAmount;
     tokenInDecimals = guessDecimals(tx, sent[0].mint, sent[0].tokenAmount);
   } else {
+    const aggregated = aggregateSameMintInputsFromWalletTransfers(tx, WALLET);
+    if (aggregated.ok) {
+      return makeEvent({
+        timestamp: tx.timestamp,
+        tx_hash: tx.signature,
+        source: tx.source || 'UNKNOWN',
+        ...aggregated.event_fields,
+        extraction_method: 'token_transfers_same_mint_aggregated',
+        raw_index: rawIndex,
+      });
+    }
     // Ambiguous: 0 or 2+ tokens sent
     return null;
   }
@@ -210,7 +233,7 @@ function guessDecimals(tx, mint, _amount) {
 }
 
 // ---------------------------------------------------------------------------
-// DEX program detection — for non-SWAP tx types that still contain swaps
+// DEX program detection â€” for non-SWAP tx types that still contain swaps
 // ---------------------------------------------------------------------------
 
 const DEX_PROGRAMS = new Set([
@@ -263,12 +286,12 @@ for (let i = 0; i < lines.length; i++) {
 
   let event = null;
 
-  // Primary path — only for type=SWAP with structured swap events
+  // Primary path â€” only for type=SWAP with structured swap events
   if (tx.type === 'SWAP' && tx.events?.swap) {
     event = extractFromSwapEvent(tx, i);
   }
 
-  // Fallback path — token transfer analysis for:
+  // Fallback path â€” token transfer analysis for:
   //   1. SWAP txs without events.swap
   //   2. Non-SWAP txs that touch a known DEX program (e.g. CLOSE_ACCOUNT
   //      after Jupiter sells all of a token and closes the ATA)
@@ -295,7 +318,7 @@ for (let i = 0; i < lines.length; i++) {
 writeFileSync(outPath, events.map(e => JSON.stringify(e)).join('\n') + '\n');
 
 // Report
-console.log(`\n=== Phase 2 — Normalization Report ===`);
+console.log(`\n=== Phase 2 â€” Normalization Report ===`);
 console.log(`Raw transactions:     ${stats.total_raw}`);
 console.log(`Filtered (not SWAP):  ${stats.filtered_not_swap}`);
 console.log(`Filtered (errored):   ${stats.filtered_errored}`);
