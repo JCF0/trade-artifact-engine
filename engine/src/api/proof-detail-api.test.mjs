@@ -57,6 +57,19 @@ try {
     assert.equal(response.body.receipt.verification_status, 'verified');
   });
 
+
+  await test('proof detail and verifier expose deep-equal core coverage statements', async () => {
+    const proofResponse = await httpGet(port, `/api/proof/${fixture.hashes.receiptAHash}`);
+    const verifierResponse = await httpGet(port, `/api/verifier/${fixture.hashes.receiptAHash}`);
+
+    assert.equal(proofResponse.status, 200);
+    assert.equal(verifierResponse.status, 200);
+    assert.equal(proofResponse.body.coverage_statement.coverage_statement_version, 'receipt_coverage_v1');
+    assert.equal(proofResponse.body.coverage_statement.publication_context, null);
+    assert.equal(proofResponse.body.coverage_statement.valuation_basis.usd_normalized, false);
+    assert.deepEqual(proofResponse.body.coverage_statement, verifierResponse.body.coverage_statement);
+  });
+
   await test('GET /api/proof/:receiptHash returns 404 for unknown receipt', async () => {
     const unknownHash = '9'.repeat(64);
     const response = await httpGet(port, `/api/proof/${unknownHash}`);
@@ -70,6 +83,7 @@ try {
     assert.deepEqual(Object.keys(response.body), [
       'receipt',
       'verification',
+      'coverage_statement',
       'valuation',
       'proof_lifecycle',
       'artifacts',

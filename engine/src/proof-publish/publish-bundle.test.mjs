@@ -92,6 +92,7 @@ try {
     assert.deepEqual(Object.keys(bundle.proofJson.proof), [
       'receipt',
       'verification',
+      'coverage_statement',
       'valuation',
       'proof_lifecycle',
       'artifacts',

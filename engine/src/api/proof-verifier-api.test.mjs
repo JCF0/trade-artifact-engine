@@ -86,6 +86,7 @@ try {
       'receipt_id',
       'receipt_type',
       'valuation_status',
+      'coverage_statement',
       'verification',
       'trust',
       'disclosures',
@@ -103,6 +104,18 @@ try {
       verifier_consistency_valid: true,
       verifier_rule_violations: [],
     });
+  });
+
+
+  await test('GET /api/verifier/:receiptHash exposes core coverage statement', async () => {
+    const response = await httpGet(port, `/api/verifier/${fixture.hashes.receiptAHash}`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.coverage_statement.coverage_statement_version, 'receipt_coverage_v1');
+    assert.equal(response.body.coverage_statement.scope.scope_type, 'receipt');
+    assert.equal(response.body.coverage_statement.publication_context, null);
+    assert.equal(response.body.coverage_statement.valuation_basis.valuation_status, 'raw_quote');
+    assert.equal(response.body.coverage_statement.valuation_basis.usd_normalized, false);
   });
 
   await test('GET /api/verifier/:receiptHash includes trust and disclosures', async () => {

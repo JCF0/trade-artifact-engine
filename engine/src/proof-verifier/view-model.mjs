@@ -1,4 +1,5 @@
 import { deriveTrustLevel } from '../proof-trust/trust-model.mjs';
+import { buildReceiptCoverageStatement } from '../coverage-statement/view-model.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -16,6 +17,7 @@ export function buildProofVerifierView(inventoryRecord) {
     receipt_id: inventoryRecord.receipt_id,
     receipt_type: inventoryRecord.receipt_type,
     valuation_status: inventoryRecord.valuation_status,
+    coverage_statement: buildReceiptCoverageStatement(inventoryRecord),
     verification: {
       recomputed_hash: inventoryRecord.recomputed_hash ?? null,
       hash_valid: inventoryRecord.hash_valid ?? null,

@@ -2,6 +2,7 @@ import assert from 'assert';
 
 import { getInventoryReceipt } from '../inventory/inventory.mjs';
 import { createInventoryFixture, removeInventoryFixture } from '../inventory/test-fixtures.mjs';
+import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofVerifierView } from './view-model.mjs';
 
 let pass = 0;
@@ -19,6 +20,24 @@ function test(name, fn) {
   }
 }
 
+
+function assertNoForbiddenCoverageFields(value) {
+  const serialized = JSON.stringify(value).toLowerCase();
+  assert.ok(!serialized.includes('test_wallet'));
+  assert.ok(!serialized.includes('wallet_address'));
+  assert.ok(!serialized.includes('realized_pnl'));
+  assert.ok(!serialized.includes('pnl_pct'));
+  assert.ok(!serialized.includes('usd_amount'));
+  assert.ok(!serialized.includes('usd_value'));
+  assert.ok(!serialized.includes('normalized_valuation'));
+  assert.ok(!serialized.includes('participant_total'));
+  assert.ok(!serialized.includes('profile'));
+  assert.ok(!serialized.includes('nansen'));
+  assert.ok(!serialized.includes('upload'));
+  assert.ok(!serialized.includes('mint_address'));
+  assert.ok(!serialized.includes('transaction_signature'));
+  assert.ok(!serialized.includes('signing'));
+}
 const fixture = createInventoryFixture();
 
 try {
@@ -38,6 +57,7 @@ try {
       'receipt_id',
       'receipt_type',
       'valuation_status',
+      'coverage_statement',
       'verification',
       'trust',
       'disclosures',
@@ -47,6 +67,41 @@ try {
     assert.equal(view.receipt_id, 'art_v12_cp_TEST_0');
     assert.equal(view.receipt_type, 'closed_position');
     assert.equal(view.valuation_status, 'raw_quote');
+  });
+
+
+  test('adds core receipt coverage statement without publication context', () => {
+    const view = buildProofVerifierView(knownRecord);
+    assert.equal(view.coverage_statement.coverage_statement_version, 'receipt_coverage_v1');
+    assert.equal(view.coverage_statement.coverage_status, 'complete');
+    assert.equal(view.coverage_statement.scope.scope_type, 'receipt');
+    assert.equal(view.coverage_statement.publication_context, null);
+    assert.equal(view.coverage_statement.receipt.receipt_hash, fixture.hashes.receiptAHash);
+    assert.equal(view.coverage_statement.valuation_basis.valuation_status, 'raw_quote');
+    assert.equal(view.coverage_statement.valuation_basis.usd_normalized, false);
+  });
+
+  test('verifier and proof-detail core coverage statements deep-equal for same record', () => {
+    const view = buildProofVerifierView(knownRecord);
+    const detail = buildProofDetailView(knownRecord);
+    assert.deepEqual(view.coverage_statement, detail.coverage_statement);
+  });
+
+  test('missing timestamps produce incomplete coverage without changing verifier success shape', () => {
+    const view = buildProofVerifierView({
+      ...knownRecord,
+      first_event_at: null,
+      last_event_at: null,
+    });
+    assert.equal(view.receipt_hash, fixture.hashes.receiptAHash);
+    assert.equal(view.coverage_statement.coverage_status, 'incomplete');
+    assert.ok(view.coverage_statement.coverage_codes.includes('event_bounds_missing_first_event_at'));
+    assert.ok(view.coverage_statement.coverage_codes.includes('event_bounds_missing_last_event_at'));
+  });
+
+  test('coverage statement itself excludes wallet, PnL, normalized value, profile, upload, mint, and signing fields', () => {
+    const view = buildProofVerifierView(knownRecord);
+    assertNoForbiddenCoverageFields(view.coverage_statement);
   });
 
   test('view-model keeps verifier fields distinct from lifecycle and status fields', () => {

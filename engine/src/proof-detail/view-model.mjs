@@ -1,5 +1,6 @@
 import { buildDisclosureSet } from '../proof-trust/disclosures.mjs';
 import { deriveTrustLevel } from '../proof-trust/trust-model.mjs';
+import { buildReceiptCoverageStatement } from '../coverage-statement/view-model.mjs';
 
 export const RAW_QUOTE_DISCLOSURE_TEXT = 'Raw quote only. No USD normalization.';
 
@@ -16,7 +17,11 @@ export function buildProofDetailView(inventoryRecord) {
     throw new TypeError('inventoryRecord is required');
   }
 
-  const trust = deriveTrustLevel(inventoryRecord);
+  const coverageStatement = buildReceiptCoverageStatement(inventoryRecord);
+  const trust = {
+    ...deriveTrustLevel(inventoryRecord),
+    coverage_statement_present: true,
+  };
 
   return {
     receipt: {
@@ -53,6 +58,7 @@ export function buildProofDetailView(inventoryRecord) {
           }
         : null,
     },
+    coverage_statement: coverageStatement,
     valuation: {
       valuation_status: inventoryRecord.valuation_status,
       valuation_valid: inventoryRecord.valuation_valid ?? null,
