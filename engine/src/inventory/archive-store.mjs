@@ -1,4 +1,4 @@
-﻿import { createHash } from 'crypto';
+import { createHash } from 'crypto';
 import {
   existsSync,
   mkdirSync,
@@ -17,6 +17,21 @@ export const RECEIPT_ARCHIVE_INDEX_VERSION = 'receipt_archive_index_v1';
 export const DEFAULT_RECEIPT_ARCHIVE_RELATIVE_DIR = 'data/inventory/receipt-archive-v1';
 
 const RECEIPT_HASH_PATTERN = /^[a-f0-9]{64}$/;
+const PORTABILITY_EXCLUDED_KEYS = new Set([
+  'image_artifact_path',
+  'metadata_template_path',
+  'resolved_metadata_path',
+  'final_metadata_path',
+  'local_path',
+  'source_path',
+  'absolute_path',
+  'engine_root',
+  'generated_at',
+  'imported_at',
+  'created_at',
+  'updated_at',
+]);
+
 const RAW_DATA_KEYS = new Set([
   'raw',
   'raw_transaction',
@@ -107,6 +122,18 @@ function assertNoRawWalletData(value, path = []) {
   }
 }
 
+function normalizePortableInventoryRecord(value) {
+  if (Array.isArray(value)) return value.map(normalizePortableInventoryRecord);
+  if (!isPlainObject(value)) return value;
+
+  const normalized = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (PORTABILITY_EXCLUDED_KEYS.has(key)) continue;
+    normalized[key] = normalizePortableInventoryRecord(child);
+  }
+  return normalized;
+}
+
 function buildCanonicalReceiptRecord(inventoryRecord) {
   const canonical = {};
   for (const field of CANONICAL_RECEIPT_FIELDS) {
@@ -138,7 +165,7 @@ export function buildReceiptArchiveBundle(inventoryRecord, {
   assertReceiptHash(receiptHash);
   assertNoRawWalletData(inventoryRecord);
 
-  const normalizedInventoryRecord = cloneStable(inventoryRecord);
+  const normalizedInventoryRecord = cloneStable(normalizePortableInventoryRecord(inventoryRecord));
   const canonicalReceiptRecord = buildCanonicalReceiptRecord(normalizedInventoryRecord);
   if (canonicalReceiptRecord.receipt_hash !== receiptHash) {
     throw new ReceiptArchiveError('canonical_receipt_hash_mismatch', 'canonical receipt record hash identity does not match inventory record receipt_hash', {
@@ -155,12 +182,12 @@ export function buildReceiptArchiveBundle(inventoryRecord, {
     inventory_record: normalizedInventoryRecord,
     provenance: {
       source: provenance.source || 'scanner_normalized_inventory_record',
-      run_label: provenance.run_label || null,
+      run_label: null,
       source_record_hashes: {
         canonical_receipt_record: stableHash(canonicalReceiptRecord),
         inventory_record: stableHash(normalizedInventoryRecord),
       },
-      source_paths: Array.isArray(provenance.source_paths) ? [...provenance.source_paths].sort() : [],
+      source_paths: [],
     },
   });
 }
@@ -180,15 +207,18 @@ export function validateReceiptArchiveBundle(bundle) {
   if (!isPlainObject(bundle.canonical_receipt_record)) {
     throw new ReceiptArchiveError('invalid_canonical_receipt_record', 'archive bundle canonical_receipt_record must be an object', { receipt_hash: bundle.receipt_hash });
   }
+  assertNoRawWalletData(bundle);
+
+  if (stableJson(normalizePortableInventoryRecord(bundle.inventory_record)) !== stableJson(bundle.inventory_record)) {
+    throw new ReceiptArchiveError('inventory_record_not_portable', 'archive bundle inventory_record contains non-portable path or runtime metadata fields', { receipt_hash: bundle.receipt_hash });
+  }
+
   if (bundle.inventory_record.receipt_hash !== bundle.receipt_hash) {
     throw new ReceiptArchiveError('inventory_record_hash_mismatch', 'inventory_record.receipt_hash must match bundle receipt_hash', { receipt_hash: bundle.receipt_hash });
   }
   if (bundle.canonical_receipt_record.receipt_hash !== bundle.receipt_hash) {
     throw new ReceiptArchiveError('canonical_receipt_hash_mismatch', 'canonical_receipt_record.receipt_hash must match bundle receipt_hash', { receipt_hash: bundle.receipt_hash });
   }
-
-  assertNoRawWalletData(bundle.inventory_record);
-  assertNoRawWalletData(bundle.canonical_receipt_record);
 
   const expectedCanonical = buildCanonicalReceiptRecord(bundle.inventory_record);
   if (stableJson(expectedCanonical) !== stableJson(bundle.canonical_receipt_record)) {

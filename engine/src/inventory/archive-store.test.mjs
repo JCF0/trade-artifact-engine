@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 
 import assert from 'assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
@@ -9,6 +9,7 @@ import {
   buildReceiptArchiveBundle,
   readReceiptArchiveBundle,
   rebuildReceiptArchiveIndex,
+  stableJson,
   writeReceiptArchiveBundle,
   ReceiptArchiveError,
 } from './archive-store.mjs';
@@ -284,5 +285,202 @@ test('no temp files remain after successful writes', () => {
   }
 });
 
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function portablePathVariantRecord(receiptHash, variant) {
+  const record = makeRecord(receiptHash, {
+    extraFields: {
+      generated_at: variant.generated_at,
+      imported_at: variant.imported_at,
+      created_at: variant.created_at,
+      updated_at: variant.updated_at,
+      absolute_path: variant.absolute_path,
+      engine_root: variant.engine_root,
+    },
+  });
+  record.image_artifact_path = variant.image_artifact_path;
+  record.metadata_template_path = variant.metadata_template_path;
+  record.resolved_metadata_path = variant.resolved_metadata_path;
+  record.final_metadata_path = variant.final_metadata_path;
+  return record;
+}
+
+test('Windows-style and POSIX-style paths produce byte-identical bundles', () => {
+  const windowsRecord = portablePathVariantRecord(hashA, {
+    image_artifact_path: 'C:\\checkout\\engine\\data\\debug\\receipt-images-v12\\a.svg',
+    metadata_template_path: 'C:\\checkout\\engine\\data\\debug\\metadata-packages-v12\\a.json',
+    resolved_metadata_path: 'C:\\checkout\\engine\\data\\debug\\upload-dry-run-v12\\a.json',
+    final_metadata_path: 'C:\\checkout\\engine\\data\\debug\\upload-results-v12\\a.json',
+    absolute_path: 'C:\\checkout\\engine\\data\\debug\\ledger-receipts-v12.json',
+    engine_root: 'C:\\checkout\\engine',
+    generated_at: '2026-07-14T00:00:00.000Z',
+    imported_at: '2026-07-14T00:00:01.000Z',
+    created_at: '2026-07-14T00:00:02.000Z',
+    updated_at: '2026-07-14T00:00:03.000Z',
+  });
+  const posixRecord = portablePathVariantRecord(hashA, {
+    image_artifact_path: '/home/user/checkout/engine/data/debug/receipt-images-v12/a.svg',
+    metadata_template_path: '/home/user/checkout/engine/data/debug/metadata-packages-v12/a.json',
+    resolved_metadata_path: '/home/user/checkout/engine/data/debug/upload-dry-run-v12/a.json',
+    final_metadata_path: '/home/user/checkout/engine/data/debug/upload-results-v12/a.json',
+    absolute_path: '/home/user/checkout/engine/data/debug/ledger-receipts-v12.json',
+    engine_root: '/home/user/checkout/engine',
+    generated_at: '2026-07-15T00:00:00.000Z',
+    imported_at: '2026-07-15T00:00:01.000Z',
+    created_at: '2026-07-15T00:00:02.000Z',
+    updated_at: '2026-07-15T00:00:03.000Z',
+  });
+
+  assert.equal(stableJson(buildReceiptArchiveBundle(windowsRecord)), stableJson(buildReceiptArchiveBundle(posixRecord)));
+});
+
+test('absolute paths and different checkout roots do not enter archived identity', () => {
+  const bundle = buildReceiptArchiveBundle(portablePathVariantRecord(hashA, {
+    image_artifact_path: 'D:\\different\\root\\image.svg',
+    metadata_template_path: '/different/root/template.json',
+    resolved_metadata_path: '/different/root/resolved.json',
+    final_metadata_path: '/different/root/final.json',
+    absolute_path: '/different/root/ledger.json',
+    engine_root: '/different/root/engine',
+    generated_at: '2026-07-14T00:00:00.000Z',
+    imported_at: '2026-07-14T00:00:00.000Z',
+    created_at: '2026-07-14T00:00:00.000Z',
+    updated_at: '2026-07-14T00:00:00.000Z',
+  }));
+  const text = stableJson(bundle);
+
+  assert.ok(!text.includes('different'));
+  assert.ok(!Object.hasOwn(bundle.inventory_record, 'image_artifact_path'));
+  assert.ok(!Object.hasOwn(bundle.inventory_record, 'metadata_template_path'));
+  assert.ok(!Object.hasOwn(bundle.inventory_record, 'resolved_metadata_path'));
+  assert.ok(!Object.hasOwn(bundle.inventory_record, 'final_metadata_path'));
+  assert.ok(!Object.hasOwn(bundle.inventory_record, 'absolute_path'));
+  assert.ok(!Object.hasOwn(bundle.inventory_record, 'engine_root'));
+});
+
+test('runtime-only generated timestamps do not affect identity', () => {
+  const first = buildReceiptArchiveBundle(makeRecord(hashA, {
+    extraFields: { generated_at: '2026-07-14T00:00:00.000Z', imported_at: '2026-07-14T00:01:00.000Z' },
+  }));
+  const second = buildReceiptArchiveBundle(makeRecord(hashA, {
+    extraFields: { generated_at: '2026-07-15T00:00:00.000Z', imported_at: '2026-07-15T00:01:00.000Z' },
+  }));
+
+  assert.equal(stableJson(first), stableJson(second));
+  assert.ok(!Object.hasOwn(first.inventory_record, 'generated_at'));
+  assert.ok(!Object.hasOwn(first.inventory_record, 'imported_at'));
+});
+
+test('genuine event upload and mint timestamps remain preserved and differences conflict', () => {
+  const root = makeRoot();
+  try {
+    const firstRecord = makeRecord(hashA, {
+      extraFields: {
+        uploaded_at: '2026-07-01T00:01:00.000Z',
+        minted_at: '2026-07-01T00:02:00.000Z',
+      },
+    });
+    const secondRecord = makeRecord(hashA, {
+      extraFields: {
+        uploaded_at: '2026-07-02T00:01:00.000Z',
+        minted_at: '2026-07-01T00:02:00.000Z',
+      },
+    });
+    const bundle = buildReceiptArchiveBundle(firstRecord);
+
+    assert.equal(bundle.inventory_record.first_event_at, 1700000000);
+    assert.equal(bundle.inventory_record.last_event_at, 1700000300);
+    assert.equal(bundle.inventory_record.uploaded_at, '2026-07-01T00:01:00.000Z');
+    assert.equal(bundle.inventory_record.minted_at, '2026-07-01T00:02:00.000Z');
+
+    writeReceiptArchiveBundle(bundle, { archiveRoot: archiveRoot(root) });
+    assertArchiveError(
+      () => writeReceiptArchiveBundle(buildReceiptArchiveBundle(secondRecord), { archiveRoot: archiveRoot(root) }),
+      'receipt_archive_bundle_conflict'
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('verifier valuation and lifecycle differences remain explicit conflicts', () => {
+  const root = makeRoot();
+  try {
+    writeReceiptArchiveBundle(buildReceiptArchiveBundle(makeRecord(hashA)), { archiveRoot: archiveRoot(root) });
+
+    assertArchiveError(
+      () => writeReceiptArchiveBundle(buildReceiptArchiveBundle(makeRecord(hashA, { extraFields: { verifier_passed: false } })), { archiveRoot: archiveRoot(root) }),
+      'receipt_archive_bundle_conflict'
+    );
+    assertArchiveError(
+      () => writeReceiptArchiveBundle(buildReceiptArchiveBundle(makeRecord(hashA, { extraFields: { valuation_context: { valuation_currency: 'raw_quote', quote_is_usd_stable: false, violations: ['changed'] } } })), { archiveRoot: archiveRoot(root) }),
+      'receipt_archive_bundle_conflict'
+    );
+    assertArchiveError(
+      () => writeReceiptArchiveBundle(buildReceiptArchiveBundle(makeRecord(hashA, { extraFields: { upload_status: 'complete' } })), { archiveRoot: archiveRoot(root) }),
+      'receipt_archive_bundle_conflict'
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('portable equivalent duplicate imports remain no-ops', () => {
+  const root = makeRoot();
+  try {
+    const first = portablePathVariantRecord(hashA, {
+      image_artifact_path: 'C:\\root\\image.svg',
+      metadata_template_path: 'C:\\root\\template.json',
+      resolved_metadata_path: 'C:\\root\\resolved.json',
+      final_metadata_path: 'C:\\root\\final.json',
+      absolute_path: 'C:\\root\\source.json',
+      engine_root: 'C:\\root',
+      generated_at: '2026-07-14T00:00:00.000Z',
+      imported_at: '2026-07-14T00:00:00.000Z',
+      created_at: '2026-07-14T00:00:00.000Z',
+      updated_at: '2026-07-14T00:00:00.000Z',
+    });
+    const second = portablePathVariantRecord(hashA, {
+      image_artifact_path: '/other/root/image.svg',
+      metadata_template_path: '/other/root/template.json',
+      resolved_metadata_path: '/other/root/resolved.json',
+      final_metadata_path: '/other/root/final.json',
+      absolute_path: '/other/root/source.json',
+      engine_root: '/other/root',
+      generated_at: '2026-07-15T00:00:00.000Z',
+      imported_at: '2026-07-15T00:00:00.000Z',
+      created_at: '2026-07-15T00:00:00.000Z',
+      updated_at: '2026-07-15T00:00:00.000Z',
+    });
+
+    assert.equal(writeReceiptArchiveBundle(buildReceiptArchiveBundle(first), { archiveRoot: archiveRoot(root) }).status, 'written');
+    assert.equal(writeReceiptArchiveBundle(buildReceiptArchiveBundle(second), { archiveRoot: archiveRoot(root) }).status, 'unchanged');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('source scanner record is not mutated by archive normalization', () => {
+  const record = portablePathVariantRecord(hashA, {
+    image_artifact_path: 'C:\\root\\image.svg',
+    metadata_template_path: 'C:\\root\\template.json',
+    resolved_metadata_path: 'C:\\root\\resolved.json',
+    final_metadata_path: 'C:\\root\\final.json',
+    absolute_path: 'C:\\root\\source.json',
+    engine_root: 'C:\\root',
+    generated_at: '2026-07-14T00:00:00.000Z',
+    imported_at: '2026-07-14T00:00:00.000Z',
+    created_at: '2026-07-14T00:00:00.000Z',
+    updated_at: '2026-07-14T00:00:00.000Z',
+  });
+  const before = clone(record);
+
+  buildReceiptArchiveBundle(record);
+
+  assert.deepEqual(record, before);
+});
 console.log(`\nReceipt archive store tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
