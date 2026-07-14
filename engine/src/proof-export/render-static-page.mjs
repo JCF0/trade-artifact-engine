@@ -1,4 +1,4 @@
-﻿import { applyWalletDisplayPolicy } from '../proof-publish/wallet-policy.mjs';
+import { applyWalletDisplayPolicy } from '../proof-publish/wallet-policy.mjs';
 
 function escapeHtml(value) {
   return String(value)
@@ -22,6 +22,35 @@ function formatTime(value) {
     return new Date(value * 1000).toISOString();
   }
   return String(value);
+}
+
+function formatCoverageTime(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed * 1000).toISOString();
+}
+
+function buildCoverageRows(coverage) {
+  if (!coverage || typeof coverage !== 'object') return null;
+  const openedAt = formatCoverageTime(coverage.position_episode?.opened_at);
+  const closedAt = formatCoverageTime(coverage.position_episode?.closed_at);
+  const eventBounds = openedAt && closedAt
+    ? `Receipt event bounds: ${openedAt} to ${closedAt}.`
+    : 'Receipt event bounds incomplete.';
+
+  return [
+    ['Scope', 'Receipt-scoped coverage only.'],
+    ['Event Bounds', eventBounds],
+    ['Valuation', 'Raw quote only. No USD normalization.'],
+    ['Limitation', 'Not wallet, trader, portfolio, or track-record coverage.'],
+  ];
+}
+
+function renderCoverageStatement(coverage) {
+  const rows = buildCoverageRows(coverage);
+  if (!rows) return '';
+  return renderSection('Coverage Statement', `<dl class="grid">${renderDefinitionRows(rows)}</dl>`);
 }
 
 function renderDefinitionRows(rows) {
@@ -330,6 +359,7 @@ export function renderStaticProofPage(proofDetail, options = {}) {
     </header>
 
     ${renderSection('Receipt', `<dl class="grid">${renderDefinitionRows(receiptRows)}</dl>`)}
+    ${renderCoverageStatement(renderedProofDetail.coverage_statement)}
     ${renderSection('Verification', `<dl class="grid">${renderDefinitionRows(verificationRows)}</dl>${renderList('Verifier Rule Violations', renderedProofDetail.verification?.verifier_rule_violations)}`)}
     ${renderSection('Valuation', `<div class="notice"><p>${escapeHtml(formatValue(renderedProofDetail.valuation?.disclosure_text))}</p></div><dl class="grid">${renderDefinitionRows(valuationRows)}</dl>${renderList('Valuation Violations', renderedProofDetail.valuation?.valuation_context?.violations)}`)}
     ${renderSection('Proof Lifecycle', `<dl class="grid">${renderDefinitionRows(lifecycleRows)}</dl>${renderList('Mint Blockers', renderedProofDetail.proof_lifecycle?.mint_blockers)}${renderList('Mint Required Steps', renderedProofDetail.proof_lifecycle?.mint_required_steps)}`)}

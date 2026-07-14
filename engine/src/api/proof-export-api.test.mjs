@@ -55,6 +55,9 @@ try {
     assert.ok(response.body.includes('<!DOCTYPE html>'));
     assert.ok(response.body.includes('Selected receipt only.'));
     assert.ok(response.body.includes('Raw quote only. No USD normalization.'));
+    assert.ok(response.body.includes('<h2>Coverage Statement</h2>'));
+    assert.ok(response.body.includes('Receipt-scoped coverage only.'));
+    assert.ok(response.body.includes('Not wallet, trader, portfolio, or track-record coverage.'));
   });
 
   await test('GET /api/proof/:receiptHash/export returns 404 for unknown receipt', async () => {

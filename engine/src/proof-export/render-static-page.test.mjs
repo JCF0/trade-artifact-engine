@@ -1,4 +1,4 @@
-﻿import assert from 'assert';
+import assert from 'assert';
 import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -38,6 +38,13 @@ function createBufferStream() {
   };
 }
 
+function extractCoverageSection(value) {
+  const start = value.indexOf('<h2>Coverage Statement</h2>');
+  assert.ok(start >= 0, 'missing coverage statement section');
+  const next = value.indexOf('<h2>', start + 1);
+  return next >= 0 ? value.slice(start, next) : value.slice(start);
+}
+
 const fixture = createInventoryFixture();
 const receipt = getInventoryReceipt(fixture.hashes.receiptAHash, {
   engineRoot: fixture.root,
@@ -50,15 +57,65 @@ const html = renderStaticProofPage(proofDetail, {
 
 try {
   await test('renderer outputs expected sections', async () => {
-    for (const heading of ['Receipt', 'Verification', 'Valuation', 'Proof Lifecycle', 'Artifacts', 'Flags &amp; Limitations', 'Links']) {
+    for (const heading of ['Receipt', 'Coverage Statement', 'Verification', 'Valuation', 'Proof Lifecycle', 'Artifacts', 'Flags &amp; Limitations', 'Links']) {
       assert.ok(html.includes(`<h2>${heading}</h2>`), `missing section ${heading}`);
     }
+  });
+
+
+  await test('renderer includes compact coverage statement with exact required wording', async () => {
+    const coverage = extractCoverageSection(html);
+    assert.ok(coverage.includes('<h2>Coverage Statement</h2>'));
+    assert.ok(coverage.includes('Receipt-scoped coverage only.'));
+    assert.ok(coverage.includes('Receipt event bounds: 2023-11-14T22:13:20.000Z to 2023-11-14T22:18:20.000Z.'));
+    assert.ok(coverage.includes('Raw quote only. No USD normalization.'));
+    assert.ok(coverage.includes('Not wallet, trader, portfolio, or track-record coverage.'));
+  });
+
+  await test('renderer coverage section omits publisher selection and internal coverage fields', async () => {
+    const coverage = extractCoverageSection(html);
+    assert.ok(!coverage.includes('Publisher-selected board entry.'));
+    assert.ok(!coverage.includes('coverage_codes'));
+    assert.ok(!coverage.includes('event_bounds_complete'));
+    assert.ok(!coverage.includes('Verifier Passed'));
+    assert.ok(!coverage.includes('Upload Status'));
+    assert.ok(!coverage.includes('Mint Status'));
+    assert.ok(!coverage.includes('Transaction Signature'));
+    assert.ok(!coverage.includes('TEST_WALLET'));
+    assert.ok(!coverage.includes('realized_pnl'));
+    assert.ok(!coverage.includes('usd_value'));
+  });
+
+  await test('renderer coverage section handles incomplete event bounds deterministically', async () => {
+    const sparse = structuredClone(proofDetail);
+    sparse.coverage_statement.position_episode.opened_at = null;
+    sparse.coverage_statement.position_episode.closed_at = null;
+    const sparseHtml = renderStaticProofPage(sparse, { generatedAt: '2026-07-01T00:00:00.000Z' });
+    const coverage = extractCoverageSection(sparseHtml);
+    assert.ok(coverage.includes('Receipt event bounds incomplete.'));
   });
 
   await test('renderer includes raw quote disclosure and selected receipt framing', async () => {
     assert.ok(html.includes('Raw quote only. No USD normalization.'));
     assert.ok(html.includes('Selected receipt only.'));
     assert.ok(html.includes('local export scaffold'));
+  });
+
+
+  await test('hosted render includes the same compact coverage statement', async () => {
+    const hostedHtml = renderStaticProofPage(proofDetail, {
+      generatedAt: '2026-07-01T00:00:00.000Z',
+      hosted: {
+        walletDisplayMode: 'truncated',
+        visibility: 'unlisted',
+      },
+    });
+    const coverage = extractCoverageSection(hostedHtml);
+    assert.ok(coverage.includes('Receipt-scoped coverage only.'));
+    assert.ok(coverage.includes('Receipt event bounds: 2023-11-14T22:13:20.000Z to 2023-11-14T22:18:20.000Z.'));
+    assert.ok(coverage.includes('Raw quote only. No USD normalization.'));
+    assert.ok(coverage.includes('Not wallet, trader, portfolio, or track-record coverage.'));
+    assert.ok(!coverage.includes('Publisher-selected board entry.'));
   });
 
   await test('hosted unlisted render includes required disclosures', async () => {

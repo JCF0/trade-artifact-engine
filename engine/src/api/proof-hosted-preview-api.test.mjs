@@ -1,4 +1,4 @@
-﻿import assert from 'assert';
+import assert from 'assert';
 import http from 'http';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -85,6 +85,18 @@ try {
     const response = await httpGet(port, `/api/proof/${fixture.hashes.receiptAHash}/hosted-preview?base_url=example.com`);
     assert.equal(response.status, 400);
     assert.equal(JSON.parse(response.body).error, 'base_url must start with http:// or https://');
+  });
+
+
+  await test('hosted-preview includes compact coverage statement', async () => {
+    const response = await httpGet(port, `/api/proof/${fixture.hashes.receiptAHash}/hosted-preview?visibility=unlisted`);
+    assert.equal(response.status, 200);
+    assert.ok(response.body.includes('<h2>Coverage Statement</h2>'));
+    assert.ok(response.body.includes('Receipt-scoped coverage only.'));
+    assert.ok(response.body.includes('Receipt event bounds: 2023-11-14T22:13:20.000Z to 2023-11-14T22:18:20.000Z.'));
+    assert.ok(response.body.includes('Raw quote only. No USD normalization.'));
+    assert.ok(response.body.includes('Not wallet, trader, portfolio, or track-record coverage.'));
+    assert.ok(!response.body.includes('Publisher-selected board entry.'));
   });
 
   await test('hosted-preview unlisted framing is correct', async () => {

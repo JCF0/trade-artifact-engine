@@ -111,6 +111,19 @@ try {
     assert.equal(bundle.proofJson.proof.flags_and_limitations.raw_quote_only_disclosure, 'Raw quote only. No USD normalization.');
   });
 
+
+  test('index.html includes compact coverage statement without changing proof.json structure', () => {
+    const bundle = buildPublishBundle(proofDetail, { generatedAt: '2026-07-02T00:00:00.000Z' });
+    assert.ok(bundle.indexHtml.includes('<h2>Coverage Statement</h2>'));
+    assert.ok(bundle.indexHtml.includes('Receipt-scoped coverage only.'));
+    assert.ok(bundle.indexHtml.includes('Receipt event bounds: 2023-11-14T22:13:20.000Z to 2023-11-14T22:18:20.000Z.'));
+    assert.ok(bundle.indexHtml.includes('Raw quote only. No USD normalization.'));
+    assert.ok(bundle.indexHtml.includes('Not wallet, trader, portfolio, or track-record coverage.'));
+    assert.ok(!bundle.indexHtml.includes('Publisher-selected board entry.'));
+    assert.equal(bundle.proofJson.proof.coverage_statement.coverage_statement_version, 'receipt_coverage_v1');
+    assert.equal(bundle.proofJson.proof.coverage_statement.publication_context, null);
+  });
+
   test('unlisted bundle is internally consistent across manifest, proof.json, and index.html', () => {
     const bundle = buildPublishBundle(proofDetail, {
       generatedAt: '2026-07-02T00:00:00.000Z',
