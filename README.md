@@ -2,7 +2,7 @@
 
 Cryptographically verifiable, non-transferable trade receipt NFTs on Solana.
 
-Turn your wallet's trade history into permanent, tamper-proof PnL receipts that anyone can independently verify — without trusting you, the issuer, or any third party.
+Turn your wallet's trade history into permanent, tamper-proof PnL receipts that anyone can independently verify - without trusting you, the issuer, or any third party.
 
 ## Demo
 
@@ -76,54 +76,67 @@ V1.6 adds a local Historical Verified Receipt Board for selected receipt entries
 - `node engine/src/check-v16-receipt-board-demo.mjs`
 
 These v1.6 surfaces remain local-only and read-only. They do not add public hosting, live trading, prize competition behavior, profiles, accounts, upload, minting, signing, price fetching, USD normalization, PnL ranking, or trader/wallet skill claims.
+V1.7 adds receipt-scoped Coverage Statements across local proof and receipt-board surfaces:
+- `GET /api/proof/:receiptHash`
+- `GET /api/verifier/:receiptHash`
+- `GET /api/proof/:receiptHash/card`
+- `GET /api/proof/:receiptHash/card/preview`
+- `GET /api/proof/:receiptHash/export`
+- `GET /api/proof/:receiptHash/hosted-preview`
+- `GET /api/receipt-board`
+- `GET /api/receipt-board/preview`
+- `node engine/src/run-v17-regression.mjs`
+- `node engine/src/check-v17-coverage-demo.mjs`
+
+These v1.7 surfaces remain local-only and read-only. Coverage is receipt-scoped only, raw-quote only, and does not add public hosting, live trading, prize competition behavior, profiles, accounts, upload, minting, signing, USD normalization, PnL ranking, wallet coverage, portfolio coverage, track-record claims, or trader skill claims.
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
-2. Reconstructs trade cycles (buy → sell loops)
+2. Reconstructs trade cycles (buy -> sell loops)
 3. Computes PnL with weighted average cost basis
 4. Generates a deterministic **verification hash** (SHA-256 fingerprint of the trade data)
 5. Signs a **claim** with your wallet key (Ed25519 proof of authorization)
 6. Uploads receipts + visual cards to **Arweave** (permanent storage via Irys)
 7. Mints a **soul-bound NFT** on Solana (Token-2022, non-transferable)
 
-The on-chain PDA stores the verification hash, metadata hash, claim signature, and wallet binding. Anyone can verify the receipt at 5 levels of assurance — from instant offline hash checks to full re-derivation from on-chain transactions.
+The on-chain PDA stores the verification hash, metadata hash, claim signature, and wallet binding. Anyone can verify the receipt at 5 levels of assurance - from instant offline hash checks to full re-derivation from on-chain transactions.
 
 ## Architecture
 
 ```
 trade-artifact/
-├── programs/trade_artifact/   ← Anchor on-chain program (Solana)
-│   └── src/
-│       ├── lib.rs
-│       ├── state.rs           ← ReceiptAnchor PDA struct
-│       ├── errors.rs
-│       └── instructions/
-│           └── mint_receipt.rs ← Mint instruction (Ed25519 + Token-2022)
-│
-└── engine/                    ← Off-chain pipeline (Node.js ESM)
-    ├── src/
-    │   ├── run-pipeline.mjs   ← Main pipeline (Phases 1–8)
-    │   ├── ingest/            ← Helius transaction fetcher
-    │   ├── normalize/         ← Swap event extraction
-    │   ├── reconstruct/       ← Trade cycle builder
-    │   ├── pnl/               ← PnL engine (WACB)
-    │   ├── receipts/          ← Receipt + hash generator
-    │   ├── render/            ← PNG receipt card renderer
-    │   ├── claims/            ← Ed25519 claim signer + verifier
-    │   ├── arweave/           ← Irys/Arweave uploader
-    │   ├── mint/              ← On-chain mint submitter + post-mint verifier
-    │   └── verify/            ← Third-party verifier CLI
-    ├── docs/                  ← Specifications
-    └── data/                  ← Pipeline output (gitignored)
+|-- programs/trade_artifact/   <- Anchor on-chain program (Solana)
+|   `-- src/
+|       |-- lib.rs
+|       |-- state.rs           <- ReceiptAnchor PDA struct
+|       |-- errors.rs
+|       `-- instructions/
+|           `-- mint_receipt.rs <- Mint instruction (Ed25519 + Token-2022)
+|
+`-- engine/                    <- Off-chain pipeline (Node.js ESM)
+    |-- src/
+    |   |-- run-pipeline.mjs   <- Main pipeline (Phases 1-8)
+    |   |-- ingest/            <- Helius transaction fetcher
+    |   |-- normalize/         <- Swap event extraction
+    |   |-- reconstruct/       <- Trade cycle builder
+    |   |-- pnl/               <- PnL engine (WACB)
+    |   |-- receipts/          <- Receipt + hash generator
+    |   |-- render/            <- PNG receipt card renderer
+    |   |-- claims/            <- Ed25519 claim signer + verifier
+    |   |-- arweave/           <- Irys/Arweave uploader
+    |   |-- mint/              <- On-chain mint submitter + post-mint verifier
+    |   `-- verify/            <- Third-party verifier CLI
+    |-- docs/                  <- Specifications
+    `-- data/                  <- Pipeline output (gitignored)
 ```
 
 ## Prerequisites
 
-- **Node.js** ≥ 18 (ESM support required)
+- **Node.js** >= 18 (ESM support required)
 - **Solana CLI** (`solana-keygen`, `solana` for keypair management)
-- **Helius API key** — free tier at [helius.dev](https://helius.dev)
-- **Solana keypair** — JSON file (e.g. from `solana-keygen new`)
-- **Anchor** + **Rust** — only needed if modifying the on-chain program
+- **Helius API key** - free tier at [helius.dev](https://helius.dev)
+- **Solana keypair** - JSON file (e.g. from `solana-keygen new`)
+- **Anchor** + **Rust** - only needed if modifying the on-chain program
 
 ## Setup
 
@@ -175,16 +188,16 @@ node src/mint-one.mjs <wallet> --keypair <your-keypair.json> --pick 4 --dry-run
 node src/mint-one.mjs <wallet> --keypair <your-keypair.json> --pick 4 --skip-upload
 ```
 
-`mint-one` runs the full pipeline (ingest → normalize → reconstruct → PnL → receipt → render → claim → upload → mint) for a single selected receipt. The keypair must belong to the wallet that executed the trades.
+`mint-one` runs the full pipeline (ingest -> normalize -> reconstruct -> PnL -> receipt -> render -> claim -> upload -> mint) for a single selected receipt. The keypair must belong to the wallet that executed the trades.
 
 **Options:**
-- `--pick <N>` — select receipt #N from the list (1-indexed). Omit to auto-select (prefers `verified` status, then highest |PnL%|).
-- `--max-txns <N>` — transaction fetch cap (default: 5000)
-- `--network <devnet|mainnet>` — Solana network (default: devnet)
-- `--recipient <pubkey>` — mint to a different wallet (default: signer)
-- `--dry-run` — simulate the mint transaction only
-- `--list-only` — list available receipts and exit (no signing/upload/mint)
-- `--skip-upload` — use dummy metadata URI (skip Arweave)
+- `--pick <N>` - select receipt #N from the list (1-indexed). Omit to auto-select (prefers `verified` status, then highest |PnL%|).
+- `--max-txns <N>` - transaction fetch cap (default: 5000)
+- `--network <devnet|mainnet>` - Solana network (default: devnet)
+- `--recipient <pubkey>` - mint to a different wallet (default: signer)
+- `--dry-run` - simulate the mint transaction only
+- `--list-only` - list available receipts and exit (no signing/upload/mint)
+- `--skip-upload` - use dummy metadata URI (skip Arweave)
 
 ### Example Output
 
@@ -197,8 +210,8 @@ node src/mint-one.mjs <wallet> --keypair <keypair.json> --pick 1
 
 **Detected trade:**
 - Pair: JUP / SOL
-- PnL: −0.05%
-- Cycle: 1 closed trade (buy → sell)
+- PnL: -0.05%
+- Cycle: 1 closed trade (buy -> sell)
 
 **Arweave uploads:**
 - Image: https://gateway.irys.xyz/AnUrEt5eSpqeFjgADxHsfXJzUpB1Ddybpv1tkcjAgaou
@@ -215,7 +228,7 @@ This NFT represents a fully verifiable trade. Anyone can independently:
 - confirm on-chain state
 - re-derive the trade from raw transactions
 
-### Full Pipeline (Phases 1–8, Batch)
+### Full Pipeline (Phases 1-8, Batch)
 
 ```bash
 # Basic: ingest + normalize + reconstruct + PnL + receipts + render
@@ -234,12 +247,12 @@ For most users, `mint-one` is recommended. The lower-level batch flow is useful 
 node src/run-pipeline.mjs <wallet> 5000
 
 # Expected output:
-#   Phase 1: Ingest     → transactions fetched
-#   Phase 2: Normalize  → swap events extracted
-#   Phase 3: Reconstruct → open/closed/partial cycles
-#   Phase 4: PnL        → closed cycles with PnL
-#   Phase 5: Receipts   → receipts generated
-#   Phase 6: Render     → PNG cards rendered
+#   Phase 1: Ingest     -> transactions fetched
+#   Phase 2: Normalize  -> swap events extracted
+#   Phase 3: Reconstruct -> open/closed/partial cycles
+#   Phase 4: PnL        -> closed cycles with PnL
+#   Phase 5: Receipts   -> receipts generated
+#   Phase 6: Render     -> PNG cards rendered
 
 # 2. Inspect receipts and verify hashes
 node src/inspect-receipts.mjs
@@ -261,7 +274,7 @@ node src/mint/verify-mints.mjs data/mints/mint_results.jsonl --network devnet
 ### Third-Party Verification
 
 ```bash
-# Verify a receipt file (offline — hash + PnL + dust checks only)
+# Verify a receipt file (offline - hash + PnL + dust checks only)
 node src/verify/verify-receipt.mjs data/receipts/receipts.jsonl --skip-onchain
 
 # Full verification (hash + on-chain PDA + claim signature + metadata)
@@ -274,25 +287,25 @@ After a full pipeline run, `engine/data/` contains:
 
 ```
 data/
-├── raw/
-│   ├── helius_raw_response.jsonl    ← Full API responses (never modified)
-│   └── helius_transactions.jsonl    ← Individual transactions
-├── normalized/
-│   └── events.jsonl                 ← Structured swap events
-├── cycles/
-│   └── trade_cycles.jsonl           ← Trade cycles (open/closed/partial)
-├── pnl/
-│   └── pnl_cycles.jsonl            ← Cycles enriched with PnL
-├── receipts/
-│   └── receipts.jsonl               ← Final receipts with verification hashes
-├── renders/
-│   └── receipt_0001_TOKEN.png       ← Visual receipt cards
-├── claims/
-│   └── claims.jsonl                 ← Ed25519 signed claims
-├── arweave/
-│   └── uploads.jsonl                ← Irys upload records (append-only)
-└── mints/
-    └── mint_results.jsonl           ← Mint transaction results (append-only)
+|-- raw/
+|   |-- helius_raw_response.jsonl    <- Full API responses (never modified)
+|   `-- helius_transactions.jsonl    <- Individual transactions
+|-- normalized/
+|   `-- events.jsonl                 <- Structured swap events
+|-- cycles/
+|   `-- trade_cycles.jsonl           <- Trade cycles (open/closed/partial)
+|-- pnl/
+|   `-- pnl_cycles.jsonl             <- Cycles enriched with PnL
+|-- receipts/
+|   `-- receipts.jsonl               <- Final receipts with verification hashes
+|-- renders/
+|   `-- receipt_0001_TOKEN.png       <- Visual receipt cards
+|-- claims/
+|   `-- claims.jsonl                 <- Ed25519 signed claims
+|-- arweave/
+|   `-- uploads.jsonl                <- Irys upload records (append-only)
+`-- mints/
+    `-- mint_results.jsonl           <- Mint transaction results (append-only)
 ```
 
 ## On-Chain Program
@@ -365,7 +378,7 @@ See [docs/verifier_flow.md](engine/docs/verifier_flow.md) for detailed steps.
 
 - **Mixed-quote trades:** When buys and sells use different quote currencies, the prototype normalizes quotes before displaying PnL. These receipts are marked with normalization metadata and should be treated as estimated when historical trade-time pricing is unavailable.
 - **Transaction fees:** SOL base fees and priority fees are not deducted from cost basis. Negligible for typical trades (~0.000005 SOL).
-- **Ambiguous swaps:** Multi-hop Jupiter routes with >1 sent or received token transfer are skipped during normalization (~1–2% of swap transactions).
+- **Ambiguous swaps:** Multi-hop Jupiter routes with >1 sent or received token transfer are skipped during normalization (~1-2% of swap transactions).
 - **Partial history:** Sells without matching buys in the observation window (pre-existing positions) are excluded from receipts.
 - **Transaction cap:** Helius API pagination may miss older history for very active wallets (>10K transactions).
 - **Windows compatibility:** Anchor builds require WSL due to Device Guard restrictions on `cargo-build-sbf.exe`.
