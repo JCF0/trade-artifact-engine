@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 
 import assert from 'assert';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
@@ -74,6 +74,14 @@ function writeManifest(root, receiptHash) {
 function archiveRecord(root, record) {
   writeReceiptArchiveBundle(buildReceiptArchiveBundle(record), { engineRoot: root });
 }
+function assertArchiveRelativeDiagnosticPath(diagnostic, receiptHash, root) {
+  assert.equal(diagnostic.path, 'receipts/' + receiptHash + '.json');
+  assert.ok(!diagnostic.path.includes('\\\\'));
+  assert.ok(!diagnostic.path.includes(root));
+  assert.ok(!/^[A-Za-z]:/.test(diagnostic.path));
+  assert.ok(!diagnostic.path.startsWith('/'));
+}
+
 
 function currentRecord(root, receiptHash) {
   return getInventoryReceipt(receiptHash, { engineRoot: root });
@@ -169,6 +177,7 @@ test('canonical conflict reports and excludes conflicting record', () => {
     assert.equal(snapshot.receipts.some(receipt => receipt.receipt_hash === fixture.hashes.receiptAHash), false);
     assert.equal(snapshot.archive.diagnostics[0].code, 'receipt_hash_conflict');
     assert.equal(snapshot.archive.diagnostics[0].receipt_hash, fixture.hashes.receiptAHash);
+    assertArchiveRelativeDiagnosticPath(snapshot.archive.diagnostics[0], fixture.hashes.receiptAHash, fixture.root);
   } finally {
     removeInventoryFixture(fixture.root);
   }
@@ -183,6 +192,7 @@ test('materially different proof state reports conflict', () => {
 
     assert.equal(snapshot.receipts.some(receipt => receipt.receipt_hash === fixture.hashes.receiptAHash), false);
     assert.equal(snapshot.archive.diagnostics[0].code, 'receipt_archive_bundle_conflict');
+    assertArchiveRelativeDiagnosticPath(snapshot.archive.diagnostics[0], fixture.hashes.receiptAHash, fixture.root);
   } finally {
     removeInventoryFixture(fixture.root);
   }
@@ -199,6 +209,7 @@ test('corrupt bundle produces diagnostics without partial or duplicate inventory
     assert.equal(snapshot.counts.receipts, 2);
     assert.equal(snapshot.archive.counts.bundles_read, 0);
     assert.equal(snapshot.archive.diagnostics[0].code, 'corrupt_archive_bundle');
+    assertArchiveRelativeDiagnosticPath(snapshot.archive.diagnostics[0], zHash, fixture.root);
   } finally {
     removeInventoryFixture(fixture.root);
   }
@@ -261,4 +272,3 @@ test('board-facing structures do not expose new wallet fields from archive integ
 
 console.log(`\nArchive-backed inventory tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
-

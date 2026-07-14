@@ -159,6 +159,7 @@ function mergeArchiveReceipts(currentReceipts, archiveBundles) {
     diagnostics.push({
       code: conflictCode,
       receipt_hash: receiptHash,
+      path: 'receipts/' + receiptHash + '.json',
     });
   }
 

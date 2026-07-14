@@ -327,6 +327,7 @@ export function readReceiptArchiveBundles(options = {}) {
 }
 
 export function readReceiptArchiveBundlesWithDiagnostics(options = {}) {
+  const { rootDir } = getReceiptArchivePaths(options);
   const bundles = [];
   const diagnostics = [];
   for (const path of listReceiptArchiveBundleFiles(options)) {
@@ -337,7 +338,7 @@ export function readReceiptArchiveBundlesWithDiagnostics(options = {}) {
     } catch (error) {
       diagnostics.push({
         code: error instanceof ReceiptArchiveError ? error.code : 'corrupt_archive_bundle',
-        path: path.split('\\\\').join('/'),
+        path: receiptRelativePath(rootDir, path),
         message: error instanceof SyntaxError ? 'archive bundle is not valid JSON' : (error?.message || String(error)),
       });
     }
