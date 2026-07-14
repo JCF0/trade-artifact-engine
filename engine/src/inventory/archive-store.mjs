@@ -181,7 +181,7 @@ export function buildReceiptArchiveBundle(inventoryRecord, {
     canonical_receipt_record: canonicalReceiptRecord,
     inventory_record: normalizedInventoryRecord,
     provenance: {
-      source: provenance.source || 'scanner_normalized_inventory_record',
+      source: 'scanner_normalized_inventory_record',
       run_label: null,
       source_record_hashes: {
         canonical_receipt_record: stableHash(canonicalReceiptRecord),
@@ -324,6 +324,25 @@ export function readReceiptArchiveBundles(options = {}) {
     validateReceiptArchiveBundle(bundle);
     return bundle;
   });
+}
+
+export function readReceiptArchiveBundlesWithDiagnostics(options = {}) {
+  const bundles = [];
+  const diagnostics = [];
+  for (const path of listReceiptArchiveBundleFiles(options)) {
+    try {
+      const bundle = readJsonFile(path);
+      validateReceiptArchiveBundle(bundle);
+      bundles.push(bundle);
+    } catch (error) {
+      diagnostics.push({
+        code: error instanceof ReceiptArchiveError ? error.code : 'corrupt_archive_bundle',
+        path: path.split('\\\\').join('/'),
+        message: error instanceof SyntaxError ? 'archive bundle is not valid JSON' : (error?.message || String(error)),
+      });
+    }
+  }
+  return { bundles, diagnostics };
 }
 
 function collectReceiptIdWarnings(rootDir, additionalBundle = null) {

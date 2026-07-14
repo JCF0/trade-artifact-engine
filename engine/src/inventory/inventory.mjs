@@ -2,6 +2,11 @@ import {
   DEFAULT_ENGINE_ROOT,
   scanInventorySources,
 } from './scanner.mjs';
+import {
+  buildReceiptArchiveBundle,
+  readReceiptArchiveBundlesWithDiagnostics,
+  stableJson,
+} from './archive-store.mjs';
 
 export const INVENTORY_VERSION = '1.3-slice-1';
 
@@ -112,6 +117,59 @@ function buildLegacyInventoryReceipt(legacyReceipt) {
   };
 }
 
+function compareInventoryRecordSemantics(currentRecord, archiveBundle) {
+  const currentBundle = buildReceiptArchiveBundle(currentRecord, {
+    provenance: { source: 'current_v12_debug_snapshot' },
+  });
+
+  if (stableJson(currentBundle.canonical_receipt_record) !== stableJson(archiveBundle.canonical_receipt_record)) {
+    return 'receipt_hash_conflict';
+  }
+  if (stableJson(currentBundle) !== stableJson(archiveBundle)) {
+    return 'receipt_archive_bundle_conflict';
+  }
+  return null;
+}
+
+function sortDiagnostics(diagnostics) {
+  return diagnostics.sort((a, b) => {
+    const aKey = `${a.code || ''}:${a.receipt_hash || ''}:${a.path || ''}`;
+    const bKey = `${b.code || ''}:${b.receipt_hash || ''}:${b.path || ''}`;
+    return aKey.localeCompare(bKey);
+  });
+}
+
+function mergeArchiveReceipts(currentReceipts, archiveBundles) {
+  const diagnostics = [];
+  const byHash = new Map(currentReceipts.map(receipt => [receipt.receipt_hash, receipt]));
+  const conflictedHashes = new Set();
+
+  for (const bundle of [...archiveBundles].sort((a, b) => a.receipt_hash.localeCompare(b.receipt_hash))) {
+    const receiptHash = bundle.receipt_hash;
+    const current = byHash.get(receiptHash);
+    if (!current) {
+      byHash.set(receiptHash, bundle.inventory_record);
+      continue;
+    }
+
+    const conflictCode = compareInventoryRecordSemantics(current, bundle);
+    if (!conflictCode) continue;
+
+    conflictedHashes.add(receiptHash);
+    diagnostics.push({
+      code: conflictCode,
+      receipt_hash: receiptHash,
+    });
+  }
+
+  for (const receiptHash of conflictedHashes) byHash.delete(receiptHash);
+
+  return {
+    receipts: [...byHash.values()].sort((a, b) => a.receipt_hash.localeCompare(b.receipt_hash)),
+    diagnostics: sortDiagnostics(diagnostics),
+  };
+}
+
 function filterReceipts(receipts, filters = {}) {
   return receipts.filter(receipt => {
     if (filters.receipt_hash && receipt.receipt_hash !== filters.receipt_hash) return false;
@@ -129,6 +187,7 @@ export function buildInventorySnapshot({
   engineRoot = DEFAULT_ENGINE_ROOT,
   includeLegacy = false,
   includeExcluded = false,
+  includeArchive = false,
   filters = {},
   limit,
   offset = 0,
@@ -139,9 +198,18 @@ export function buildInventorySnapshot({
     includeExcluded,
   });
 
-  const receipts = scanned.v12.receipts
+  const currentReceipts = scanned.v12.receipts
     .map(receipt => buildInventoryReceipt(receipt, scanned.v12))
     .sort((a, b) => a.receipt_hash.localeCompare(b.receipt_hash));
+
+  const archiveRead = includeArchive
+    ? readReceiptArchiveBundlesWithDiagnostics({ engineRoot })
+    : { bundles: [], diagnostics: [] };
+  const archiveMerge = includeArchive
+    ? mergeArchiveReceipts(currentReceipts, archiveRead.bundles)
+    : { receipts: currentReceipts, diagnostics: [] };
+  const archiveDiagnostics = sortDiagnostics([...archiveRead.diagnostics, ...archiveMerge.diagnostics]);
+  const receipts = archiveMerge.receipts;
 
   const filteredReceipts = filterReceipts(receipts, filters);
   const normalizedOffset = Math.max(0, toInteger(offset, 0));
@@ -164,6 +232,16 @@ export function buildInventorySnapshot({
       legacy_receipts: legacyReceipts.length,
     },
     filters,
+    ...(includeArchive ? {
+      archive: {
+        included: true,
+        counts: {
+          bundles_read: archiveRead.bundles.length,
+          diagnostics: archiveDiagnostics.length,
+        },
+        diagnostics: archiveDiagnostics,
+      },
+    } : {}),
     artifacts: Object.values(scanned.v12.artifacts).map(artifact => ({
       name: artifact.name,
       relative_path: artifact.relative_path,
