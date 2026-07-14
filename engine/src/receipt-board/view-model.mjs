@@ -1,10 +1,11 @@
-﻿import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
 import { buildInventorySnapshot } from '../inventory/inventory.mjs';
 import { DEFAULT_ENGINE_ROOT } from '../inventory/scanner.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofCardView } from '../proof-card/view-model.mjs';
+import { buildReceiptCoverageStatement } from '../coverage-statement/view-model.mjs';
 
 export const RECEIPT_BOARD_MANIFEST_PATH = 'samples/historical-receipt-board.manifest.json';
 export const BOARD_TYPE = 'artifact_historical_verified_receipt_board';
@@ -153,6 +154,12 @@ function buildRow(entry, receipt) {
       value: trust.current_level,
       display: trust.current_label,
     },
+    coverage_statement: buildReceiptCoverageStatement(receipt, {
+      publicationContext: {
+        surface: 'historical_receipt_board',
+        selection_mode: 'publisher_selected',
+      },
+    }),
     links: buildLinks(receipt.receipt_hash),
     _sort: {
       trust_level: trust.current_level ?? 0,

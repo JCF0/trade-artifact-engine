@@ -1,4 +1,4 @@
-﻿import assert from 'assert';
+import assert from 'assert';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import http from 'http';
 import { join, relative } from 'path';
@@ -144,6 +144,9 @@ try {
     assert.equal(response.body.ranking.pnl_scope, 'none');
     assert.equal(response.body.rows.length, 1);
     assert.equal(response.body.rows[0].receipt_hash, fixture.hashes.receiptAHash);
+    assert.equal(response.body.rows[0].coverage_statement.coverage_statement_version, 'receipt_coverage_v1');
+    assert.equal(response.body.rows[0].coverage_statement.scope.scope_type, 'receipt');
+    assert.equal(response.body.rows[0].coverage_statement.publication_context.surface, 'historical_receipt_board');
     assert.equal(response.body.excluded_entries.length, 1);
     assert.equal(response.body.excluded_entries[0].reason, 'missing_receipt');
     assert.ok(response.body.disclosures.includes('Ranks selected receipts only. Not traders, wallets, portfolios, or skill.'));

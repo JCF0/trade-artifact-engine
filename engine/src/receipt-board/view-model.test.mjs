@@ -1,4 +1,4 @@
-﻿import assert from 'assert';
+import assert from 'assert';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
 
@@ -184,6 +184,51 @@ try {
       fixture.hashes.receiptAHash,
       fixture.hashes.receiptBHash,
     ]);
+  });
+
+
+  await test('coverage statement is attached to eligible rows without changing board mechanics', () => {
+    writeManifest(fixture.root, baseManifest([
+      manifestEntry(fixture.hashes.receiptAHash),
+    ]));
+
+    const board = buildReceiptBoardView({ engineRoot: fixture.root });
+    const row = board.rows[0];
+
+    assert.equal(board.count, 1);
+    assert.equal(row.rank, 1);
+    assert.equal(row.coverage_statement.coverage_statement_version, 'receipt_coverage_v1');
+    assert.equal(row.coverage_statement.coverage_status, 'complete');
+    assert.ok(row.coverage_statement.coverage_codes.includes('receipt_scope_only'));
+    assert.ok(row.coverage_statement.coverage_codes.includes('surface_historical_receipt_board'));
+    assert.ok(row.coverage_statement.coverage_codes.includes('selection_publisher_selected'));
+    assert.equal(row.coverage_statement.scope.scope_type, 'receipt');
+    assert.equal(row.coverage_statement.receipt.receipt_hash, fixture.hashes.receiptAHash);
+    assert.equal(row.coverage_statement.position_episode.descriptive_only, true);
+    assert.equal(row.coverage_statement.valuation_basis.usd_normalized, false);
+    assert.equal(row.links.proof_api_path, `/api/proof/${fixture.hashes.receiptAHash}`);
+  });
+
+  await test('missing timestamps produce incomplete coverage without changing board eligibility', () => {
+    mutateReceipt(fixture.root, fixture.hashes.receiptAHash, {
+      first_event_at: null,
+      last_event_at: null,
+    });
+    writeManifest(fixture.root, baseManifest([
+      manifestEntry(fixture.hashes.receiptAHash),
+    ]));
+
+    const board = buildReceiptBoardView({ engineRoot: fixture.root });
+
+    assert.equal(board.rows.length, 1);
+    assert.equal(board.excluded_entries.length, 0);
+    assert.equal(board.rows[0].coverage_statement.coverage_status, 'incomplete');
+    assert.ok(board.rows[0].coverage_statement.coverage_codes.includes('event_bounds_missing_first_event_at'));
+    assert.ok(board.rows[0].coverage_statement.coverage_codes.includes('event_bounds_missing_last_event_at'));
+    mutateReceipt(fixture.root, fixture.hashes.receiptAHash, {
+      first_event_at: 1700000000,
+      last_event_at: 1700000300,
+    });
   });
 
   await test('malformed receipt hashes go to excluded_entries', () => {
@@ -389,7 +434,9 @@ try {
 
     assert.ok(!serialized.includes('realized_pnl'));
     assert.ok(!serialized.includes('pnl_pct'));
-    assert.ok(!serialized.includes('usd'));
+    assert.ok(!serialized.includes('usd_value'));
+    assert.ok(!serialized.includes('usd_amount'));
+    assert.ok(serialized.includes('usd_normalized'));
     assert.ok(!serialized.includes('performance'));
     assert.ok(!serialized.includes('best_trader'));
   });
