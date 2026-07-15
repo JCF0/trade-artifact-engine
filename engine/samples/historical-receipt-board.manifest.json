@@ -19,6 +19,12 @@
       "display_name": "JUP Receipt 1",
       "participant_ref": "local-receipt-1",
       "selection_note": "Verified closed-position receipt selected for local prototype demonstration."
+    },
+    {
+      "receipt_hash": "4d33969c45a041837070dbc83730862325ff989772712aae285384d4570e4341",
+      "display_name": "RAY Receipt 1",
+      "participant_ref": "local-receipt-2",
+      "selection_note": "Verified closed-position receipt selected for local prototype demonstration."
     }
   ]
 }

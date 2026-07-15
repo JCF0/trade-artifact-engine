@@ -96,6 +96,13 @@ V1.8 adds deterministic same-mint multi-input swap normalization for local recei
 
 These v1.8 changes are normalization-only. They accept multiple wallet-side token inputs only when all inputs share the same mint and decimals and exactly one wallet-side output transfer exists. V1.8 does not add new swap shapes, mixed quotes, native+token support, USD normalization, board changes, accounts, profiles, upload, minting, signing, or public competition behavior.
 
+V1.9 adds deterministic local receipt archive support for multi-run proof and receipt-board resolution:
+- `node engine/src/inventory/archive-current-run.mjs`
+- `node engine/src/run-v19-regression.mjs`
+- `node engine/src/check-v19-archive-demo.mjs`
+
+These v1.9 changes let verified receipts from separate local wallet runs coexist in a gitignored archive while default inventory remains current-snapshot-only. They do not add raw history retention, remote database storage, public hosting, accounts, profiles, upload, minting, signing, USD normalization, PnL ranking, or trader/wallet/portfolio/track-record claims.
+
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
