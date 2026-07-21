@@ -149,7 +149,11 @@ try {
     const second = buildPublicDemoBundle();
     assert.deepEqual(first.fileList, second.fileList);
     assert.deepEqual(first.files, second.files);
-    assert.equal(first.fileList.length, 14);
+    assert.equal(first.fileList.length, 16);
+    assert.ok(Buffer.isBuffer(first.files['assets/artifact-logo-header.png']));
+    assert.ok(Buffer.isBuffer(first.files['assets/favicon.png']));
+    assert.deepEqual(first.brandAssets.derivation.header, { width: 384, height: 324, sha256: first.brandAssets.hashes['assets/artifact-logo-header.png'] });
+    assert.deepEqual(first.brandAssets.derivation.favicon, { width: 64, height: 54, sha256: first.brandAssets.hashes['assets/favicon.png'] });
     assert.deepEqual(first.fileList, [...first.fileList].sort());
   });
 
@@ -183,7 +187,7 @@ try {
     assert.equal(bundle.files['_headers'], PUBLIC_DEMO_HEADERS);
     assert.equal(bundle.files['robots.txt'], PUBLIC_DEMO_ROBOTS);
     assert.ok(bundle.files['404.html'].includes('static unlisted Artifact demonstration'));
-    assert.ok(bundle.files['404.html'].includes('href="/index.html"'));
+    assert.ok(bundle.files['404.html'].includes('href="./index.html"'));
     assert.ok(bundle.files['_headers'].includes("Content-Security-Policy: default-src 'none'"));
     assert.ok(bundle.files['_headers'].includes('X-Robots-Tag: noindex, nofollow'));
     assert.ok(!bundle.files['_headers'].includes('Cache-Control'));

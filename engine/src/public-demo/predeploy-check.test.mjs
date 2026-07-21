@@ -38,7 +38,7 @@ function append(path, value) {
 test('passes complete generated bundle', () => withBundle(root => {
   const result = runPublicDemoPredeployCheck({ root });
   assert.equal(result.ok, true, JSON.stringify(result.findings));
-  assert.equal(result.file_count, 14);
+  assert.equal(result.file_count, 16);
   assert.deepEqual(result.csp, {
     scripts_present: false,
     network_primitives_present: false,
@@ -84,7 +84,7 @@ test('fails on robots rule changes', () => withBundle(root => {
 }));
 
 test('fails on 404 claim drift', () => withBundle(root => {
-  writeFileSync(join(root, '404.html'), '<a href="/index.html">Board</a>', 'utf8');
+  writeFileSync(join(root, '404.html'), '<a href="./index.html">Board</a>', 'utf8');
   const result = runPublicDemoPredeployCheck({ root });
   assert.equal(result.ok, false);
   assert.ok(result.findings.some(finding => finding.code === 'not_found_unlisted_copy_missing'));

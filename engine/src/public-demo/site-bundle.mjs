@@ -10,6 +10,8 @@ import { buildPublishSlug } from '../proof-publish/slug.mjs';
 import { buildReceiptBoardView, readReceiptBoardManifest } from '../receipt-board/view-model.mjs';
 import { renderReceiptBoardHtml } from '../receipt-board/render-html.mjs';
 import { assertPublicDemoLeakCheck } from './leak-check.mjs';
+import { derivePublicDemoBrandAssets } from './brand-assets.mjs';
+import { PUBLIC_DEMO_ASSET_BASE, PUBLIC_DEMO_PROOF_ASSET_BASE, renderBrandHeader, renderFaviconLink, renderPublicDemoStyles } from './visual-system.mjs';
 
 export const PUBLIC_DEMO_BUNDLE_VERSION = 'v1.10';
 export const DEFAULT_PUBLIC_DEMO_GENERATED_AT = 'not_recorded';
@@ -206,28 +208,26 @@ function renderNotFoundPage() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Artifact Public Demo - Not Found</title>
+  ${renderFaviconLink(PUBLIC_DEMO_ASSET_BASE)}
   <style>
-    :root { color-scheme: light; --bg: #f5f1e8; --surface: #fffdf8; --border: #d6cfc2; --text: #1d1b18; --muted: #625b52; --accent: #7c3f00; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--text); font-family: Georgia, 'Times New Roman', serif; }
-    main { width: min(680px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
-    h1 { margin: 0 0 12px; font-size: 28px; }
-    p { margin: 0 0 12px; color: var(--muted); line-height: 1.5; }
-    a { color: var(--accent); font-weight: 700; }
+    ${renderPublicDemoStyles()}
+    .not-found-panel { padding: 26px; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Page Not Found</h1>
-    <p>This is a static unlisted Artifact demonstration. Unlisted does not mean private; anyone with the link can view it.</p>
-    <p>No runtime server, account, signing, upload, minting, or wallet connect flow is available here.</p>
-    <a href="/index.html">Return to the receipt board</a>
+  <main class="page-shell">
+    ${renderBrandHeader({ assetBasePath: PUBLIC_DEMO_ASSET_BASE, current: 'proof', backHref: './index.html' })}
+    <section class="hero-panel not-found-panel">
+      <h1>Page not found</h1>
+      <p class="lead">This is a static unlisted Artifact demonstration.</p>
+      <a class="button-link primary" href="./index.html">Return to the receipt board</a>
+    </section>
   </main>
 </body>
 </html>`;
 }
 
-function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMode, sourceRevision, generatedAt }) {
+function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMode, sourceRevision, generatedAt, brandAssets }) {
   return {
     bundle_version: PUBLIC_DEMO_BUNDLE_VERSION,
     bundle_type: 'artifact_public_read_only_demo',
@@ -274,6 +274,14 @@ function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMod
       no_network_calls: true,
       no_upload_mint_signing_or_wallet_connection: true,
     },
+    assets: brandAssets ? {
+      source: brandAssets.source,
+      derivation: brandAssets.derivation,
+      files: Object.fromEntries(Object.entries(brandAssets.assets).map(([path, bytes]) => [path, {
+        bytes: bytes.length,
+        sha256: brandAssets.hashes[path],
+      }])),
+    } : null,
   };
 }
 
@@ -318,6 +326,8 @@ export function buildPublicDemoBundle(options = {}) {
     throw new Error(`public demo board row count mismatch: expected ${selectedHashes.length}, got ${board.rows.length}`);
   }
 
+  const brandAssets = derivePublicDemoBrandAssets();
+
   const receiptBundles = receipts
     .map(receipt => {
       const proofDetail = buildPublicProofDetail(receipt, walletDisplayMode);
@@ -326,6 +336,7 @@ export function buildPublicDemoBundle(options = {}) {
         visibility,
         wallet_display_mode: walletDisplayMode,
         base_url: null,
+        asset_base_path: PUBLIC_DEMO_PROOF_ASSET_BASE,
       });
       return {
         receiptHash: receipt.receipt_hash,
@@ -337,7 +348,7 @@ export function buildPublicDemoBundle(options = {}) {
     .sort((a, b) => a.slug.localeCompare(b.slug));
 
   const files = {
-    'index.html': renderReceiptBoardHtml(board),
+    'index.html': renderReceiptBoardHtml(board, { assetBasePath: PUBLIC_DEMO_ASSET_BASE }),
     'board.json': stableJson(board),
     'manifest.json': stableJson(buildSiteManifest({
       board,
@@ -346,10 +357,12 @@ export function buildPublicDemoBundle(options = {}) {
       walletDisplayMode,
       sourceRevision,
       generatedAt,
+      brandAssets,
     })),
     '_headers': PUBLIC_DEMO_HEADERS,
     'robots.txt': PUBLIC_DEMO_ROBOTS,
     '404.html': renderNotFoundPage(),
+    ...brandAssets.assets,
   };
 
   for (const item of receiptBundles) {
@@ -365,6 +378,7 @@ export function buildPublicDemoBundle(options = {}) {
     manifest,
     board,
     receipts,
+    brandAssets,
     files: orderedFiles,
     fileList: Object.keys(orderedFiles),
     leakCheck,
@@ -410,7 +424,9 @@ export function writePublicDemoBundle(bundle, options = {}) {
     const rel = relative(outRoot, target);
     if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`refusing to write outside output root: ${filename}`);
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, bundle.files[filename], 'utf8');
+    const content = bundle.files[filename];
+    if (Buffer.isBuffer(content)) writeFileSync(target, content);
+    else writeFileSync(target, content, 'utf8');
     written.push(target);
   }
 

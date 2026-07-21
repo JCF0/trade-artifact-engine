@@ -29,7 +29,7 @@ const FORBIDDEN_CLAIM_PATTERNS = [
   { code: 'anti_wash_claim', pattern: /\b(anti[- ]wash verified|wash trading cleared|wash trading safe)\b/i },
   { code: 'prize_claim', pattern: /\b(prize eligible|eligible for prize|prize eligibility verified)\b/i },
   { code: 'usd_pnl_claim', pattern: /\bUSD[- ]?PnL|usd_pnl|realized_pnl_usd|normalized_realized_pnl_usd\b/i },
-  { code: 'leaderboard_claim', pattern: /\\b(leaderboard rank|ranked trader leaderboard|wallet leaderboard score)\\b/i },
+  { code: 'leaderboard_claim', pattern: /\b(leaderboard rank|ranked trader leaderboard|wallet leaderboard score)\b/i },
 ];
 
 const COVERAGE_REQUIRED = [
@@ -38,6 +38,20 @@ const COVERAGE_REQUIRED = [
   'Raw quote only. No USD normalization.',
 ];
 
+
+function isTextBundleFile(filename) {
+  return filename === '_headers'
+    || filename.endsWith('.html')
+    || filename.endsWith('.json')
+    || filename.endsWith('.txt')
+    || filename.endsWith('.css')
+    || filename.endsWith('.svg');
+}
+
+function textContent(value) {
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  return String(value);
+}
 function isLikelyFullWallet(value) {
   if (typeof value !== 'string') return false;
   if (value.includes('...') || value === '[redacted]') return false;
@@ -106,9 +120,12 @@ export function runPublicDemoLeakCheck(files, options = {}) {
   const findings = [];
   const expectedReceiptHashes = new Set(options.expectedReceiptHashes || []);
 
+  const searchableText = [];
   for (const filename of Object.keys(files).sort()) {
-    const content = String(files[filename]);
     addPatternFindings(findings, filename, filename, [...SECRET_PATTERNS, ...PATH_PATTERNS, ...RUNTIME_PATTERNS]);
+    if (!isTextBundleFile(filename)) continue;
+    const content = textContent(files[filename]);
+    searchableText.push(content);
     addPatternFindings(findings, filename, content, SECRET_PATTERNS);
     addPatternFindings(findings, filename, content, PATH_PATTERNS);
     addPatternFindings(findings, filename, content, RUNTIME_PATTERNS);
@@ -117,7 +134,7 @@ export function runPublicDemoLeakCheck(files, options = {}) {
     inspectCoverage(findings, filename, content);
   }
 
-  const serialized = Object.values(files).join('\n');
+  const serialized = searchableText.join('\n');
   for (const hash of expectedReceiptHashes) {
     if (!serialized.includes(hash)) findings.push({ code: 'selected_receipt_missing', receipt_hash: hash });
   }

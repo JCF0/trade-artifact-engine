@@ -1,4 +1,4 @@
-﻿import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
+import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
 import { applyWalletDisplayPolicy } from './wallet-policy.mjs';
 import { buildPublishSlug } from './slug.mjs';
 
@@ -94,6 +94,7 @@ export function buildPublishBundle(proofDetail, options = {}) {
       walletDisplayMode,
       visibility,
     },
+    assetBasePath: options.asset_base_path || '',
   });
 
   const files = {

@@ -134,7 +134,8 @@ await test('renders title, subtitle, and disclosures', () => {
   assert.ok(html.startsWith('<!DOCTYPE html>'));
   assert.ok(html.includes('<title>Historical Verified Receipt Board</title>'));
   assert.ok(html.includes('<h1>Historical Verified Receipt Board</h1>'));
-  assert.ok(html.includes('Selected historical receipts only. Not a trader leaderboard.'));
+  assert.ok(html.includes('Verifiable receipts for on-chain trades.'));
+  assert.ok(html.includes('Publisher-selected verified receipts. Receipt-ranked, not trader-ranked.'));
   assert.ok(html.includes('Ranks selected receipts only. Not traders, wallets, portfolios, or skill.'));
   assert.ok(html.includes('Raw quote only. No USD normalization.'));
 });
@@ -145,7 +146,8 @@ await test('renders rows with receipt-entry framing', () => {
   assert.ok(html.includes('Receipt entries only'));
   assert.ok(html.includes('Receipt Rank'));
   assert.ok(html.includes('Entry 1'));
-  assert.ok(html.includes('Entry reference: local-entry-1'));
+  assert.ok(html.includes('Entry reference:'));
+  assert.ok(html.includes('local-entry-1'));
   assert.ok(html.includes('Demo receipt selected by publisher.'));
   assert.ok(html.includes('aaaaaaaa...aaaaaaaa'));
   assert.ok(html.includes('Receipt Type'));
@@ -277,6 +279,7 @@ await test('avoids leaderboard, best-trader, top-wallet, and performance languag
   assert.ok(!normalized.includes('winner'));
   assert.ok(!normalized.includes('performance'));
   assert.ok(!normalized.includes('track record'));
+  assert.ok(normalized.includes('not trader-ranked'));
   assert.ok(normalized.includes('not a trader leaderboard'));
   assert.ok(normalized.includes('not traders, wallets, portfolios, or skill'));
   assert.ok(normalized.includes('not a portfolio statement'));

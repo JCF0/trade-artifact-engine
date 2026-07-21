@@ -1,4 +1,5 @@
 import { applyWalletDisplayPolicy } from '../proof-publish/wallet-policy.mjs';
+import { renderBrandHeader, renderFaviconLink, renderPublicDemoStyles } from '../public-demo/visual-system.mjs';
 
 function escapeHtml(value) {
   return String(value)
@@ -18,9 +19,7 @@ function formatValue(value) {
 
 function formatTime(value) {
   if (value == null || value === '') return 'Not available';
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date(value * 1000).toISOString();
-  }
+  if (typeof value === 'number' && Number.isFinite(value)) return new Date(value * 1000).toISOString();
   return String(value);
 }
 
@@ -50,7 +49,7 @@ function buildCoverageRows(coverage) {
 function renderCoverageStatement(coverage) {
   const rows = buildCoverageRows(coverage);
   if (!rows) return '';
-  return renderSection('Coverage Statement', `<dl class="grid">${renderDefinitionRows(rows)}</dl>`);
+  return renderSection('Coverage Statement', `<dl class="grid">${renderDefinitionRows(rows)}</dl>`, 'scope-panel');
 }
 
 function renderDefinitionRows(rows) {
@@ -67,22 +66,22 @@ function renderList(label, values) {
     return `
       <div class="subsection">
         <h3>${escapeHtml(label)}</h3>
-        <p class="empty">Not available</p>
+        <p class="empty muted-copy">Not available</p>
       </div>`;
   }
 
   return `
       <div class="subsection">
         <h3>${escapeHtml(label)}</h3>
-        <ul>
+        <ul class="disclosures">
           ${items.map(value => `<li>${escapeHtml(formatValue(value))}</li>`).join('')}
         </ul>
       </div>`;
 }
 
-function renderSection(title, body) {
+function renderSection(title, body, className = 'content-panel proof-section') {
   return `
-    <section>
+    <section class="${escapeHtml(className)}">
       <h2>${escapeHtml(title)}</h2>
       ${body}
     </section>`;
@@ -90,7 +89,7 @@ function renderSection(title, body) {
 
 function renderSummaryCards(cards) {
   return `
-      <div class="summary">
+      <div class="summary proof-grid">
         ${cards.map(card => `
         <div class="summary-card ${escapeHtml(card.className)}">
           <strong>${escapeHtml(card.label)}</strong>
@@ -105,12 +104,12 @@ function renderLinks(links) {
     ['Inventory API Path', links.inventory_api_path],
     ['Proof API Path', links.proof_api_path],
     ['Legacy Path', links.legacy_path],
+    ['Board Path', links.board_path],
+    ['Verifier Path', links.verifier_path],
   ];
 
   return rows.map(([label, value]) => {
-    const content = value
-      ? `<a href="${escapeHtml(value)}">${escapeHtml(value)}</a>`
-      : 'Not available';
+    const content = value ? `<a href="${escapeHtml(value)}">${escapeHtml(value)}</a>` : 'Not available';
     return `
         <div class="field">
           <dt>${escapeHtml(label)}</dt>
@@ -121,7 +120,6 @@ function renderLinks(links) {
 
 function getHostedContext(options = {}) {
   if (!options.hosted || typeof options.hosted !== 'object') return null;
-
   return {
     walletDisplayMode: options.hosted.walletDisplayMode || 'truncated',
     visibility: options.hosted.visibility || 'unlisted',
@@ -130,16 +128,14 @@ function getHostedContext(options = {}) {
 
 function hostedDisclosureLines(hosted) {
   const lines = [];
-  if (hosted.visibility === 'public') {
-    lines.push('Public hosted proof page.');
-  } else if (hosted.visibility === 'private') {
+  if (hosted.visibility === 'public') lines.push('Public hosted proof page.');
+  else if (hosted.visibility === 'private') {
     lines.push('Private draft proof page.');
     lines.push('Private here means local draft semantics only. Do not assume server-side privacy.');
   } else {
     lines.push('Hosted proof page.');
     lines.push('Unlisted does not mean private. Anyone with the link can view.');
   }
-
   lines.push('Selected receipt only. Not a portfolio statement.');
   lines.push('Raw quote only. No USD normalization.');
   lines.push('Wallet may be truncated or redacted by publisher.');
@@ -147,16 +143,14 @@ function hostedDisclosureLines(hosted) {
 }
 
 export function renderStaticProofPage(proofDetail, options = {}) {
-  if (!proofDetail || typeof proofDetail !== 'object') {
-    throw new TypeError('proofDetail is required');
-  }
+  if (!proofDetail || typeof proofDetail !== 'object') throw new TypeError('proofDetail is required');
 
   const hosted = getHostedContext(options);
-  const renderedProofDetail = hosted
-    ? applyWalletDisplayPolicy(proofDetail, { mode: hosted.walletDisplayMode })
-    : proofDetail;
+  const renderedProofDetail = hosted ? applyWalletDisplayPolicy(proofDetail, { mode: hosted.walletDisplayMode }) : proofDetail;
   const generatedAt = options.generatedAt || new Date().toISOString();
   const pageTitle = options.title || `Trade Artifact Static Proof - ${renderedProofDetail.receipt?.receipt_id || 'Selected Receipt'}`;
+  const assetBasePath = options.assetBasePath || '';
+  const boardHref = renderedProofDetail.links?.board_path || '../../index.html';
 
   const receiptRows = [
     ['Receipt ID', formatValue(renderedProofDetail.receipt?.receipt_id)],
@@ -233,66 +227,27 @@ export function renderStaticProofPage(proofDetail, options = {}) {
     ['Raw Quote Disclosure', formatValue(renderedProofDetail.flags_and_limitations?.raw_quote_only_disclosure)],
   ];
 
-  const summaryCards = hosted
-    ? [
-        {
-          className: 'verification-status',
-          label: 'Verification Status',
-          value: formatValue(renderedProofDetail.receipt?.verification_status),
-        },
-        {
-          className: 'hash-check',
-          label: 'Hash Valid',
-          value: formatValue(renderedProofDetail.verification?.hash_valid),
-        },
-        {
-          className: 'verifier-check',
-          label: 'Verifier Passed',
-          value: formatValue(renderedProofDetail.verification?.verifier_passed),
-        },
-        {
-          className: 'lifecycle',
-          label: 'Proof Lifecycle',
-          value: `${formatValue(renderedProofDetail.proof_lifecycle?.upload_status)} / ${formatValue(renderedProofDetail.proof_lifecycle?.mint_status)}`,
-        },
-      ]
-    : [
-        {
-          className: 'verification-status',
-          label: 'Verification Status',
-          value: formatValue(renderedProofDetail.receipt?.verification_status),
-        },
-        {
-          className: 'hash-check',
-          label: 'Hash Valid / Verifier Passed',
-          value: `${formatValue(renderedProofDetail.verification?.hash_valid)} / ${formatValue(renderedProofDetail.verification?.verifier_passed)}`,
-        },
-        {
-          className: 'lifecycle',
-          label: 'Proof Lifecycle',
-          value: `${formatValue(renderedProofDetail.proof_lifecycle?.upload_status)} / ${formatValue(renderedProofDetail.proof_lifecycle?.mint_status)}`,
-        },
-      ];
+  const summaryCards = hosted ? [
+    { className: 'verification-status', label: 'Verification Status', value: formatValue(renderedProofDetail.receipt?.verification_status) },
+    { className: 'hash-check', label: 'Hash Valid', value: formatValue(renderedProofDetail.verification?.hash_valid) },
+    { className: 'verifier-check', label: 'Verifier Passed', value: formatValue(renderedProofDetail.verification?.verifier_passed) },
+    { className: 'raw-quote', label: 'Valuation', value: 'Raw Quote' },
+    { className: 'lifecycle', label: 'Proof Lifecycle', value: `${formatValue(renderedProofDetail.proof_lifecycle?.upload_status)} / ${formatValue(renderedProofDetail.proof_lifecycle?.mint_status)}` },
+  ] : [
+    { className: 'verification-status', label: 'Verification Status', value: formatValue(renderedProofDetail.receipt?.verification_status) },
+    { className: 'hash-check', label: 'Hash Valid / Verifier Passed', value: `${formatValue(renderedProofDetail.verification?.hash_valid)} / ${formatValue(renderedProofDetail.verification?.verifier_passed)}` },
+    { className: 'lifecycle', label: 'Proof Lifecycle', value: `${formatValue(renderedProofDetail.proof_lifecycle?.upload_status)} / ${formatValue(renderedProofDetail.proof_lifecycle?.mint_status)}` },
+  ];
 
-  const headerLede = hosted
-    ? hostedDisclosureLines(hosted)[0]
-    : 'Selected receipt only. This static proof page is a local export scaffold, not hosted proof delivery.';
-
-  const disclosureNotice = hosted
-    ? `
+  const headerLede = hosted ? hostedDisclosureLines(hosted)[0] : 'Selected receipt only. This static proof page is a local export scaffold, not hosted proof delivery.';
+  const disclosureNotice = hosted ? `
       <div class="notice">
         ${hostedDisclosureLines(hosted).map(line => `<p>${escapeHtml(line)}</p>`).join('')}
         <p>Wallet display mode: ${escapeHtml(formatValue(hosted.walletDisplayMode))}.</p>
-      </div>`
-    : '';
-
+      </div>` : '';
   const footerNotes = hosted
-    ? `
-      ${hostedDisclosureLines(hosted).map(line => `<p>${escapeHtml(line)}</p>`).join('')}`
-    : `
-      <p>Raw quote only. No USD normalization.</p>
-      <p>Selected receipt only. This page does not represent a portfolio-wide statement.</p>
-      <p>Local export scaffold only. No hosting, upload, minting, or signing is performed by this artifact.</p>`;
+    ? `${hostedDisclosureLines(hosted).map(line => `<p>${escapeHtml(line)}</p>`).join('')}`
+    : `<p>Raw quote only. No USD normalization.</p><p>Selected receipt only. This page does not represent a portfolio-wide statement.</p><p>Local export scaffold only. No hosting, upload, minting, or signing is performed by this artifact.</p>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -300,63 +255,39 @@ export function renderStaticProofPage(proofDetail, options = {}) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(pageTitle)}</title>
+  ${renderFaviconLink(assetBasePath)}
   <style>
-    :root {
-      color-scheme: light;
-      --bg: #f5f1e8;
-      --surface: #fffdf8;
-      --border: #d6cfc2;
-      --text: #1d1b18;
-      --muted: #625b52;
-      --accent: #7c3f00;
-      --ok: #17633a;
-      --warn: #9a6700;
-      --bad: #9b2226;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); font-family: Georgia, 'Times New Roman', serif; }
-    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 48px; }
-    header, section, footer { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 18px; }
-    h1, h2, h3 { margin: 0 0 12px; }
-    h1 { font-size: 28px; }
-    h2 { font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-    h3 { font-size: 14px; color: var(--muted); }
-    p { margin: 0 0 10px; line-height: 1.5; }
-    .lede { color: var(--muted); }
-    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
-    .summary-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: #fffaf1; }
-    .summary-card strong { display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
-    .summary-card span { font-size: 18px; font-weight: 600; }
-    .summary-card.verification-status { border-left: 6px solid var(--accent); }
-    .summary-card.hash-check { border-left: 6px solid var(--ok); }
-    .summary-card.verifier-check { border-left: 6px solid #245b8f; }
-    .summary-card.lifecycle { border-left: 6px solid var(--warn); }
-    dl.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0; }
-    .field { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #fffaf1; }
-    dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 6px; }
-    dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+    ${renderPublicDemoStyles()}
+    .proof-shell { max-width: 1040px; }
+    .proof-hero { display: grid; gap: 16px; }
+    .receipt-kicker { color: var(--muted); font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
+    .summary-card.verification-status, .summary-card.hash-check, .summary-card.verifier-check, .summary-card.raw-quote { border-left: 5px solid var(--verified); }
+    .summary-card.lifecycle { border-left: 5px solid var(--blue); }
+    .summary-card span { display: block; color: var(--navy); font-size: 20px; font-weight: 800; overflow-wrap: anywhere; }
+    .proof-section { padding: 20px; margin-top: 16px; }
+    .scope-panel { margin-top: 16px; }
     .subsection { margin-top: 16px; }
-    ul { margin: 8px 0 0 20px; padding: 0; }
-    li { margin-bottom: 6px; overflow-wrap: anywhere; }
-    .empty { color: var(--muted); }
-    a { color: var(--accent); overflow-wrap: anywhere; }
-    .notice { border: 1px solid var(--accent); background: #fff6e8; border-radius: 8px; padding: 14px; }
-    .footer-notes p { margin-bottom: 8px; }
-    @media print {
-      body { background: #ffffff; }
-      header, section, footer { break-inside: avoid; }
-    }
+    .footer-notes { margin-top: 16px; }
   </style>
 </head>
 <body>
-  <main>
-    <header>
+  <main class="page-shell proof-shell">
+    ${renderBrandHeader({ assetBasePath, current: 'proof', backHref: boardHref })}
+    <section class="hero-panel proof-hero">
+      <p class="eyebrow">Artifact Proof</p>
       <h1>${escapeHtml(pageTitle)}</h1>
-      <p class="lede">${escapeHtml(headerLede)}</p>
-      <p class="lede">Generated at ${escapeHtml(generatedAt)}</p>
+      <p class="receipt-kicker">${escapeHtml(formatValue(renderedProofDetail.receipt?.receipt_id))}</p>
+      <p class="lead">${escapeHtml(headerLede)}</p>
+      <div class="badge-row">
+        <span class="badge verified">Verified</span>
+        <span class="badge verified">Hash Valid</span>
+        <span class="badge verified">Verifier Passed</span>
+        <span class="badge blue">Raw Quote</span>
+      </div>
+      <p class="muted-copy">Generated at <span class="technical">${escapeHtml(generatedAt)}</span></p>
       ${disclosureNotice}
       ${renderSummaryCards(summaryCards)}
-    </header>
+    </section>
 
     ${renderSection('Receipt', `<dl class="grid">${renderDefinitionRows(receiptRows)}</dl>`)}
     ${renderCoverageStatement(renderedProofDetail.coverage_statement)}
@@ -367,13 +298,10 @@ export function renderStaticProofPage(proofDetail, options = {}) {
     ${renderSection('Flags & Limitations', `<dl class="grid">${renderDefinitionRows(limitationRows)}</dl>${renderList('Flags', renderedProofDetail.flags_and_limitations?.flags)}${renderList('Disclosures', renderedProofDetail.flags_and_limitations?.disclosures)}`)}
     ${renderSection('Links', `<dl class="grid">${renderLinks(renderedProofDetail.links || {})}</dl>`)}
 
-    <footer class="footer-notes">
+    <footer class="scope-panel footer-notes">
       ${footerNotes}
     </footer>
   </main>
 </body>
 </html>`;
 }
-
-
-

@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { dirname, isAbsolute, join, normalize, relative, resolve } from 'path';
 import { pathToFileURL } from 'url';
 
+import { decodePng } from './brand-assets.mjs';
 import { runPublicDemoLeakCheck } from './leak-check.mjs';
 import { buildPublicDemoBundle, PUBLIC_DEMO_HEADERS, PUBLIC_DEMO_ROBOTS, writePublicDemoBundle } from './site-bundle.mjs';
 
@@ -32,6 +33,20 @@ function slashPath(value) {
   return value.split('\\').join('/');
 }
 
+
+function isTextBundleFile(filename) {
+  return filename === '_headers'
+    || filename.endsWith('.html')
+    || filename.endsWith('.json')
+    || filename.endsWith('.txt')
+    || filename.endsWith('.css')
+    || filename.endsWith('.svg');
+}
+
+function textContent(value) {
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  return String(value);
+}
 function readBundleFiles(root) {
   const resolvedRoot = resolve(root);
   if (!existsSync(resolvedRoot)) throw new Error(`bundle root does not exist: ${root}`);
@@ -43,7 +58,10 @@ function readBundleFiles(root) {
       const path = join(current, name);
       const stats = statSync(path);
       if (stats.isDirectory()) visit(path);
-      else files[slashPath(relative(resolvedRoot, path))] = readFileSync(path, 'utf8');
+      else {
+        const relPath = slashPath(relative(resolvedRoot, path));
+        files[relPath] = isTextBundleFile(relPath) ? readFileSync(path, 'utf8') : readFileSync(path);
+      }
     }
   }
   visit(resolvedRoot);
@@ -80,8 +98,9 @@ function assertInsideBundle(root, fromFile, href) {
 }
 
 function validateInternalLinks(files, findings) {
-  for (const [filename, content] of Object.entries(files)) {
+  for (const [filename, fileContent] of Object.entries(files)) {
     if (!filename.endsWith('.html')) continue;
+    const content = textContent(fileContent);
     const attrs = [...content.matchAll(/\b(?:href|src)="([^"]*)"/g)];
     for (const match of attrs) {
       const href = match[1];
@@ -99,7 +118,9 @@ function validateInternalLinks(files, findings) {
 }
 
 function validateCspCompatibility(files, findings) {
-  for (const [filename, content] of Object.entries(files)) {
+  for (const [filename, fileContent] of Object.entries(files)) {
+    if (!isTextBundleFile(filename)) continue;
+    const content = textContent(fileContent);
     if (/<script\b/i.test(content)) addFinding(findings, 'script_tag_present', { filename });
     if (/\son[a-z]+\s*=/i.test(content)) addFinding(findings, 'inline_event_handler_present', { filename });
     if (/javascript:/i.test(content)) addFinding(findings, 'javascript_url_present', { filename });
@@ -108,8 +129,9 @@ function validateCspCompatibility(files, findings) {
     }
   }
 
-  for (const [filename, content] of Object.entries(files)) {
+  for (const [filename, fileContent] of Object.entries(files)) {
     if (!filename.endsWith('.html')) continue;
+    const content = textContent(fileContent);
     for (const match of content.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
       const src = match[1];
       if (src.startsWith('data:')) addFinding(findings, 'image_data_url_rejected', { filename, src: 'data:' });
@@ -132,7 +154,7 @@ function validateCspCompatibility(files, findings) {
 function validateCoverage(files, findings) {
   const coverageFiles = ['index.html', ...Object.keys(files).filter(path => /^receipts\/[^/]+\/index\.html$/.test(path)).sort()];
   for (const filename of coverageFiles) {
-    const content = files[filename] || '';
+    const content = textContent(files[filename] || '');
     if (!content.includes('Coverage Statement')) addFinding(findings, 'missing_coverage_statement', { filename });
     if (!content.includes('Receipt-scoped coverage only')) addFinding(findings, 'missing_receipt_scope_disclosure', { filename });
     if (!content.includes('Raw quote only. No USD normalization.')) addFinding(findings, 'missing_raw_quote_disclosure', { filename });
@@ -154,14 +176,42 @@ function validateRobots(files, findings) {
   if (!files['robots.txt']?.includes('Disallow: /')) addFinding(findings, 'robots_disallow_missing');
 }
 
+
+function validateBrandAssets(files, generated, findings) {
+  const expectedAssets = [
+    ['assets/artifact-logo-header.png', { width: generated.brandAssets?.derivation?.header?.width, height: generated.brandAssets?.derivation?.header?.height }],
+    ['assets/favicon.png', { width: generated.brandAssets?.derivation?.favicon?.width, height: generated.brandAssets?.derivation?.favicon?.height }],
+  ];
+
+  for (const [assetPath, expected] of expectedAssets) {
+    const bytes = files[assetPath];
+    if (!Buffer.isBuffer(bytes)) {
+      addFinding(findings, 'brand_asset_not_binary', { path: assetPath });
+      continue;
+    }
+    let image;
+    try {
+      image = decodePng(bytes);
+    } catch (error) {
+      addFinding(findings, 'brand_asset_invalid_png', { path: assetPath, message: error.message });
+      continue;
+    }
+    if (image.width !== expected.width || image.height !== expected.height) {
+      addFinding(findings, 'brand_asset_dimensions_mismatch', { path: assetPath, actual: { width: image.width, height: image.height }, expected });
+    }
+    if (generated.files[assetPath] && sha256(bytes) !== sha256(generated.files[assetPath])) {
+      addFinding(findings, 'brand_asset_hash_mismatch', { path: assetPath });
+    }
+  }
+}
 function validateNotFound(files, findings) {
-  const content = files['404.html'];
+  const content = textContent(files['404.html'] || '');
   if (!content) {
     addFinding(findings, 'not_found_missing');
     return;
   }
   if (!content.includes('static unlisted Artifact demonstration')) addFinding(findings, 'not_found_unlisted_copy_missing');
-  if (!content.includes('href="/index.html"')) addFinding(findings, 'not_found_board_link_missing');
+  if (!content.includes('href="./index.html"')) addFinding(findings, 'not_found_board_link_missing');
 }
 
 function compareExpectedInventory(files, expectedFiles, findings) {
@@ -196,6 +246,7 @@ export function runPublicDemoPredeployCheck(options = {}) {
   validateHeaders(files, findings);
   validateRobots(files, findings);
   validateNotFound(files, findings);
+  validateBrandAssets(files, generated, findings);
   validateCspCompatibility(files, findings);
 
   const tempRoot = mkdtempSync(join(tmpdir(), 'trade-artifact-public-demo-predeploy-'));
