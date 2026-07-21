@@ -4,7 +4,7 @@ import { join, relative, resolve } from 'path';
 import { tmpdir } from 'os';
 
 import { createInventoryFixture, removeInventoryFixture } from '../inventory/test-fixtures.mjs';
-import { buildPublicDemoBundle, writePublicDemoBundle, stableJson } from './site-bundle.mjs';
+import { buildPublicDemoBundle, writePublicDemoBundle, stableJson, PUBLIC_DEMO_HEADERS, PUBLIC_DEMO_ROBOTS } from './site-bundle.mjs';
 
 const JUP_HASH = '5fb5732d248af4e8f9214a3b074c3bf711a776e8445bf14eae735ddf02a0bbca';
 const RAY_HASH = '4d33969c45a041837070dbc83730862325ff989772712aae285384d4570e4341';
@@ -149,7 +149,7 @@ try {
     const second = buildPublicDemoBundle();
     assert.deepEqual(first.fileList, second.fileList);
     assert.deepEqual(first.files, second.files);
-    assert.equal(first.fileList.length, 11);
+    assert.equal(first.fileList.length, 14);
     assert.deepEqual(first.fileList, [...first.fileList].sort());
   });
 
@@ -176,6 +176,17 @@ try {
       assert.equal(proof.proof.links.board_path, '../../index.html');
       assert.equal(proof.proof.links.proof_api_path, './proof.json');
     }
+  });
+
+  await test('includes Cloudflare static metadata files without cache rules', () => {
+    const bundle = buildPublicDemoBundle();
+    assert.equal(bundle.files['_headers'], PUBLIC_DEMO_HEADERS);
+    assert.equal(bundle.files['robots.txt'], PUBLIC_DEMO_ROBOTS);
+    assert.ok(bundle.files['404.html'].includes('static unlisted Artifact demonstration'));
+    assert.ok(bundle.files['404.html'].includes('href="/index.html"'));
+    assert.ok(bundle.files['_headers'].includes("Content-Security-Policy: default-src 'none'"));
+    assert.ok(bundle.files['_headers'].includes('X-Robots-Tag: noindex, nofollow'));
+    assert.ok(!bundle.files['_headers'].includes('Cache-Control'));
   });
 
   await test('dry-run build performs no writes', () => {

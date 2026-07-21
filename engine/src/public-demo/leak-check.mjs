@@ -85,8 +85,12 @@ function inspectJson(findings, filename, content) {
   });
 }
 
+function requiresCoverageStatement(filename) {
+  return filename === 'index.html' || /^receipts\/[^/]+\/index\.html$/.test(filename);
+}
+
 function inspectCoverage(findings, filename, content) {
-  if (!filename.endsWith('.html')) return;
+  if (!requiresCoverageStatement(filename)) return;
   for (const required of COVERAGE_REQUIRED) {
     if (!content.includes(required)) {
       findings.push({ code: 'missing_coverage_statement', filename, required });

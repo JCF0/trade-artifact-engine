@@ -13,6 +13,19 @@ import { assertPublicDemoLeakCheck } from './leak-check.mjs';
 
 export const PUBLIC_DEMO_BUNDLE_VERSION = 'v1.10';
 export const DEFAULT_PUBLIC_DEMO_GENERATED_AT = 'not_recorded';
+export const PUBLIC_DEMO_HEADERS = `/*
+  Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'none'; script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  X-Robots-Tag: noindex, nofollow
+`;
+export const PUBLIC_DEMO_ROBOTS = `User-agent: *
+Disallow: /
+`;
+
 const VALID_VISIBILITY = new Set(['unlisted', 'public']);
 const VALID_WALLET_DISPLAY = new Set(['truncated', 'redacted']);
 const REQUIRED_RECEIPT_HASHES = new Set([
@@ -186,6 +199,34 @@ function flattenReceiptBundle(slug, bundle) {
   };
 }
 
+function renderNotFoundPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Artifact Public Demo - Not Found</title>
+  <style>
+    :root { color-scheme: light; --bg: #f5f1e8; --surface: #fffdf8; --border: #d6cfc2; --text: #1d1b18; --muted: #625b52; --accent: #7c3f00; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--text); font-family: Georgia, 'Times New Roman', serif; }
+    main { width: min(680px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
+    h1 { margin: 0 0 12px; font-size: 28px; }
+    p { margin: 0 0 12px; color: var(--muted); line-height: 1.5; }
+    a { color: var(--accent); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Page Not Found</h1>
+    <p>This is a static unlisted Artifact demonstration. Unlisted does not mean private; anyone with the link can view it.</p>
+    <p>No runtime server, account, signing, upload, minting, or wallet connect flow is available here.</p>
+    <a href="/index.html">Return to the receipt board</a>
+  </main>
+</body>
+</html>`;
+}
+
 function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMode, sourceRevision, generatedAt }) {
   return {
     bundle_version: PUBLIC_DEMO_BUNDLE_VERSION,
@@ -203,6 +244,18 @@ function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMod
       ranking_metric: board.ranking?.metric ?? null,
       pnl_scope: board.ranking?.pnl_scope ?? null,
       receipt_count: board.rows.length,
+    },
+    hosting: {
+      target: 'cloudflare_pages_direct_upload',
+      default_pages_dev_url_only: true,
+      github_integration: false,
+      custom_domain: false,
+      functions: false,
+      environment_variables: false,
+      headers_path: '_headers',
+      robots_path: 'robots.txt',
+      not_found_path: '404.html',
+      unlisted_not_private: true,
     },
     receipts: receiptBundles.map(item => ({
       receipt_hash: item.receiptHash,
@@ -294,6 +347,9 @@ export function buildPublicDemoBundle(options = {}) {
       sourceRevision,
       generatedAt,
     })),
+    '_headers': PUBLIC_DEMO_HEADERS,
+    'robots.txt': PUBLIC_DEMO_ROBOTS,
+    '404.html': renderNotFoundPage(),
   };
 
   for (const item of receiptBundles) {

@@ -103,6 +103,14 @@ V1.9 adds deterministic local receipt archive support for multi-run proof and re
 
 These v1.9 changes let verified receipts from separate local wallet runs coexist in a gitignored archive while default inventory remains current-snapshot-only. They do not add raw history retention, remote database storage, public hosting, accounts, profiles, upload, minting, signing, USD normalization, PnL ranking, or trader/wallet/portfolio/track-record claims.
 
+V1.10 adds deterministic static public-demo bundle generation and deployment-readiness checks:
+- `node engine/src/public-demo/cli.mjs --dry-run`
+- `node engine/src/public-demo/cli.mjs --write --out engine/data/public-demo --visibility unlisted --wallet-display truncated`
+- `node engine/src/public-demo/predeploy-check.mjs --root engine/data/public-demo`
+- `node engine/src/run-v110-regression.mjs`
+
+These v1.10 changes remain static and read-only. They do not deploy, connect GitHub, edit DNS, add a custom domain, add Cloudflare Functions, create accounts, run a database, connect wallets, upload, mint, sign, normalize to USD, or add mainnet behavior. See `engine/docs/v1.10-public-read-only-demo.md`.
+
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
