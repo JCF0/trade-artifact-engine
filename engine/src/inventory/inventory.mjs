@@ -7,8 +7,33 @@ import {
   readReceiptArchiveBundlesWithDiagnostics,
   stableJson,
 } from './archive-store.mjs';
+import {
+  readValidatedReceiptEconomicsWithDiagnostics,
+  RECEIPT_ECONOMICS_VERSION,
+} from './receipt-economics-store.mjs';
 
 export const INVENTORY_VERSION = '1.3-slice-1';
+
+const CANONICAL_ECONOMICS_FIELDS = Object.freeze([
+  'segment_index',
+  'entry_tx_hashes',
+  'exit_tx_hashes',
+  'total_bought_qty',
+  'total_bought_quote',
+  'avg_buy_quote_price',
+  'total_sold_qty',
+  'total_sold_quote',
+  'avg_sell_quote_price',
+  'allocated_cost_basis_quote',
+  'remaining_qty',
+  'remaining_cost_basis_quote',
+  'realized_pnl_quote',
+  'realized_pnl_pct',
+  'accounting_method',
+  'hold_time_seconds',
+  'num_buys',
+  'num_sells',
+]);
 
 function toBoolean(value) {
   if (value === true || value === false) return value;
@@ -171,6 +196,31 @@ function mergeArchiveReceipts(currentReceipts, archiveBundles) {
   };
 }
 
+function attachCanonicalEconomics(receipts, archiveBundles, economicsEntries) {
+  const archiveHashes = new Set(archiveBundles.map(bundle => bundle.receipt_hash));
+  const economicsByHash = new Map(economicsEntries.map(entry => [entry.receipt_hash, entry]));
+
+  return receipts.map(receipt => {
+    if (!archiveHashes.has(receipt.receipt_hash)) return receipt;
+    const entry = economicsByHash.get(receipt.receipt_hash);
+    if (!entry) return receipt;
+
+    const fields = {};
+    for (const field of CANONICAL_ECONOMICS_FIELDS) {
+      fields[field] = structuredClone(entry.economics[field]);
+    }
+    return {
+      ...receipt,
+      canonical_economics: {
+        status: 'verified',
+        source: RECEIPT_ECONOMICS_VERSION,
+        recovery_method: entry.recovery_method,
+        fields,
+      },
+    };
+  });
+}
+
 function filterReceipts(receipts, filters = {}) {
   return receipts.filter(receipt => {
     if (filters.receipt_hash && receipt.receipt_hash !== filters.receipt_hash) return false;
@@ -209,8 +259,17 @@ export function buildInventorySnapshot({
   const archiveMerge = includeArchive
     ? mergeArchiveReceipts(currentReceipts, archiveRead.bundles)
     : { receipts: currentReceipts, diagnostics: [] };
-  const archiveDiagnostics = sortDiagnostics([...archiveRead.diagnostics, ...archiveMerge.diagnostics]);
-  const receipts = archiveMerge.receipts;
+  const economicsRead = includeArchive
+    ? readValidatedReceiptEconomicsWithDiagnostics({ engineRoot })
+    : { entries: [], diagnostics: [] };
+  const archiveDiagnostics = sortDiagnostics([
+    ...archiveRead.diagnostics,
+    ...archiveMerge.diagnostics,
+    ...economicsRead.diagnostics,
+  ]);
+  const receipts = includeArchive
+    ? attachCanonicalEconomics(archiveMerge.receipts, archiveRead.bundles, economicsRead.entries)
+    : archiveMerge.receipts;
 
   const filteredReceipts = filterReceipts(receipts, filters);
   const normalizedOffset = Math.max(0, toInteger(offset, 0));

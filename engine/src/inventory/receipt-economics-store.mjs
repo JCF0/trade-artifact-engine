@@ -523,6 +523,34 @@ export function readReceiptEconomics(receiptHash, options = {}) {
   return validateReceiptEconomicsSidecar(sidecar, { receiptHash, archiveBundle });
 }
 
+export function readValidatedReceiptEconomicsWithDiagnostics(options = {}) {
+  const entries = [];
+  const diagnostics = [];
+
+  for (const path of listReceiptEconomicsSidecarFiles(options)) {
+    const receiptHash = basename(path, '.json');
+    try {
+      const validated = readReceiptEconomics(receiptHash, options);
+      entries.push({
+        receipt_hash: receiptHash,
+        recovery_method: validated.sidecar.provenance.recovery_method,
+        economics: clone(validated.economics),
+      });
+    } catch (error) {
+      diagnostics.push({
+        code: 'canonical_economics_excluded',
+        receipt_hash: receiptHash,
+        source: RECEIPT_ECONOMICS_VERSION,
+        reason: error instanceof ReceiptEconomicsError
+          ? error.code
+          : 'receipt_economics_read_failed',
+      });
+    }
+  }
+
+  return deepFreeze({ entries, diagnostics });
+}
+
 export function listReceiptEconomicsSidecarFiles(options = {}) {
   const { receiptsDir } = getReceiptEconomicsPaths(options);
   if (!existsSync(receiptsDir)) return [];

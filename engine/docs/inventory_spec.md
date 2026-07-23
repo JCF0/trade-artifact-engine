@@ -46,6 +46,115 @@ Inventory records preserve independent status fields instead of collapsing them:
 - `valuation_status` remains the raw v1.2 value, typically `raw_quote`.
 - `image_status`, `upload_status`, `mint_ready`, and `mint_status` remain separate proof lifecycle fields.
 
+## Optional Canonical Economics
+
+Archive-enabled inventory may add `canonical_economics` to a receipt when, and only when, a matching
+`receipt_economics_v1` sidecar passes the validated receipt-economics store read API. The join key is the
+exact `receipt_hash`; `receipt_id`, token mint, wallet, and transaction hashes are never fallback join keys.
+
+The validated store read reconstructs the canonical receipt from the unchanged `receipt_archive_v1`
+record and sidecar, runs the existing receipt verifier, requires the recomputed hash to equal the joined
+`receipt_hash`, checks stored verification/projection evidence, and checks archive overlap fields. Inventory
+does not read or project sidecar JSON directly.
+
+The additive namespace is:
+
+```json
+{
+  "canonical_economics": {
+    "status": "verified",
+    "source": "receipt_economics_v1",
+    "recovery_method": "hash_matched_regeneration",
+    "fields": {
+      "segment_index": 0,
+      "entry_tx_hashes": [],
+      "exit_tx_hashes": [],
+      "total_bought_qty": 0,
+      "total_bought_quote": 0,
+      "avg_buy_quote_price": 0,
+      "total_sold_qty": 0,
+      "total_sold_quote": 0,
+      "avg_sell_quote_price": 0,
+      "allocated_cost_basis_quote": 0,
+      "remaining_qty": 0,
+      "remaining_cost_basis_quote": 0,
+      "realized_pnl_quote": 0,
+      "realized_pnl_pct": 0,
+      "accounting_method": "weighted_average_position_accounting_v1",
+      "hold_time_seconds": 0,
+      "num_buys": 0,
+      "num_sells": 0
+    }
+  }
+}
+```
+
+The numbers above illustrate types only; inventory never substitutes zero, `null`, `N/A`, or another
+placeholder for missing economics. A receipt with no sidecar omits `canonical_economics` entirely and
+retains its prior record shape. A corrupt, orphaned, hash-conflicting, overlap-conflicting, or otherwise
+invalid sidecar also exposes no economics. Archive diagnostics receive one deterministic, path-free record:
+
+```json
+{
+  "code": "canonical_economics_excluded",
+  "receipt_hash": "<64 lowercase hex characters>",
+  "source": "receipt_economics_v1",
+  "reason": "<receipt-economics store error code>"
+}
+```
+
+Diagnostics never contain raw history, machine paths, recovery evidence paths, or provider data. Default
+current-snapshot inventory (`includeArchive: false`) does not scan economics and remains unchanged.
+
+Existing proof and receipt-board eligibility intentionally continue without canonical economics. A failed
+or absent sidecar therefore does not change proof resolution, board inclusion, or ranking. Slice 1 Share
+Card eligibility will be stricter and require
+`inventoryReceipt.canonical_economics?.status === "verified"`.
+
+### Slice 1 Share Card view-model interface
+
+The exact planned boundary is a pure view-model function; Slice 0H does not implement rendering:
+
+```js
+buildShareCardViewModel(inventoryReceipt, {
+  walletDisplayMode = 'truncated',
+} = {})
+```
+
+Precondition: `inventoryReceipt.canonical_economics.status === "verified"`; otherwise the function fails
+closed with `ShareCardEligibilityError` code `canonical_economics_not_verified`.
+
+Return contract:
+
+```js
+{
+  share_card_version: 'share_card_v1',
+  receipt: {
+    receipt_hash,
+    receipt_id,
+    receipt_type,
+    token_mint,
+    quote_mint,
+    quote_symbol,
+    verification_status,
+    display_status,
+    first_event_at,
+    last_event_at,
+    wallet_display
+  },
+  canonical_economics: inventoryReceipt.canonical_economics,
+  disclosures: [...],
+  links: {
+    proof_api_path,
+    verifier_api_path
+  }
+}
+```
+
+The view model must consume only the validated inventory namespace, must not reopen a sidecar, and must not
+add raw transactions, wallet-profile/portfolio data, machine paths, provider data, normalized/USD economics,
+or recovery evidence.
+
 ## Legacy Discovery Rules
 
 Legacy JSONL compatibility scans `data/**/receipts.jsonl` only when explicitly enabled.
