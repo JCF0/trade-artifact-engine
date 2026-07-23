@@ -4,6 +4,8 @@ import {
   linkSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from 'fs';
@@ -18,6 +20,7 @@ import { DEFAULT_ENGINE_ROOT } from './scanner.mjs';
 import { verifyReceipt } from '../ledger/receipt-verifier.mjs';
 
 export const RECEIPT_ECONOMICS_VERSION = 'receipt_economics_v1';
+export const RECEIPT_ECONOMICS_INDEX_VERSION = 'receipt_economics_index_v1';
 export const DEFAULT_RECEIPT_ECONOMICS_RELATIVE_DIR = 'data/inventory/receipt-economics-v1';
 
 const RECEIPT_HASH_PATTERN = /^[a-f0-9]{64}$/;
@@ -326,7 +329,11 @@ export function serializeReceiptEconomicsSidecar(sidecar) {
 
 export function getReceiptEconomicsPaths({ engineRoot = DEFAULT_ENGINE_ROOT, economicsRoot } = {}) {
   const rootDir = economicsRoot ? resolve(economicsRoot) : resolve(engineRoot, DEFAULT_RECEIPT_ECONOMICS_RELATIVE_DIR);
-  return { rootDir, receiptsDir: resolve(rootDir, 'receipts') };
+  return {
+    rootDir,
+    receiptsDir: resolve(rootDir, 'receipts'),
+    indexPath: resolve(rootDir, 'index.json'),
+  };
 }
 
 export function validateReceiptEconomicsSidecar(sidecar, {
@@ -514,4 +521,54 @@ export function readReceiptEconomics(receiptHash, options = {}) {
     throw error;
   }
   return validateReceiptEconomicsSidecar(sidecar, { receiptHash, archiveBundle });
+}
+
+export function listReceiptEconomicsSidecarFiles(options = {}) {
+  const { receiptsDir } = getReceiptEconomicsPaths(options);
+  if (!existsSync(receiptsDir)) return [];
+  return readdirSync(receiptsDir)
+    .filter(name => /^[a-f0-9]{64}\.json$/.test(name))
+    .sort()
+    .map(name => resolve(receiptsDir, name));
+}
+
+export function buildReceiptEconomicsIndex(sidecars) {
+  const sorted = [...sidecars].sort((a, b) => a.receipt_hash.localeCompare(b.receipt_hash));
+  return sortStable({
+    economics_version: RECEIPT_ECONOMICS_VERSION,
+    index_version: RECEIPT_ECONOMICS_INDEX_VERSION,
+    receipt_count: sorted.length,
+    receipts: sorted.map(sidecar => ({
+      receipt_hash: sidecar.receipt_hash,
+      receipt_version: sidecar.receipt_version,
+      receipt_type: sidecar.receipt_type,
+      canonical_projection_hash: sidecar.provenance.canonical_projection_hash,
+      sidecar_path: `receipts/${sidecar.receipt_hash}.json`,
+    })),
+  });
+}
+
+function replaceJsonIfChanged(targetPath, value) {
+  const bytes = stableJson(value);
+  if (existsSync(targetPath) && readFileSync(targetPath, 'utf8') === bytes) return 'unchanged';
+  mkdirSync(dirname(targetPath), { recursive: true });
+  const tempPath = resolve(dirname(targetPath), `.${basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(tempPath, bytes, { encoding: 'utf8', flag: 'wx' });
+    renameSync(tempPath, targetPath);
+  } finally {
+    if (existsSync(tempPath)) unlinkSync(tempPath);
+  }
+  return 'written';
+}
+
+export function rebuildReceiptEconomicsIndex(options = {}) {
+  const sidecars = listReceiptEconomicsSidecarFiles(options).map(path => {
+    const receiptHash = basename(path, '.json');
+    return readReceiptEconomics(receiptHash, options).sidecar;
+  });
+  const index = buildReceiptEconomicsIndex(sidecars);
+  const { indexPath } = getReceiptEconomicsPaths(options);
+  const status = replaceJsonIfChanged(indexPath, index);
+  return { status, path: indexPath, index };
 }
