@@ -1,0 +1,29 @@
+{
+  "records": [
+    {
+      "metadata_record_hash": "38192d731607e9deb8f5c921a66d5b2fc634204ac2e6630893a05890201edde2",
+      "mint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+      "name": "Raydium",
+      "source": {
+        "provider": "project_review",
+        "type": "curated_snapshot"
+      },
+      "symbol": "RAY"
+    },
+    {
+      "metadata_record_hash": "60566a184dad81087e94073f84d4bb6db0cf7031b18f1840609c63b39cf9e3fa",
+      "mint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+      "name": "Jupiter",
+      "source": {
+        "provider": "project_review",
+        "type": "curated_snapshot"
+      },
+      "symbol": "JUP"
+    }
+  ],
+  "registry_version": "token_display_metadata_v1",
+  "source": {
+    "provider": "project_review",
+    "type": "curated_snapshot"
+  }
+}
