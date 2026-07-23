@@ -6,7 +6,7 @@ import { DEFAULT_ENGINE_ROOT } from '../inventory/scanner.mjs';
 import { buildPublicDemoBundle, writePublicDemoBundle } from './site-bundle.mjs';
 
 function printUsage(stderr = process.stderr) {
-  stderr.write('Usage: node engine/src/public-demo/cli.mjs --dry-run|--write [--out <dir>] [--force] [--visibility unlisted|public] [--wallet-display truncated|redacted] [--source-revision <value>]\n');
+  stderr.write('Usage: node engine/src/public-demo/cli.mjs --dry-run|--write [--out <dir>] [--force] [--engine-root <dir>] [--archive-root <dir>] [--economics-root <dir>] [--visibility unlisted|public] [--wallet-display truncated|redacted] [--source-revision <value>]\n');
 }
 
 export function parseArgs(argv) {
@@ -15,6 +15,9 @@ export function parseArgs(argv) {
     write: false,
     out: '',
     force: false,
+    engineRoot: '',
+    archiveRoot: '',
+    economicsRoot: '',
     visibility: 'unlisted',
     walletDisplay: 'truncated',
     sourceRevision: '',
@@ -28,7 +31,16 @@ export function parseArgs(argv) {
       args.out = argv[i + 1] || '';
       i += 1;
     } else if (arg === '--force') args.force = true;
-    else if (arg === '--visibility') {
+    else if (arg === '--engine-root') {
+      args.engineRoot = argv[i + 1] || '';
+      i += 1;
+    } else if (arg === '--archive-root') {
+      args.archiveRoot = argv[i + 1] || '';
+      i += 1;
+    } else if (arg === '--economics-root') {
+      args.economicsRoot = argv[i + 1] || '';
+      i += 1;
+    } else if (arg === '--visibility') {
       args.visibility = argv[i + 1] || '';
       i += 1;
     } else if (arg === '--wallet-display') {
@@ -50,7 +62,7 @@ export function parseArgs(argv) {
 
 function renderPlan(bundle, outRoot = '') {
   return [
-    'Artifact v1.10 public demo bundle',
+    'Artifact v1.11 public demo bundle',
     `mode: ${outRoot ? 'write' : 'dry-run'}`,
     `out: ${outRoot || '(none)'}`,
     `files: ${bundle.fileList.length}`,
@@ -67,11 +79,17 @@ export function runCli(argv, io = {}) {
 
   try {
     const args = parseArgs(argv);
-    const engineRoot = env.TRADE_ARTIFACT_INVENTORY_ROOT
+    const engineRoot = args.engineRoot
+      ? resolve(args.engineRoot)
+      : env.TRADE_ARTIFACT_INVENTORY_ROOT
       ? resolve(env.TRADE_ARTIFACT_INVENTORY_ROOT)
       : DEFAULT_ENGINE_ROOT;
+    const archiveRoot = resolve(args.archiveRoot || resolve(engineRoot, 'data/inventory/receipt-archive-v1'));
+    const economicsRoot = resolve(args.economicsRoot || resolve(engineRoot, 'data/inventory/receipt-economics-v1'));
     const bundle = buildPublicDemoBundle({
       engineRoot,
+      archiveRoot,
+      economicsRoot,
       visibility: args.visibility,
       walletDisplayMode: args.walletDisplay,
       sourceRevision: args.sourceRevision || null,

@@ -37,6 +37,9 @@ const COVERAGE_REQUIRED = [
   'Receipt-scoped coverage only',
   'Raw quote only. No USD normalization.',
 ];
+const ALLOWED_NEGATIVE_CLAIMS = [
+  'Receipt-scoped only. Raw quote only. Not wallet or portfolio performance.',
+];
 
 
 function isTextBundleFile(filename) {
@@ -129,7 +132,11 @@ export function runPublicDemoLeakCheck(files, options = {}) {
     addPatternFindings(findings, filename, content, SECRET_PATTERNS);
     addPatternFindings(findings, filename, content, PATH_PATTERNS);
     addPatternFindings(findings, filename, content, RUNTIME_PATTERNS);
-    addPatternFindings(findings, filename, content, FORBIDDEN_CLAIM_PATTERNS);
+    const claimContent = ALLOWED_NEGATIVE_CLAIMS.reduce(
+      (value, allowed) => value.replaceAll(allowed, ''),
+      content,
+    );
+    addPatternFindings(findings, filename, claimContent, FORBIDDEN_CLAIM_PATTERNS);
     inspectJson(findings, filename, content);
     inspectCoverage(findings, filename, content);
   }

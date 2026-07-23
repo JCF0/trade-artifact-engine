@@ -106,6 +106,7 @@ function renderLinks(links) {
     ['Legacy Path', links.legacy_path],
     ['Board Path', links.board_path],
     ['Verifier Path', links.verifier_path],
+    ...(links.share_card_path ? [['Share Card', links.share_card_path]] : []),
   ];
 
   return rows.map(([label, value]) => {

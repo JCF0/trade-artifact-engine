@@ -210,6 +210,8 @@ export function buildReceiptBoardView(options = {}) {
   const rankingSupported = isSupportedRanking(manifest.ranking);
   const snapshot = buildInventorySnapshot({
     engineRoot,
+    archiveRoot: options.archiveRoot,
+    economicsRoot: options.economicsRoot,
     includeLegacy: false,
     includeExcluded: false,
     includeArchive: true,

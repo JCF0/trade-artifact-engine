@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { dirname, isAbsolute, join, normalize, relative, resolve } from 'path';
 import { pathToFileURL } from 'url';
 
+import { DEFAULT_ENGINE_ROOT } from '../inventory/scanner.mjs';
 import { decodePng } from './brand-assets.mjs';
 import { runPublicDemoLeakCheck } from './leak-check.mjs';
 import { buildPublicDemoBundle, PUBLIC_DEMO_HEADERS, PUBLIC_DEMO_ROBOTS, writePublicDemoBundle } from './site-bundle.mjs';
@@ -20,6 +21,20 @@ const REQUIRED_HEADER_LINES = [
   'Cross-Origin-Resource-Policy: same-origin',
   'X-Robots-Tag: noindex, nofollow',
 ];
+
+function normalizeBuildOptions(options = {}) {
+  const engineRoot = resolve(options.engineRoot || DEFAULT_ENGINE_ROOT);
+  return {
+    ...options,
+    engineRoot,
+    archiveRoot: options.archiveRoot
+      ? resolve(options.archiveRoot)
+      : resolve(engineRoot, 'data/inventory/receipt-archive-v1'),
+    economicsRoot: options.economicsRoot
+      ? resolve(options.economicsRoot)
+      : resolve(engineRoot, 'data/inventory/receipt-economics-v1'),
+  };
+}
 const NETWORK_PATTERNS = [
   /\bfetch\s*\(/i,
   /\bXMLHttpRequest\b/i,
@@ -234,7 +249,7 @@ export function runPublicDemoPredeployCheck(options = {}) {
   const root = options.root ? resolve(options.root) : resolve('engine/data/public-demo');
   const findings = [];
   const files = readBundleFiles(root);
-  const generated = buildPublicDemoBundle(options.buildOptions || {});
+  const generated = buildPublicDemoBundle(normalizeBuildOptions(options.buildOptions));
 
   compareExpectedInventory(files, generated.files, findings);
   validateInternalLinks(files, findings);

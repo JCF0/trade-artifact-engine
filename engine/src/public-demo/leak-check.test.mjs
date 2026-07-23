@@ -28,6 +28,14 @@ test('passes safe negative-disclosure fixtures', () => {
   assert.equal(result.ok, true, JSON.stringify(result.findings));
 });
 
+test('allows the canonical Share Card negative portfolio disclosure', () => {
+  const result = runPublicDemoLeakCheck({
+    ...safeFiles,
+    'share/receipt/index.html': '<p>Receipt-scoped only. Raw quote only. Not wallet or portfolio performance.</p>',
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.findings));
+});
+
 test('fails on API and localhost references', () => {
   const result = runPublicDemoLeakCheck({ ...safeFiles, 'bad.html': '<a href="/api/proof/x">api</a> localhost' });
   assert.equal(result.ok, false);

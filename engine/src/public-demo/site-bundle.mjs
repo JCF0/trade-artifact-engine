@@ -1,19 +1,22 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'path';
 
-import { buildInventorySnapshot, getInventoryReceipt } from '../inventory/inventory.mjs';
-import { DEFAULT_ENGINE_ROOT } from '../inventory/scanner.mjs';
+import { buildInventorySnapshot } from '../inventory/inventory.mjs';
+import { resolveTokenDisplayMetadata } from '../display-metadata/token-display-registry.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofVerifierView } from '../proof-verifier/view-model.mjs';
 import { buildPublishBundle } from '../proof-publish/publish-bundle.mjs';
 import { buildPublishSlug } from '../proof-publish/slug.mjs';
 import { buildReceiptBoardView, readReceiptBoardManifest } from '../receipt-board/view-model.mjs';
 import { renderReceiptBoardHtml } from '../receipt-board/render-html.mjs';
+import { formatShareCardViewModel } from '../share-card/share-card-format.mjs';
+import { renderShareCardHtml } from '../share-card/share-card-html.mjs';
+import { buildShareCardViewModel } from '../share-card/share-card-view-model.mjs';
 import { assertPublicDemoLeakCheck } from './leak-check.mjs';
 import { derivePublicDemoBrandAssets } from './brand-assets.mjs';
 import { PUBLIC_DEMO_ASSET_BASE, PUBLIC_DEMO_PROOF_ASSET_BASE, renderBrandHeader, renderFaviconLink, renderPublicDemoStyles } from './visual-system.mjs';
 
-export const PUBLIC_DEMO_BUNDLE_VERSION = 'v1.10';
+export const PUBLIC_DEMO_BUNDLE_VERSION = 'v1.11';
 export const DEFAULT_PUBLIC_DEMO_GENERATED_AT = 'not_recorded';
 export const PUBLIC_DEMO_HEADERS = `/*
   Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'none'; script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
@@ -59,6 +62,13 @@ function normalizeWalletDisplay(value) {
     throw new TypeError(`Unsupported public demo wallet display mode: ${value}`);
   }
   return value;
+}
+
+function requireExplicitRoot(value, label) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`An explicit ${label} root is required`);
+  }
+  return resolve(value);
 }
 
 function assertCanonicalHash(value, label = 'receipt_hash') {
@@ -112,10 +122,52 @@ function publicLinksFor(receiptHash) {
     receiptBoardHref: '../../index.html',
     receiptProofJsonHref: './proof.json',
     verifierPath: `../../verifier/${receiptHash}.json`,
+    boardShareHref: `share/${receiptHash}/index.html`,
+    receiptShareHref: `../../share/${receiptHash}/index.html`,
+    shareProofHref: `../../receipts/${slug}/index.html`,
+    shareVerifierHref: `../../verifier/${receiptHash}.json`,
   };
 }
 
-function publicBoardLinks(receiptHash) {
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function addShareCardMetadata(html, formattedModel) {
+  const description = `Verified closed-position receipt for ${formattedModel.display.pair}: realized PnL ${formattedModel.display.realized_pnl_quote} in raw quote.`;
+  const marker = '  <meta name="robots" content="noindex,nofollow">\n';
+  if (!html.includes(marker)) throw new Error('Share Card renderer output is missing required robots metadata');
+  return html.replace(marker, `${marker}  <meta name="description" content="${escapeHtml(description)}">\n`);
+}
+
+function buildPublicShareCard(receipt) {
+  if (receipt.canonical_economics?.status !== 'verified') return null;
+  const links = publicLinksFor(receipt.receipt_hash);
+  const model = buildShareCardViewModel(receipt, {
+    tokenDisplayMetadata: resolveTokenDisplayMetadata(receipt.token_mint),
+    links: {
+      proof_href: links.shareProofHref,
+      verifier_href: links.shareVerifierHref,
+    },
+  });
+  const formattedModel = formatShareCardViewModel(model);
+  const html = addShareCardMetadata(renderShareCardHtml(formattedModel, {
+    logo_href: '/assets/artifact-logo-header.png',
+  }), formattedModel);
+  return {
+    receiptHash: receipt.receipt_hash,
+    path: `share/${receipt.receipt_hash}/index.html`,
+    formattedModel,
+    html,
+  };
+}
+
+function publicBoardLinks(receiptHash, shareCardEligible) {
   const links = publicLinksFor(receiptHash);
   return {
     proof_api_path: links.boardProofHref,
@@ -123,6 +175,7 @@ function publicBoardLinks(receiptHash) {
     card_api_path: links.boardProofJsonHref,
     card_preview_path: '',
     hosted_preview_path: links.boardProofHref,
+    ...(shareCardEligible ? { share_card_path: links.boardShareHref } : {}),
   };
 }
 
@@ -142,7 +195,7 @@ function sanitizeArtifacts(artifacts = {}) {
   };
 }
 
-function buildPublicProofDetail(receipt, walletDisplayMode) {
+function buildPublicProofDetail(receipt, walletDisplayMode, shareCardEligible) {
   const detail = buildProofDetailView(receipt);
   const links = publicLinksFor(receipt.receipt_hash);
   return {
@@ -155,6 +208,7 @@ function buildPublicProofDetail(receipt, walletDisplayMode) {
       legacy_path: null,
       board_path: links.receiptBoardHref,
       verifier_path: links.verifierPath,
+      ...(shareCardEligible ? { share_card_path: links.receiptShareHref } : {}),
     },
     flags_and_limitations: {
       ...detail.flags_and_limitations,
@@ -183,12 +237,12 @@ function buildPublicVerifier(receipt) {
   };
 }
 
-function rewriteBoard(board) {
+function rewriteBoard(board, shareCardHashes) {
   return {
     ...board,
     rows: board.rows.map(row => ({
       ...row,
-      links: publicBoardLinks(row.receipt_hash),
+      links: publicBoardLinks(row.receipt_hash, shareCardHashes.has(row.receipt_hash)),
     })),
   };
 }
@@ -227,7 +281,7 @@ function renderNotFoundPage() {
 </html>`;
 }
 
-function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMode, sourceRevision, generatedAt, brandAssets }) {
+function buildSiteManifest({ board, receiptBundles, shareCards, visibility, walletDisplayMode, sourceRevision, generatedAt, brandAssets }) {
   return {
     bundle_version: PUBLIC_DEMO_BUNDLE_VERSION,
     bundle_type: 'artifact_public_read_only_demo',
@@ -263,6 +317,14 @@ function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMod
       index_path: `receipts/${item.slug}/index.html`,
       proof_json_path: `receipts/${item.slug}/proof.json`,
       verifier_json_path: `verifier/${item.receiptHash}.json`,
+      ...(shareCards.some(card => card.receiptHash === item.receiptHash) ? {
+        share_card_path: `share/${item.receiptHash}/index.html`,
+      } : {}),
+    })),
+    share_cards: shareCards.map(card => ({
+      receipt_hash: card.receiptHash,
+      path: card.path,
+      pair: card.formattedModel.display.pair,
     })),
     constraints: {
       read_only_static_files: true,
@@ -286,7 +348,9 @@ function buildSiteManifest({ board, receiptBundles, visibility, walletDisplayMod
 }
 
 export function buildPublicDemoBundle(options = {}) {
-  const engineRoot = options.engineRoot ? resolve(options.engineRoot) : DEFAULT_ENGINE_ROOT;
+  const engineRoot = requireExplicitRoot(options.engineRoot, 'engine');
+  const archiveRoot = requireExplicitRoot(options.archiveRoot, 'archive');
+  const economicsRoot = requireExplicitRoot(options.economicsRoot, 'economics');
   const visibility = normalizeVisibility(options.visibility);
   const walletDisplayMode = normalizeWalletDisplay(options.walletDisplayMode);
   const generatedAt = options.generatedAt || DEFAULT_PUBLIC_DEMO_GENERATED_AT;
@@ -299,28 +363,35 @@ export function buildPublicDemoBundle(options = {}) {
 
   const snapshot = buildInventorySnapshot({
     engineRoot,
+    archiveRoot,
+    economicsRoot,
     includeArchive: true,
     includeLegacy: false,
     includeExcluded: false,
   });
   assertNoArchiveDiagnostics(snapshot);
 
+  const receiptByHash = new Map(snapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
   const receipts = selectedHashes.map(receiptHash => {
-    const receipt = getInventoryReceipt(receiptHash, {
-      engineRoot,
-      includeArchive: true,
-      includeExcluded: false,
-    });
+    const receipt = receiptByHash.get(receiptHash);
     if (!receipt) throw new Error(`selected receipt missing from archive-enabled inventory: ${receiptHash}`);
     assertReceiptEligible(receipt);
     return receipt;
   });
 
+  const shareCards = receipts
+    .map(buildPublicShareCard)
+    .filter(Boolean)
+    .sort((a, b) => a.path.localeCompare(b.path));
+
+  const shareCardHashes = new Set(shareCards.map(card => card.receiptHash));
   const board = rewriteBoard(buildReceiptBoardView({
     engineRoot,
+    archiveRoot,
+    economicsRoot,
     includeExcluded: false,
     manifest,
-  }));
+  }), shareCardHashes);
 
   if (board.rows.length !== selectedHashes.length) {
     throw new Error(`public demo board row count mismatch: expected ${selectedHashes.length}, got ${board.rows.length}`);
@@ -330,7 +401,7 @@ export function buildPublicDemoBundle(options = {}) {
 
   const receiptBundles = receipts
     .map(receipt => {
-      const proofDetail = buildPublicProofDetail(receipt, walletDisplayMode);
+      const proofDetail = buildPublicProofDetail(receipt, walletDisplayMode, shareCardHashes.has(receipt.receipt_hash));
       const bundle = buildPublishBundle(proofDetail, {
         generatedAt,
         visibility,
@@ -353,6 +424,7 @@ export function buildPublicDemoBundle(options = {}) {
     'manifest.json': stableJson(buildSiteManifest({
       board,
       receiptBundles,
+      shareCards,
       visibility,
       walletDisplayMode,
       sourceRevision,
@@ -369,6 +441,7 @@ export function buildPublicDemoBundle(options = {}) {
     Object.assign(files, flattenReceiptBundle(item.slug, item.bundle));
     files[`verifier/${item.receiptHash}.json`] = stableJson(item.verifier);
   }
+  for (const card of shareCards) files[card.path] = card.html;
 
   const orderedFiles = {};
   for (const filename of Object.keys(files).sort()) orderedFiles[filename] = files[filename];
@@ -379,6 +452,7 @@ export function buildPublicDemoBundle(options = {}) {
     board,
     receipts,
     brandAssets,
+    shareCards,
     files: orderedFiles,
     fileList: Object.keys(orderedFiles),
     leakCheck,

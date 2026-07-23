@@ -1,10 +1,17 @@
 import assert from 'assert';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 
 import { buildPublicDemoBundle, writePublicDemoBundle } from './site-bundle.mjs';
 import { runPublicDemoPredeployCheck } from './predeploy-check.mjs';
+
+const ENGINE_ROOT = resolve('engine');
+const BUILD_OPTIONS = {
+  engineRoot: ENGINE_ROOT,
+  archiveRoot: resolve(ENGINE_ROOT, 'data/inventory/receipt-archive-v1'),
+  economicsRoot: resolve(ENGINE_ROOT, 'data/inventory/receipt-economics-v1'),
+};
 
 let pass = 0;
 let fail = 0;
@@ -24,7 +31,7 @@ function test(name, fn) {
 function withBundle(fn) {
   const root = mkdtempSync(join(tmpdir(), 'trade-artifact-predeploy-test-'));
   try {
-    writePublicDemoBundle(buildPublicDemoBundle(), { outRoot: root });
+    writePublicDemoBundle(buildPublicDemoBundle(BUILD_OPTIONS), { outRoot: root });
     return fn(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -38,7 +45,7 @@ function append(path, value) {
 test('passes complete generated bundle', () => withBundle(root => {
   const result = runPublicDemoPredeployCheck({ root });
   assert.equal(result.ok, true, JSON.stringify(result.findings));
-  assert.equal(result.file_count, 16);
+  assert.equal(result.file_count, 18);
   assert.deepEqual(result.csp, {
     scripts_present: false,
     network_primitives_present: false,

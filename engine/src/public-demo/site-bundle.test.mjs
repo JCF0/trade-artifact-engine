@@ -8,6 +8,17 @@ import { buildPublicDemoBundle, writePublicDemoBundle, stableJson, PUBLIC_DEMO_H
 
 const JUP_HASH = '5fb5732d248af4e8f9214a3b074c3bf711a776e8445bf14eae735ddf02a0bbca';
 const RAY_HASH = '4d33969c45a041837070dbc83730862325ff989772712aae285384d4570e4341';
+const ENGINE_ROOT = resolve('engine');
+
+function buildBundle(options = {}) {
+  const engineRoot = options.engineRoot || ENGINE_ROOT;
+  return buildPublicDemoBundle({
+    engineRoot,
+    archiveRoot: options.archiveRoot || resolve(engineRoot, 'data/inventory/receipt-archive-v1'),
+    economicsRoot: options.economicsRoot || resolve(engineRoot, 'data/inventory/receipt-economics-v1'),
+    ...options,
+  });
+}
 
 let pass = 0;
 let fail = 0;
@@ -145,11 +156,11 @@ globalThis.fetch = async (...args) => {
 
 try {
   await test('builds deterministic file plan and byte-stable repeated builds from tracked inputs', () => {
-    const first = buildPublicDemoBundle();
-    const second = buildPublicDemoBundle();
+    const first = buildBundle();
+    const second = buildBundle();
     assert.deepEqual(first.fileList, second.fileList);
     assert.deepEqual(first.files, second.files);
-    assert.equal(first.fileList.length, 16);
+    assert.equal(first.fileList.length, 18);
     assert.ok(Buffer.isBuffer(first.files['assets/artifact-logo-header.png']));
     assert.ok(Buffer.isBuffer(first.files['assets/favicon.png']));
     assert.deepEqual(first.brandAssets.derivation.header, { width: 384, height: 324, sha256: first.brandAssets.hashes['assets/artifact-logo-header.png'] });
@@ -158,7 +169,7 @@ try {
   });
 
   await test('exposes selected JUP and RAY receipts only', () => {
-    const bundle = buildPublicDemoBundle();
+    const bundle = buildBundle();
     const board = JSON.parse(bundle.files['board.json']);
     assert.deepEqual(board.rows.map(row => row.receipt_hash).sort(), [JUP_HASH, RAY_HASH].sort());
     assert.equal(bundle.fileList.filter(file => file.startsWith('receipts/') && file.endsWith('/proof.json')).length, 2);
@@ -166,7 +177,7 @@ try {
   });
 
   await test('rewrites links to relative static paths with no api routes', () => {
-    const bundle = buildPublicDemoBundle();
+    const bundle = buildBundle();
     assertNoApi(bundle.files);
     const board = JSON.parse(bundle.files['board.json']);
     for (const row of board.rows) {
@@ -183,7 +194,7 @@ try {
   });
 
   await test('includes Cloudflare static metadata files without cache rules', () => {
-    const bundle = buildPublicDemoBundle();
+    const bundle = buildBundle();
     assert.equal(bundle.files['_headers'], PUBLIC_DEMO_HEADERS);
     assert.equal(bundle.files['robots.txt'], PUBLIC_DEMO_ROBOTS);
     assert.ok(bundle.files['404.html'].includes('static unlisted Artifact demonstration'));
@@ -197,7 +208,7 @@ try {
     const dir = join(tmpdir(), `trade-artifact-public-demo-dry-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     mkdirSync(dir, { recursive: true });
     const before = listTree(dir);
-    buildPublicDemoBundle();
+    buildBundle();
     const after = listTree(dir);
     assert.deepEqual(after, before);
     rmSync(dir, { recursive: true, force: true });
@@ -205,7 +216,7 @@ try {
 
   await test('write mode stays within output root and links resolve locally', () => {
     const dir = join(tmpdir(), `trade-artifact-public-demo-write-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    const bundle = buildPublicDemoBundle();
+    const bundle = buildBundle();
     try {
       const written = writePublicDemoBundle(bundle, { outRoot: dir });
       assert.equal(resolve(written.outRoot), resolve(dir));
@@ -223,7 +234,7 @@ try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'existing.txt'), 'keep', 'utf8');
     try {
-      assert.throws(() => writePublicDemoBundle(buildPublicDemoBundle(), { outRoot: dir }), /not empty/);
+      assert.throws(() => writePublicDemoBundle(buildBundle(), { outRoot: dir }), /not empty/);
       assert.equal(readFileSync(join(dir, 'existing.txt'), 'utf8'), 'keep');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -234,7 +245,7 @@ try {
     const fixture = createPublicDemoFixture();
     try {
       mutateReceipt(fixture.root, JUP_HASH, { verification_status: 'unverified' });
-      assert.throws(() => buildPublicDemoBundle({ engineRoot: fixture.root }), /verification_status/);
+      assert.throws(() => buildBundle({ engineRoot: fixture.root }), /verification_status/);
     } finally {
       removeInventoryFixture(fixture.root);
     }
@@ -244,7 +255,7 @@ try {
     const fixture = createPublicDemoFixture();
     try {
       mutateReceipt(fixture.root, JUP_HASH, { receipt_type: 'open_snapshot' });
-      assert.throws(() => buildPublicDemoBundle({ engineRoot: fixture.root }), /receipt_type/);
+      assert.throws(() => buildBundle({ engineRoot: fixture.root }), /receipt_type/);
     } finally {
       removeInventoryFixture(fixture.root);
     }
@@ -255,7 +266,7 @@ try {
     try {
       mutateReceipt(fixture.root, JUP_HASH, { valuation_status: 'usd_normalized' });
       mutateValuation(fixture.root, 'art_v12_cp_JUPyiwrY_0', { valuation_status: 'usd_normalized' });
-      assert.throws(() => buildPublicDemoBundle({ engineRoot: fixture.root }), /valuation_status/);
+      assert.throws(() => buildBundle({ engineRoot: fixture.root }), /valuation_status/);
     } finally {
       removeInventoryFixture(fixture.root);
     }
@@ -265,14 +276,14 @@ try {
     const fixture = createPublicDemoFixture();
     try {
       mutateVerify(fixture.root, JUP_HASH, { pass: false });
-      assert.throws(() => buildPublicDemoBundle({ engineRoot: fixture.root }), /verifier_passed/);
+      assert.throws(() => buildBundle({ engineRoot: fixture.root }), /verifier_passed/);
     } finally {
       removeInventoryFixture(fixture.root);
     }
   });
 
   await test('omits diagnostic metadata, archive records, local paths, and full wallets', () => {
-    const bundle = buildPublicDemoBundle();
+    const bundle = buildBundle();
     const serialized = Object.values(bundle.files).join('\n');
     assert.ok(!serialized.includes('diagnostics'));
     assert.ok(!serialized.includes('canonical_receipt_record'));
@@ -290,7 +301,7 @@ try {
     const indexPath = 'engine/data/inventory/receipt-archive-v1/index.json';
     const before = readFileSync(indexPath, 'utf8');
     const beforeFetch = fetchCalls;
-    buildPublicDemoBundle();
+    buildBundle();
     const after = readFileSync(indexPath, 'utf8');
     assert.equal(after, before);
     assert.equal(fetchCalls, beforeFetch);

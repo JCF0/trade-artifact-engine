@@ -63,6 +63,9 @@ function renderLinks(links = {}) {
   const verifier = links.verifier_api_path
     ? `<a class="button-link secondary" href="${escapeHtml(links.verifier_api_path)}">Inspect Verifier</a>`
     : '';
+  const shareCard = links.share_card_path
+    ? `<a class="button-link secondary" href="${escapeHtml(links.share_card_path)}">Share Card</a>`
+    : '';
   const technical = [
     ['Card JSON', links.card_api_path],
     ['Card Preview', links.card_preview_path],
@@ -71,7 +74,7 @@ function renderLinks(links = {}) {
     .filter(([, href]) => typeof href === 'string' && href.length > 0)
     .map(([label, href]) => `<a class="button-link secondary" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`)
     .join('');
-  return `${primary}${verifier}${technical}`;
+  return `${primary}${verifier}${shareCard}${technical}`;
 }
 
 function renderRow(row) {
