@@ -1,8 +1,8 @@
-# Artifact Share Card v1 — Slice 1A View-Model Specification
+# Artifact Share Card v1 — Slice 1A/1B Model and Formatting Specification
 
-Status: implemented by `engine/src/share-card/share-card-view-model.mjs`.
+Status: implemented by `engine/src/share-card/share-card-view-model.mjs` and `engine/src/share-card/share-card-format.mjs`.
 
-This document is normative for Share Card v1 and supersedes the preliminary Slice 1 boundary in `engine/docs/inventory_spec.md`. Slice 1A builds data only. It does not render HTML, SVG, or PNG and does not generate or publish public-demo artifacts.
+This document is normative for Share Card v1 and supersedes the preliminary Slice 1 boundary in `engine/docs/inventory_spec.md`. Slice 1A builds canonical data and Slice 1B adds deterministic display strings without replacing or changing that data. Neither slice renders HTML, SVG, or PNG or generates or publishes public-demo artifacts.
 
 ## Scope
 
@@ -25,9 +25,9 @@ node engine/src/share-card/check-production-share-cards.mjs \
   --economics-root engine/data/inventory/receipt-economics-v1
 ```
 
-The checker loads archive-backed inventory through the inventory API, resolves the static token registry, and fails unless the published JUP and RAY hashes match their complete expected Share Card economics and remain eligible. It performs no writes or network calls and emits no wallet identity or transaction signatures.
+The checker loads archive-backed inventory through the inventory API, resolves the static token registry, formats the resulting models, and fails unless the published JUP and RAY hashes match their complete expected Share Card economics and exact display strings. It performs no writes or network calls and emits no wallet identity or transaction signatures.
 
-## API
+## Slice 1A builder API
 
 ```js
 buildShareCardViewModel(inventoryReceipt, {
@@ -42,6 +42,17 @@ buildShareCardViewModel(inventoryReceipt, {
 No other option is accepted. In particular, `walletDisplayMode` is not part of this API, and the result never contains `wallet_display`.
 
 The function returns a deeply frozen object and does not mutate any input.
+
+## Slice 1B formatter API
+
+```js
+formatShareCardViewModel(shareCardViewModel, {
+  number_format_version = "artifact_number_v1",
+  date_format_version = "artifact_utc_date_v1",
+} = {})
+```
+
+The formatter accepts only an unformatted model whose `share_card_version` is exactly `share_card_v1` and whose fixed Slice 1A shape, receipt-scoped identity/proof invariants, and safe-link policy remain intact. Unexpected fields fail closed rather than crossing the formatting boundary. Only the two named format profiles are supported. It returns a deterministic deep clone of the complete Slice 1A model with `display` and `formatting` appended, deeply freezes the entire result, and leaves the input unmodified. Canonical numbers in the cloned model remain JavaScript numbers with their exact original values; display strings are additive.
 
 ## Eligibility and stable errors
 
@@ -188,7 +199,7 @@ For `display_kind: "symbol"`, `symbol` is present and `name` is copied when prov
 | `num_buys` | `canonical_economics.fields.num_buys` |
 | `num_sells` | `canonical_economics.fields.num_sells` |
 
-Numeric values are copied exactly as JavaScript numbers. Slice 1A does not round, format, estimate, recompute accounting, or convert currency. Direction is derived only by comparing each realized PnL value with zero.
+Numeric values are copied exactly as JavaScript numbers. Slice 1A does not round, format, estimate, recompute accounting, or convert currency. Direction is derived only by comparing each realized PnL value with zero. Slice 1B does not change those values or recalculate accounting; it reads them only to create the versioned display strings described below.
 
 `pair_display` is `${tokenDisplayMetadata.display}/${inventoryReceipt.quote_symbol}`. Neither component is inferred from board labels, receipt IDs, or mint prefixes.
 
@@ -211,25 +222,87 @@ Share Card v1 does not expose:
 
 The output property order is constructed explicitly and does not depend on input insertion order. No platform line endings, locale defaults, current time, random values, or machine paths participate. The complete returned object graph is deeply frozen, while all output containers are newly constructed from selected scalar input values.
 
-## Proposed Slice 1B formatting boundary
+## Slice 1B return additions
 
-Slice 1B should remain pure and preserve Slice 1A raw values:
+The formatter appends these fixed-order objects after the cloned Slice 1A fields:
 
 ```js
-formatShareCardViewModel(shareCardViewModel, {
-  number_format_version: "artifact_number_v1",
-  date_format_version: "artifact_utc_date_v1",
-})
+{
+  ...deeplyClonedShareCardV1,
+
+  display: {
+    pair,
+    realized_pnl_quote,
+    realized_pnl_pct,
+    avg_entry_quote_price,
+    avg_exit_quote_price,
+    quantity_closed,
+    entry_cost_quote,
+    exit_proceeds_quote,
+    opened_at,
+    closed_at,
+    duration,
+    receipt_hash_short,
+  },
+
+  formatting: {
+    number_format_version: "artifact_number_v1",
+    date_format_version: "artifact_utc_date_v1",
+  },
+}
 ```
 
-Only those pinned versions should be accepted. The formatter should return a deeply immutable presentation model containing explicit display strings alongside, not instead of, the raw canonical values. It must not accept ambient locale or timezone defaults: decimal punctuation, precision rules, sign handling, and UTC date grammar belong to the named format versions.
+Input object insertion order does not affect serialized output. Objects are cloned in stable key order, arrays retain their element order, and `display` and `formatting` use the order above.
+
+## `artifact_number_v1`
+
+This profile is implemented without `Intl`, `toLocaleString`, or any host-locale API. It uses comma thousands grouping, a period decimal separator, and plain decimal notation only. Decimal precision is rounded half up from the JavaScript number's deterministic shortest decimal representation. It removes trailing fractional zeroes except for fields that require two fixed decimals. Numeric negative zero has a zero display sign.
+
+- Realized quote PnL has two decimals, a sign only when the canonical value is positive or negative, and the quote symbol: `+8,287.84 USDC`, `-125.40 USDC`, `0.00 USDC`.
+- Realized PnL percentage has two decimals and the same sign policy: `+16.67%`, `-4.25%`, `0.00%`.
+- Entry and exit prices use up to six decimals below 1, up to four decimals from 1 through 999, and up to two decimals at 1000 or above. Trailing zeroes are removed. If a nonzero value would display as zero, precision increases one place at a time through twelve decimals. A value still unrepresentable at twelve decimals is rejected rather than displayed as zero.
+- Quantity closed uses up to six decimals, removes trailing zeroes, uses comma grouping, and appends `identity.base_asset.display`. A `mint_prefix` remains prefix display text and is never promoted to a symbol.
+- Entry cost and exit proceeds use two decimals and append the quote symbol.
+- No field uses scientific notation, USD conversion, `$`, `N/A`, approximation, or estimated-value markers.
+
+## `artifact_utc_date_v1`
+
+`trade_summary.opened_at` and `closed_at` are interpreted as Unix seconds and rendered exclusively with UTC `Date` getters in `YYYY-MM-DD HH:mm UTC` form. Fractional, unsafe, invalid, and dates outside four-digit UTC years are rejected. Host timezone and locale settings do not participate.
+
+Duration is derived only from canonical `trade_summary.hold_time_seconds`; timestamps are not subtracted. It rejects negative, fractional, and unsafe values. Its compact grammar omits leading zero units and pads subordinate units to two digits after a higher unit appears:
+
+- `26s`
+- `12m 05s`
+- `3h 04m 09s`
+- `1d 21h 42m 26s`
+
+## Slice 1B stable errors
+
+All formatter failures use `ShareCardFormatError` with one of these stable codes:
+
+| Code | Condition |
+| --- | --- |
+| `invalid_share_card_model` | Input is not an exact unformatted `share_card_v1` model, fixed identity/status/proof/link invariants are inconsistent, options contain unsupported keys, or cloning encounters unsupported values. |
+| `unsupported_number_format_version` | `number_format_version` is not `artifact_number_v1`. |
+| `unsupported_date_format_version` | `date_format_version` is not `artifact_utc_date_v1`. |
+| `invalid_numeric_value` | A required display number is missing, non-finite, negative where prohibited, or a nonzero price cannot be represented within twelve decimal places. |
+| `invalid_timestamp` | A timestamp is fractional, unsafe, invalid, or outside the supported UTC range. |
+| `invalid_duration` | `hold_time_seconds` is negative, fractional, or unsafe. |
+| `invalid_asset_display` | Base/quote display metadata, pair display, or quote symbol binding is missing or inconsistent. |
+
+## Exact production formatting acceptance
+
+The production checker pins these display summaries:
+
+- JUP: `JUP/USDC`; `+8,287.84 USDC`; `+16.67%`; `0.186984 USDC`; `0.218147 USDC`; `265,951.319268 JUP`; `49,728.69 USDC`; `58,016.53 USDC`; `1d 21h 42m 26s`.
+- RAY: `RAY/USDT`; `+2,347.72 USDT`; `+9.39%`; `0.93827 USDT`; `1.0264 USDT`; `26,644.791399 RAY`; `25,000.00 USDT`; `27,347.72 USDT`; `2d 21h 32m 55s`.
 
 ## Proposed Slice 1C renderer boundary
 
-Slice 1C should accept only the validated Slice 1B presentation model:
+Slice 1C should accept only the validated, deeply frozen Slice 1B presentation model:
 
 ```js
 renderShareCardHtml(formattedShareCardViewModel)
 ```
 
-It should return one deterministic HTML string, perform contextual escaping, use only the supplied explicit links, and contain no network access, remote assets, scripts, archive reads, token lookup, accounting, eligibility decisions, or data formatting. Rendering must not mutate its input.
+It should return one UTF-8 deterministic HTML string. The renderer should require `share_card_version: "share_card_v1"`, `formatting.number_format_version: "artifact_number_v1"`, and `formatting.date_format_version: "artifact_utc_date_v1"`; consume display strings without reformatting raw values; contextually escape every text and attribute value; and use only the already validated explicit links. It should contain no network access, remote assets, scripts, archive reads, token lookup, accounting, eligibility decisions, locale/date logic, or data formatting. Rendering must not mutate its input. A later image boundary, if any, should consume this HTML separately rather than being part of Slice 1C.

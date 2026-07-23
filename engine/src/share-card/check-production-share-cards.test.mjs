@@ -63,9 +63,50 @@ test('builds only the exact production JUP and RAY models without network access
       'Verified Closed Position',
     ]);
     assert.deepEqual(result.records.map(record => record.summary), [
-      'JUP/USDC | +8287.838847 USDC | +16.6661% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
-      'RAY/USDT | +2347.717902 USDT | +9.39087% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
+      'JUP/USDC | +8,287.84 USDC | +16.67% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
+      'RAY/USDT | +2,347.72 USDT | +9.39% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
     ]);
+    assert.deepEqual(result.records.map(record => record.formatted_model.display), [
+      {
+        pair: 'JUP/USDC',
+        realized_pnl_quote: '+8,287.84 USDC',
+        realized_pnl_pct: '+16.67%',
+        avg_entry_quote_price: '0.186984 USDC',
+        avg_exit_quote_price: '0.218147 USDC',
+        quantity_closed: '265,951.319268 JUP',
+        entry_cost_quote: '49,728.69 USDC',
+        exit_proceeds_quote: '58,016.53 USDC',
+        opened_at: '2026-06-19 21:24 UTC',
+        closed_at: '2026-06-21 19:06 UTC',
+        duration: '1d 21h 42m 26s',
+        receipt_hash_short: '5fb5732d248a...5ddf02a0bbca',
+      },
+      {
+        pair: 'RAY/USDT',
+        realized_pnl_quote: '+2,347.72 USDT',
+        realized_pnl_pct: '+9.39%',
+        avg_entry_quote_price: '0.93827 USDT',
+        avg_exit_quote_price: '1.0264 USDT',
+        quantity_closed: '26,644.791399 RAY',
+        entry_cost_quote: '25,000.00 USDT',
+        exit_proceeds_quote: '27,347.72 USDT',
+        opened_at: '2026-01-25 23:04 UTC',
+        closed_at: '2026-01-28 20:37 UTC',
+        duration: '2d 21h 32m 55s',
+        receipt_hash_short: '4d33969c45a0...84d4570e4341',
+      },
+    ]);
+    for (const record of result.records) {
+      assert.strictEqual(
+        record.formatted_model.hero.realized_pnl_quote.value,
+        record.model.hero.realized_pnl_quote.value,
+      );
+      assert.strictEqual(
+        record.formatted_model.accounting_summary.exit_proceeds_quote,
+        record.model.accounting_summary.exit_proceeds_quote,
+      );
+      assert.equal(Object.isFrozen(record.formatted_model.display), true);
+    }
 
     const serialized = JSON.stringify(result);
     for (const forbidden of [

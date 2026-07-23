@@ -6,6 +6,7 @@ import { pathToFileURL } from 'url';
 
 import { resolveTokenDisplayMetadata } from '../display-metadata/token-display-registry.mjs';
 import { buildInventorySnapshot } from '../inventory/inventory.mjs';
+import { formatShareCardViewModel } from './share-card-format.mjs';
 import { buildShareCardViewModel } from './share-card-view-model.mjs';
 
 export const PRODUCTION_SHARE_CARD_EXPECTATIONS = Object.freeze({
@@ -29,7 +30,21 @@ export const PRODUCTION_SHARE_CARD_EXPECTATIONS = Object.freeze({
     accounting_method: 'weighted_average_position_accounting_v1',
     num_buys: 1,
     num_sells: 1,
-    summary: 'JUP/USDC | +8287.838847 USDC | +16.6661% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
+    display: Object.freeze({
+      pair: 'JUP/USDC',
+      realized_pnl_quote: '+8,287.84 USDC',
+      realized_pnl_pct: '+16.67%',
+      avg_entry_quote_price: '0.186984 USDC',
+      avg_exit_quote_price: '0.218147 USDC',
+      quantity_closed: '265,951.319268 JUP',
+      entry_cost_quote: '49,728.69 USDC',
+      exit_proceeds_quote: '58,016.53 USDC',
+      opened_at: '2026-06-19 21:24 UTC',
+      closed_at: '2026-06-21 19:06 UTC',
+      duration: '1d 21h 42m 26s',
+      receipt_hash_short: '5fb5732d248a...5ddf02a0bbca',
+    }),
+    summary: 'JUP/USDC | +8,287.84 USDC | +16.67% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
   }),
   RAY: Object.freeze({
     receipt_hash: '4d33969c45a041837070dbc83730862325ff989772712aae285384d4570e4341',
@@ -51,7 +66,21 @@ export const PRODUCTION_SHARE_CARD_EXPECTATIONS = Object.freeze({
     accounting_method: 'weighted_average_position_accounting_v1',
     num_buys: 1,
     num_sells: 1,
-    summary: 'RAY/USDT | +2347.717902 USDT | +9.39087% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
+    display: Object.freeze({
+      pair: 'RAY/USDT',
+      realized_pnl_quote: '+2,347.72 USDT',
+      realized_pnl_pct: '+9.39%',
+      avg_entry_quote_price: '0.93827 USDT',
+      avg_exit_quote_price: '1.0264 USDT',
+      quantity_closed: '26,644.791399 RAY',
+      entry_cost_quote: '25,000.00 USDT',
+      exit_proceeds_quote: '27,347.72 USDT',
+      opened_at: '2026-01-25 23:04 UTC',
+      closed_at: '2026-01-28 20:37 UTC',
+      duration: '2d 21h 32m 55s',
+      receipt_hash_short: '4d33969c45a0...84d4570e4341',
+    }),
+    summary: 'RAY/USDT | +2,347.72 USDT | +9.39% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
   }),
 });
 
@@ -158,14 +187,34 @@ export function runProductionShareCardCheck({
     assert.deepStrictEqual(tokenDisplayMetadata, beforeMetadata, `${asset} token metadata input was mutated`);
     assert.deepStrictEqual(links, beforeLinks, `${asset} link input was mutated`);
     assertSafeModel(model, receipt, expected);
+    const modelBeforeFormatting = JSON.stringify(model);
+    const formattedModel = formatShareCardViewModel(model);
+    assert.strictEqual(JSON.stringify(model), modelBeforeFormatting, `${asset} raw model was mutated by formatting`);
+    assert.deepStrictEqual(formattedModel.display, expected.display, `${asset} formatted display`);
+    assert.deepStrictEqual(formattedModel.formatting, {
+      number_format_version: 'artifact_number_v1',
+      date_format_version: 'artifact_utc_date_v1',
+    });
+    assert.strictEqual(formattedModel.hero.realized_pnl_quote.value, expected.realized_pnl_quote);
+    assert.strictEqual(formattedModel.hero.realized_pnl_pct.value, expected.realized_pnl_pct);
+    assert.strictEqual(formattedModel.trade_summary.avg_entry_quote_price, expected.avg_buy_quote_price);
+    assert.strictEqual(formattedModel.trade_summary.avg_exit_quote_price, expected.avg_sell_quote_price);
+    assert.strictEqual(formattedModel.accounting_summary.quantity_closed, expected.total_sold_qty);
+    assert.strictEqual(formattedModel.accounting_summary.entry_cost_quote, expected.allocated_cost_basis_quote);
+    assert.strictEqual(formattedModel.accounting_summary.exit_proceeds_quote, expected.total_sold_quote);
+    assertSafeModel(formattedModel, receipt, expected);
+
+    const summary = `${formattedModel.display.pair} | ${formattedModel.display.realized_pnl_quote} | ${formattedModel.display.realized_pnl_pct} | ${expected.accounting_method} | ${expected.num_buys} buy / ${expected.num_sells} sell`;
+    assert.strictEqual(summary, expected.summary, `${asset} formatted summary`);
 
     records.push(Object.freeze({
       asset,
       receipt_hash: expected.receipt_hash,
       receipt_id: expected.receipt_id,
       display_status: receipt.display_status,
-      summary: expected.summary,
+      summary,
       model,
+      formatted_model: formattedModel,
     }));
   }
 
