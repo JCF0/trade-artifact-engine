@@ -236,6 +236,8 @@ function filterReceipts(receipts, filters = {}) {
 
 export function buildInventorySnapshot({
   engineRoot = DEFAULT_ENGINE_ROOT,
+  archiveRoot,
+  economicsRoot,
   includeLegacy = false,
   includeExcluded = false,
   includeArchive = false,
@@ -254,13 +256,13 @@ export function buildInventorySnapshot({
     .sort((a, b) => a.receipt_hash.localeCompare(b.receipt_hash));
 
   const archiveRead = includeArchive
-    ? readReceiptArchiveBundlesWithDiagnostics({ engineRoot })
+    ? readReceiptArchiveBundlesWithDiagnostics({ engineRoot, archiveRoot })
     : { bundles: [], diagnostics: [] };
   const archiveMerge = includeArchive
     ? mergeArchiveReceipts(currentReceipts, archiveRead.bundles)
     : { receipts: currentReceipts, diagnostics: [] };
   const economicsRead = includeArchive
-    ? readValidatedReceiptEconomicsWithDiagnostics({ engineRoot })
+    ? readValidatedReceiptEconomicsWithDiagnostics({ engineRoot, archiveRoot, economicsRoot })
     : { entries: [], diagnostics: [] };
   const archiveDiagnostics = sortDiagnostics([
     ...archiveRead.diagnostics,

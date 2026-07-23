@@ -409,6 +409,28 @@ test('valid JUP-like and RAY-like sidecars join by receipt_hash with exact valid
   }
 });
 
+test('explicit archive and economics roots are honored by the inventory API', () => {
+  const storeFixture = createInventoryFixture();
+  const engineFixture = createInventoryFixture();
+  try {
+    const canonical = makeCanonicalReceipt('EXPLICIT');
+    const { sidecar } = archiveRecordWithEconomics(storeFixture.root, canonical);
+    const receipt = getInventoryReceipt(canonical.receipt_hash, {
+      engineRoot: engineFixture.root,
+      archiveRoot: join(storeFixture.root, 'data', 'inventory', 'receipt-archive-v1'),
+      economicsRoot: join(storeFixture.root, 'data', 'inventory', 'receipt-economics-v1'),
+      includeArchive: true,
+    });
+
+    assert.ok(receipt);
+    assert.equal(receipt.receipt_hash, canonical.receipt_hash);
+    assert.deepEqual(receipt.canonical_economics, expectedCanonicalEconomics(sidecar));
+  } finally {
+    removeInventoryFixture(storeFixture.root);
+    removeInventoryFixture(engineFixture.root);
+  }
+});
+
 test('archive receipt without sidecar remains byte-for-byte unchanged at record level', () => {
   const fixture = createInventoryFixture();
   try {
