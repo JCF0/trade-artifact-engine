@@ -1,8 +1,8 @@
-# Artifact Share Card v1 — Slice 1A/1B Model and Formatting Specification
+# Artifact Share Card v1 — Slice 1A/1B/1C Model, Formatting, and HTML Specification
 
-Status: implemented by `engine/src/share-card/share-card-view-model.mjs` and `engine/src/share-card/share-card-format.mjs`.
+Status: implemented by `engine/src/share-card/share-card-view-model.mjs`, `engine/src/share-card/share-card-format.mjs`, and `engine/src/share-card/share-card-html.mjs`.
 
-This document is normative for Share Card v1 and supersedes the preliminary Slice 1 boundary in `engine/docs/inventory_spec.md`. Slice 1A builds canonical data and Slice 1B adds deterministic display strings without replacing or changing that data. Neither slice renders HTML, SVG, or PNG or generates or publishes public-demo artifacts.
+This document is normative for Share Card v1 and supersedes the preliminary Slice 1 boundary in `engine/docs/inventory_spec.md`. Slice 1A builds canonical data, Slice 1B adds deterministic display strings without replacing or changing that data, and Slice 1C renders those strings as deterministic standalone HTML. No slice renders SVG or PNG or generates or publishes public-demo artifacts.
 
 ## Scope
 
@@ -25,7 +25,7 @@ node engine/src/share-card/check-production-share-cards.mjs \
   --economics-root engine/data/inventory/receipt-economics-v1
 ```
 
-The checker loads archive-backed inventory through the inventory API, resolves the static token registry, formats the resulting models, and fails unless the published JUP and RAY hashes match their complete expected Share Card economics and exact display strings. It performs no writes or network calls and emits no wallet identity or transaction signatures.
+The checker loads archive-backed inventory through the inventory API, resolves the static token registry, formats the resulting models, renders both HTML documents in memory with `/assets/artifact-logo-header.png`, and fails unless the published JUP and RAY hashes match their complete expected Share Card economics, exact display strings, and pinned HTML SHA-256 values. The logo filename is the existing deterministic public-demo header asset derived from `engine/assets/brand/artifact-logo-final-whitebg.png`; Slice 1C references but does not derive or read it. The checker performs no writes or network calls and emits no wallet identity or transaction signatures.
 
 ## Slice 1A builder API
 
@@ -297,12 +297,61 @@ The production checker pins these display summaries:
 - JUP: `JUP/USDC`; `+8,287.84 USDC`; `+16.67%`; `0.186984 USDC`; `0.218147 USDC`; `265,951.319268 JUP`; `49,728.69 USDC`; `58,016.53 USDC`; `1d 21h 42m 26s`.
 - RAY: `RAY/USDT`; `+2,347.72 USDT`; `+9.39%`; `0.93827 USDT`; `1.0264 USDT`; `26,644.791399 RAY`; `25,000.00 USDT`; `27,347.72 USDT`; `2d 21h 32m 55s`.
 
-## Proposed Slice 1C renderer boundary
-
-Slice 1C should accept only the validated, deeply frozen Slice 1B presentation model:
+## Slice 1C renderer API
 
 ```js
-renderShareCardHtml(formattedShareCardViewModel)
+renderShareCardHtml(formattedShareCardViewModel, {
+  logo_href,
+})
 ```
 
-It should return one UTF-8 deterministic HTML string. The renderer should require `share_card_version: "share_card_v1"`, `formatting.number_format_version: "artifact_number_v1"`, and `formatting.date_format_version: "artifact_utc_date_v1"`; consume display strings without reformatting raw values; contextually escape every text and attribute value; and use only the already validated explicit links. It should contain no network access, remote assets, scripts, archive reads, token lookup, accounting, eligibility decisions, locale/date logic, or data formatting. Rendering must not mutate its input. A later image boundary, if any, should consume this HTML separately rather than being part of Slice 1C.
+The options object is closed and requires exactly one `logo_href`. The logo destination must be a traversal-free local relative or root-relative path. Remote and protocol-relative URLs, URL schemes, credentials, Windows or UNC paths, common absolute machine roots, encoded traversal, query-only references, and fragment-only references fail closed. The renderer neither discovers nor reads the logo asset.
+
+The input must have the exact validated Slice 1B shape, `share_card_version: "share_card_v1"`, `formatting.number_format_version: "artifact_number_v1"`, and `formatting.date_format_version: "artifact_utc_date_v1"`. Every fixed identity, proof, status, badge, scope, disclosure, pair, hash-shortening, and display binding is revalidated at this immediate boundary. Unexpected keys, symbols, accessors, custom prototypes, malformed arrays, unsupported values, and directions inconsistent with their retained canonical values are rejected. Quote and percentage directions remain independently valid; the renderer uses their supplied validated directions and never derives visible display strings from raw values.
+
+Slice 1C returns one deterministic UTF-8 HTML string beginning with `<!doctype html>`, using LF line endings, and ending in a newline. It consumes only Slice 1B `display` strings for visible economics, dates, and duration. It does not reformat raw values, recompute direction or accounting, read the token registry, perform I/O, or mutate its input.
+
+## Slice 1C HTML contract
+
+- At viewports 1200 CSS pixels wide or wider, the primary root is exactly 1200 × 630 CSS pixels, has `aspect-ratio: 1200 / 630`, and carries `data-share-card-version="share_card_v1"`.
+- Intermediate viewports from 801 through 1199 CSS pixels may scale that fixed desktop composition. At 800 CSS pixels and below, the fixed dimensions, aspect ratio, clipping, and transform are removed: the document uses natural height, stacked header/body/footer regions, two-column statistics, wrapping status treatments, and large tap targets. At 430 CSS pixels and below, proof actions stack. Mobile typography is reflowed rather than proportionally scaled.
+- The document uses inline CSS, the Artifact navy/electric-blue palette, system sans-serif fonts, and monospace only for receipt ID and shortened receipt hash.
+- Positive PnL uses verified green, negative PnL uses negative red, and flat PnL uses neutral gray. The independent verification badge remains green for every direction.
+- Header content is the supplied local Artifact logo, `Artifact`, the formatted pair, `Closed Position`, and `Verified by Artifact`.
+- The hero renders the formatted realized quote PnL and percentage with the `Raw Quote` scope label.
+- Labelled primary statistics are Average Entry, Average Exit, Opened, Closed, and Duration. Labelled secondary statistics are Quantity Closed, Entry Cost, and Exit Proceeds.
+- The proof footer renders receipt ID, shortened receipt hash, `Receipt Scoped`, the exact disclosure, and descriptive `View Proof` and `Verify Receipt` links.
+- HTTPS proof or verifier links retain their validated bytes and receive `rel="noopener noreferrer"`. Local links do not receive an external-link relation.
+- All dynamic text and attribute values are escaped. Dynamic values never become markup.
+- The logo has alt text, link accessible names identify the receipt, headings label the hero and statistic groups, and statistics use description-list semantics.
+- The document includes UTF-8, viewport, and `<meta name="robots" content="noindex,nofollow">` metadata. It has no Open Graph metadata.
+- There is no JavaScript, event-handler attribute, remote font/style/image/resource, analytics, wallet identity, transaction signature, provider data, recovery provenance, evidence path, source path, machine path, USD conversion, `$`, placeholder, QR code, or fabricated metadata.
+
+The only external resource reference is the supplied local logo path. Proof and verifier anchors are navigation destinations, not fetched resources.
+
+## Slice 1C stable errors
+
+All renderer failures use `ShareCardHtmlError` with one of these stable codes:
+
+| Code | Condition |
+| --- | --- |
+| `invalid_formatted_share_card` | Input/options are not exact plain data shapes, required fixed invariants fail, or raw retained values are malformed. |
+| `unsupported_share_card_version` | `share_card_version` is not `share_card_v1`. |
+| `unsupported_formatting_profile` | Either formatting profile is not the required Slice 1B v1 profile. |
+| `invalid_logo_link` | `logo_href` is missing, malformed, remote, scheme-bearing, traversal-bearing, or machine-local. |
+| `invalid_display_value` | A required Slice 1B display string is missing, empty, or not trimmed. |
+| `invalid_link` | A proof or verifier destination no longer satisfies the validated Share Card link policy. |
+| `unsafe_html_value` | A rendered value contains controls or malformed Unicode that cannot be represented safely. |
+
+## Exact production HTML acceptance
+
+With `logo_href: "/assets/artifact-logo-header.png"`, production rendering is pinned to:
+
+- JUP HTML SHA-256: `36a7d18426aaeb67290932eb2d70439bb4812f0245cb5d038150b0d7f2455027`
+- RAY HTML SHA-256: `ded1a0e200213e11aa761272535f23050ea40c7f0023b85cc34e226efdcf40c8`
+
+The production checker retains both documents only in memory, confirms every exact expected display string, and audits wallet values, transaction signatures, scripts, event handlers, remote resources, provider/recovery terms, and machine paths. It does not write generated HTML to production or public-demo paths.
+
+## Proposed Slice 1D static public-demo integration
+
+Slice 1D should remain a separate filesystem boundary. It can map each approved receipt to a stable route such as `/share/<receipt-hash>/index.html`, keep proof navigation at `/receipts/<receipt-hash>/` and verifier navigation at `/verify/<receipt-hash>/`, and reuse the existing derived public-demo logo at `/assets/artifact-logo-header.png`. The bundle writer should render in memory first, write only into its explicit output root, include the new routes and existing logo in the static inventory/predeploy checks, and verify deterministic bytes plus leak policy before publishing. Page-level Open Graph metadata belongs in that integration layer, not in the Slice 1C card document. Browser capture and new image generation remain out of scope unless approved as a later isolated slice.

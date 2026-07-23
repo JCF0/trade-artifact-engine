@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
 import assert from 'assert';
+import { createHash } from 'crypto';
 import { resolve } from 'path';
 import { pathToFileURL } from 'url';
 
 import { resolveTokenDisplayMetadata } from '../display-metadata/token-display-registry.mjs';
 import { buildInventorySnapshot } from '../inventory/inventory.mjs';
 import { formatShareCardViewModel } from './share-card-format.mjs';
+import { renderShareCardHtml } from './share-card-html.mjs';
 import { buildShareCardViewModel } from './share-card-view-model.mjs';
+
+export const PRODUCTION_SHARE_CARD_LOGO_HREF = '/assets/artifact-logo-header.png';
 
 export const PRODUCTION_SHARE_CARD_EXPECTATIONS = Object.freeze({
   JUP: Object.freeze({
@@ -44,6 +48,7 @@ export const PRODUCTION_SHARE_CARD_EXPECTATIONS = Object.freeze({
       duration: '1d 21h 42m 26s',
       receipt_hash_short: '5fb5732d248a...5ddf02a0bbca',
     }),
+    html_sha256: '36a7d18426aaeb67290932eb2d70439bb4812f0245cb5d038150b0d7f2455027',
     summary: 'JUP/USDC | +8,287.84 USDC | +16.67% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
   }),
   RAY: Object.freeze({
@@ -80,6 +85,7 @@ export const PRODUCTION_SHARE_CARD_EXPECTATIONS = Object.freeze({
       duration: '2d 21h 32m 55s',
       receipt_hash_short: '4d33969c45a0...84d4570e4341',
     }),
+    html_sha256: 'ded1a0e200213e11aa761272535f23050ea40c7f0023b85cc34e226efdcf40c8',
     summary: 'RAY/USDT | +2,347.72 USDT | +9.39% | weighted_average_position_accounting_v1 | 1 buy / 1 sell',
   }),
 });
@@ -149,6 +155,32 @@ function assertSafeModel(model, receipt, expected) {
   }
 }
 
+function assertSafeHtml(html, receipt, expected) {
+  assert.ok(html.startsWith('<!doctype html>\n'), 'Share Card HTML must be a standalone document');
+  assert.ok(html.endsWith('\n'), 'Share Card HTML must have a trailing newline');
+  assert.equal(html.includes('\r'), false, 'Share Card HTML must use LF line endings');
+  for (const value of Object.values(expected.display)) {
+    assert.equal(html.includes(value), true, `Share Card HTML missing exact display string: ${value}`);
+  }
+  assert.equal(html.includes(receipt.wallet), false, 'wallet leaked into Share Card HTML');
+  for (const signature of [
+    ...(receipt.canonical_economics.fields.entry_tx_hashes || []),
+    ...(receipt.canonical_economics.fields.exit_tx_hashes || []),
+  ]) {
+    assert.equal(html.includes(signature), false, 'transaction signature leaked into Share Card HTML');
+  }
+  for (const forbidden of ['Helius', 'provider', 'recovery', '/root/', 'file://', 'canonical_receipt_record']) {
+    assert.equal(html.includes(forbidden), false, `forbidden value leaked into Share Card HTML: ${forbidden}`);
+  }
+  assert.equal(/<script\b/i.test(html), false, 'script element present in Share Card HTML');
+  assert.equal(/\son[a-z]+\s*=/i.test(html), false, 'event-handler attribute present in Share Card HTML');
+  assert.equal(
+    /<(?:img|link|style|source|iframe)[^>]+(?:src|href)=["']https?:/i.test(html),
+    false,
+    'remote resource present in Share Card HTML',
+  );
+}
+
 export function runProductionShareCardCheck({
   engineRoot,
   archiveRoot,
@@ -203,6 +235,16 @@ export function runProductionShareCardCheck({
     assert.strictEqual(formattedModel.accounting_summary.entry_cost_quote, expected.allocated_cost_basis_quote);
     assert.strictEqual(formattedModel.accounting_summary.exit_proceeds_quote, expected.total_sold_quote);
     assertSafeModel(formattedModel, receipt, expected);
+    const formattedModelBeforeRendering = JSON.stringify(formattedModel);
+    const html = renderShareCardHtml(formattedModel, { logo_href: PRODUCTION_SHARE_CARD_LOGO_HREF });
+    assert.strictEqual(
+      JSON.stringify(formattedModel),
+      formattedModelBeforeRendering,
+      `${asset} formatted model was mutated by rendering`,
+    );
+    assertSafeHtml(html, receipt, expected);
+    const htmlSha256 = createHash('sha256').update(html, 'utf8').digest('hex');
+    assert.strictEqual(htmlSha256, expected.html_sha256, `${asset} deterministic HTML SHA-256`);
 
     const summary = `${formattedModel.display.pair} | ${formattedModel.display.realized_pnl_quote} | ${formattedModel.display.realized_pnl_pct} | ${expected.accounting_method} | ${expected.num_buys} buy / ${expected.num_sells} sell`;
     assert.strictEqual(summary, expected.summary, `${asset} formatted summary`);
@@ -215,6 +257,8 @@ export function runProductionShareCardCheck({
       summary,
       model,
       formatted_model: formattedModel,
+      html,
+      html_sha256: htmlSha256,
     }));
   }
 
@@ -243,6 +287,7 @@ export function main({ argv = process.argv.slice(2), stdout = process.stdout, st
     for (const record of result.records) {
       stdout.write(`${record.asset} display_status: ${record.display_status}\n`);
       stdout.write(`${record.asset}: ${record.summary}\n`);
+      stdout.write(`${record.asset} HTML SHA-256: ${record.html_sha256}\n`);
     }
     return 0;
   } catch (error) {

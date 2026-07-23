@@ -1,8 +1,9 @@
 import assert from 'assert';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, readdirSync } from 'fs';
+import { join, resolve } from 'path';
 
 import {
+  PRODUCTION_SHARE_CARD_LOGO_HREF,
   PRODUCTION_SHARE_CARD_EXPECTATIONS,
   runProductionShareCardCheck,
 } from './check-production-share-cards.mjs';
@@ -10,10 +11,21 @@ import {
 const ENGINE_ROOT = resolve('engine');
 const ARCHIVE_ROOT = resolve(ENGINE_ROOT, 'data/inventory/receipt-archive-v1');
 const ECONOMICS_ROOT = resolve(ENGINE_ROOT, 'data/inventory/receipt-economics-v1');
-const TARGET_PATHS = Object.values(PRODUCTION_SHARE_CARD_EXPECTATIONS).flatMap(expected => [
-  resolve(ARCHIVE_ROOT, 'receipts', `${expected.receipt_hash}.json`),
-  resolve(ECONOMICS_ROOT, 'receipts', `${expected.receipt_hash}.json`),
-]);
+
+function listStoreFiles(root) {
+  const files = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) files.push(...listStoreFiles(path));
+    else if (entry.isFile()) files.push(path);
+  }
+  return files.sort();
+}
+
+function snapshotStores() {
+  const paths = [...listStoreFiles(ARCHIVE_ROOT), ...listStoreFiles(ECONOMICS_ROOT)].sort();
+  return new Map(paths.map(path => [path, readFileSync(path)]));
+}
 
 let passed = 0;
 let failed = 0;
@@ -45,8 +57,12 @@ test('requires explicit engine, archive, and economics roots', () => {
   );
 });
 
+test('uses the existing sanctioned derived public-demo header logo path', () => {
+  assert.equal(PRODUCTION_SHARE_CARD_LOGO_HREF, '/assets/artifact-logo-header.png');
+});
+
 test('builds only the exact production JUP and RAY models without network access or writes', () => {
-  const before = new Map(TARGET_PATHS.map(path => [path, readFileSync(path, 'utf8')]));
+  const before = snapshotStores();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => { throw new Error('network call not allowed'); };
   try {
@@ -106,7 +122,16 @@ test('builds only the exact production JUP and RAY models without network access
         record.model.accounting_summary.exit_proceeds_quote,
       );
       assert.equal(Object.isFrozen(record.formatted_model.display), true);
+      assert.equal(record.html.startsWith('<!doctype html>\n'), true);
+      assert.equal(record.html.includes(`Artifact Verified Receipt — ${record.formatted_model.display.pair}`), true);
+      for (const displayValue of Object.values(record.formatted_model.display)) {
+        assert.equal(record.html.includes(displayValue), true, `${record.asset} HTML display: ${displayValue}`);
+      }
     }
+    assert.deepEqual(result.records.map(record => record.html_sha256), [
+      '36a7d18426aaeb67290932eb2d70439bb4812f0245cb5d038150b0d7f2455027',
+      'ded1a0e200213e11aa761272535f23050ea40c7f0023b85cc34e226efdcf40c8',
+    ]);
 
     const serialized = JSON.stringify(result);
     for (const forbidden of [
@@ -118,13 +143,19 @@ test('builds only the exact production JUP and RAY models without network access
       'transaction_signature',
       '2ArLuJC2JEuWiavk1jYxLQ2E4xhq63BbeDV2kCWPcZ9zZNc4XyugUEFEryKrYfqcWnxkUvyacRmj2YNTfZGq17yV',
       '2SUoNBBTkQBBGVCinvLQbVZq5LDZS5M8ikx5PLH7QiCuLdf6GWCPSM7wLd6gJsNUbLSousAhbkSX9eXgt1dAeBKm',
+      '<script',
+      'Helius',
+      '/root/',
+      'file://',
     ]) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
   } finally {
     globalThis.fetch = originalFetch;
   }
-  for (const [path, contents] of before) assert.equal(readFileSync(path, 'utf8'), contents, path);
+  const after = snapshotStores();
+  assert.deepEqual([...after.keys()], [...before.keys()], 'production input store file inventory changed');
+  for (const [path, contents] of before) assert.deepEqual(after.get(path), contents, path);
 });
 
 console.log(`\nProduction Share Card checker tests: ${passed} passed, ${failed} failed`);
