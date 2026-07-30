@@ -20,6 +20,13 @@ import {
 } from '../share-card/check-production-share-cards.mjs';
 import { formatShareCardViewModel } from '../share-card/share-card-format.mjs';
 import { buildShareCardViewModel } from '../share-card/share-card-view-model.mjs';
+import { readReceiptArchiveBundles, stableJson } from './archive-store.mjs';
+import { readReceiptPackageInventory } from './package-inventory.mjs';
+import {
+  buildArchiveV1CompatibilityBundleFromPackage,
+  buildEconomicsV1CompatibilitySidecarFromPackage,
+} from './receipt-compatibility-projections.mjs';
+import { serializeReceiptEconomicsSidecar } from './receipt-economics-store.mjs';
 
 function requireExplicitRoot(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -88,6 +95,39 @@ export async function runPackageFirstProductionCheck({
     archive: await snapshotTree(roots.archive),
     economics: await snapshotTree(roots.economics),
   };
+  const packageInventory = await readReceiptPackageInventory({ packageRoot: roots.package });
+  assert.deepStrictEqual(packageInventory.diagnostics, [], 'package compatibility projection diagnostics');
+  assert.strictEqual(packageInventory.entries.length, 2, 'expected JUP/RAY authoritative package count');
+  let packageArchiveByteMatches = 0;
+  let packageEconomicsByteMatches = 0;
+  const packageHashes = new Set();
+  for (const entry of packageInventory.entries) {
+    packageHashes.add(entry.receipt_hash);
+    const archiveBytes = stableJson(buildArchiveV1CompatibilityBundleFromPackage(entry.receipt_package));
+    const economicsBytes = serializeReceiptEconomicsSidecar(
+      buildEconomicsV1CompatibilitySidecarFromPackage(entry.receipt_package),
+    );
+    assert.strictEqual(
+      archiveBytes,
+      await readFile(join(roots.archive, 'receipts', `${entry.receipt_hash}.json`), 'utf8'),
+      `${entry.receipt_hash} package-derived archive compatibility bytes changed`,
+    );
+    assert.strictEqual(
+      economicsBytes,
+      await readFile(join(roots.economics, 'receipts', `${entry.receipt_hash}.json`), 'utf8'),
+      `${entry.receipt_hash} package-derived economics compatibility bytes changed`,
+    );
+    packageArchiveByteMatches += 1;
+    packageEconomicsByteMatches += 1;
+  }
+  const legacyArchiveHashes = readReceiptArchiveBundles({ archiveRoot: roots.archive })
+    .filter(bundle => !packageHashes.has(bundle.receipt_hash))
+    .map(bundle => bundle.receipt_hash);
+  assert.strictEqual(legacyArchiveHashes.length, 64, 'expected legacy-only archive receipt count');
+  const legacyArchiveBytesBefore = new Map(await Promise.all(legacyArchiveHashes.map(async receiptHash => [
+    receiptHash,
+    await readFile(join(roots.archive, 'receipts', `${receiptHash}.json`), 'utf8'),
+  ])));
 
   const inventoryOptions = {
     engineRoot: roots.engine,
@@ -167,12 +207,25 @@ export async function runPackageFirstProductionCheck({
     economics: await snapshotTree(roots.economics),
   };
   assert.deepStrictEqual(after, before, 'production store content changed during read-only check');
+  for (const [receiptHash, bytes] of legacyArchiveBytesBefore) {
+    assert.strictEqual(
+      await readFile(join(roots.archive, 'receipts', `${receiptHash}.json`), 'utf8'),
+      bytes,
+      `${receiptHash} legacy-only archive bytes changed during read-only check`,
+    );
+  }
 
   return Object.freeze({
     status: 'passed',
     receipts: packageFirst.receipts.length,
     package_backed: packageBacked,
     legacy_fallback: legacyFallback,
+    compatibility: Object.freeze({
+      package_archive_byte_matches: packageArchiveByteMatches,
+      package_economics_byte_matches: packageEconomicsByteMatches,
+      legacy_archive_fallback_records: legacyArchiveHashes.length,
+      legacy_archive_bytes_unchanged: legacyArchiveBytesBefore.size,
+    }),
     assets: Object.freeze(assets),
     store_hashes: Object.freeze({
       package: Object.freeze({ before: before.package, after: after.package }),
