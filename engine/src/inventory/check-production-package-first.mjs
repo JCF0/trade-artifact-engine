@@ -2,13 +2,14 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, readlink } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { resolveTokenDisplayMetadata } from '../display-metadata/token-display-registry.mjs';
 import {
   buildInventorySnapshot,
+  getInventoryReceiptProofSource,
   getInventoryReceiptSource,
 } from './inventory.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
@@ -27,6 +28,7 @@ import {
   buildEconomicsV1CompatibilitySidecarFromPackage,
 } from './receipt-compatibility-projections.mjs';
 import { serializeReceiptEconomicsSidecar } from './receipt-economics-store.mjs';
+import { buildPublicDemoBundle } from '../public-demo/site-bundle.mjs';
 
 function requireExplicitRoot(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -41,12 +43,16 @@ function stable(value) {
   return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])]));
 }
 
-async function snapshotTree(root) {
+async function snapshotTree(root, { allowSymlinks = false } = {}) {
   const records = [];
   async function walk(path) {
     const info = await lstat(path);
     const name = relative(root, path) || '.';
-    if (info.isSymbolicLink()) throw new Error('production store contains a symbolic link');
+    if (info.isSymbolicLink()) {
+      if (!allowSymlinks) throw new Error('production store contains a symbolic link');
+      records.push({ path: name, type: 'symbolic_link', target: await readlink(path) });
+      return;
+    }
     if (info.isDirectory()) {
       records.push({ path: name, type: 'directory', mode: info.mode & 0o777 });
       const names = (await readdir(path)).sort();
@@ -67,18 +73,18 @@ async function snapshotTree(root) {
   return createHash('sha256').update(`${JSON.stringify(stable(records))}\n`).digest('hex');
 }
 
-function packageCard(receipt) {
+function packageCard(receipt, proofSource) {
   const links = {
     proof_href: `proof/${receipt.receipt_hash}`,
     verifier_href: `verifier/${receipt.receipt_hash}`,
   };
-  return formatShareCardViewModel(buildShareCardViewModel(receipt, {
+  return formatShareCardViewModel(buildShareCardViewModel(proofSource, {
     tokenDisplayMetadata: resolveTokenDisplayMetadata(receipt.token_mint),
     links,
   }));
 }
 
-export async function runPackageFirstProductionCheck({
+async function runPackageFirstProductionCheckReadOnly({
   engineRoot,
   packageRoot,
   archiveRoot,
@@ -91,6 +97,7 @@ export async function runPackageFirstProductionCheck({
     economics: requireExplicitRoot(economicsRoot, 'economics'),
   };
   const before = {
+    engine: await snapshotTree(roots.engine, { allowSymlinks: true }),
     package: await snapshotTree(roots.package),
     archive: await snapshotTree(roots.archive),
     economics: await snapshotTree(roots.economics),
@@ -154,6 +161,18 @@ export async function runPackageFirstProductionCheck({
     packageRoot: roots.package,
   });
   assert.deepStrictEqual(packageFirstBoard, legacyBoard, 'receipt board order or ranking changed');
+  const legacyPublicDemo = buildPublicDemoBundle({
+    engineRoot: roots.engine,
+    archiveRoot: roots.archive,
+    economicsRoot: roots.economics,
+  });
+  const packagePublicDemo = await buildPublicDemoBundle({
+    engineRoot: roots.engine,
+    packageRoot: roots.package,
+    archiveRoot: roots.archive,
+    economicsRoot: roots.economics,
+  });
+  assert.deepStrictEqual(packagePublicDemo.files, legacyPublicDemo.files, 'public demo bytes changed');
 
   const legacyShareCards = runProductionShareCardCheck({
     engineRoot: roots.engine,
@@ -165,17 +184,19 @@ export async function runPackageFirstProductionCheck({
     const expected = PRODUCTION_SHARE_CARD_EXPECTATIONS[asset];
     const previous = legacy.receipts.find(receipt => receipt.receipt_hash === expected.receipt_hash);
     const receipt = packageFirst.receipts.find(item => item.receipt_hash === expected.receipt_hash);
+    const proofSource = getInventoryReceiptProofSource(packageFirst, expected.receipt_hash);
     assert.ok(previous && receipt, `missing ${asset} receipt`);
+    assert.strictEqual(proofSource?.source_version, 'package_native_proof_source_v1');
     assert.strictEqual(getInventoryReceiptSource(packageFirst, receipt.receipt_hash), 'receipt_package_v1');
-    assert.deepStrictEqual(buildProofDetailView(receipt), buildProofDetailView(previous));
-    assert.deepStrictEqual(buildProofVerifierView(receipt), buildProofVerifierView(previous));
-    const card = packageCard(receipt);
+    assert.deepStrictEqual(buildProofDetailView(proofSource), buildProofDetailView(previous));
+    assert.deepStrictEqual(buildProofVerifierView(proofSource), buildProofVerifierView(previous));
+    const card = packageCard(receipt, proofSource);
     const baselineCard = legacyShareCards.records.find(record => record.asset === asset).formatted_model;
     assert.deepStrictEqual(card, baselineCard, `${asset} Share Card changed`);
     assert.deepStrictEqual(card.display, expected.display, `${asset} Share Card display changed`);
     const publicShapes = JSON.stringify({
-      proof: buildProofDetailView(receipt),
-      verifier: buildProofVerifierView(receipt),
+      proof: buildProofDetailView(proofSource),
+      verifier: buildProofVerifierView(proofSource),
       share_card: card,
     });
     for (const signature of [
@@ -202,6 +223,7 @@ export async function runPackageFirstProductionCheck({
     getInventoryReceiptSource(packageFirst, receipt.receipt_hash) === 'receipt_archive_v1'
   )).length;
   const after = {
+    engine: await snapshotTree(roots.engine, { allowSymlinks: true }),
     package: await snapshotTree(roots.package),
     archive: await snapshotTree(roots.archive),
     economics: await snapshotTree(roots.economics),
@@ -225,14 +247,35 @@ export async function runPackageFirstProductionCheck({
       package_economics_byte_matches: packageEconomicsByteMatches,
       legacy_archive_fallback_records: legacyArchiveHashes.length,
       legacy_archive_bytes_unchanged: legacyArchiveBytesBefore.size,
+      public_demo_byte_equivalent: true,
     }),
     assets: Object.freeze(assets),
     store_hashes: Object.freeze({
+      engine: Object.freeze({ before: before.engine, after: after.engine }),
       package: Object.freeze({ before: before.package, after: after.package }),
       archive: Object.freeze({ before: before.archive, after: after.archive }),
       economics: Object.freeze({ before: before.economics, after: after.economics }),
     }),
   });
+}
+
+export async function runPackageFirstProductionCheck(options) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('production_acceptance_network_access_forbidden');
+  };
+  try {
+    const result = await runPackageFirstProductionCheckReadOnly(options);
+    return Object.freeze({
+      ...result,
+      side_effects: Object.freeze({
+        filesystem_roots_unchanged: true,
+        network_access: 'blocked',
+      }),
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 function parseArgs(argv) {

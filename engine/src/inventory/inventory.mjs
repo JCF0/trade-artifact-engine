@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import {
   DEFAULT_ENGINE_ROOT,
   scanInventorySources,
@@ -12,9 +14,14 @@ import {
   RECEIPT_ECONOMICS_VERSION,
 } from './receipt-economics-store.mjs';
 import { readReceiptPackageInventory } from './package-inventory.mjs';
+import {
+  buildPackageNativeProofSourceV1,
+  resolveReceiptProofSourceV1,
+} from '../proof-source/package-native-proof-source.mjs';
 
 export const INVENTORY_VERSION = '1.3-slice-1';
 const inventorySources = new WeakMap();
+const inventoryProofSources = new WeakMap();
 
 const CANONICAL_ECONOMICS_FIELDS = Object.freeze([
   'segment_index',
@@ -222,65 +229,6 @@ function attachCanonicalEconomics(receipts, archiveBundles, economicsEntries) {
     };
   });
 }
-
-function packageScan(receiptPackage) {
-  const receiptHash = receiptPackage['manifest.json'].receipt_hash;
-  const verification = receiptPackage['verification.json'];
-  const empty = new Map();
-  return {
-    verifyByHash: new Map([[receiptHash, verification]]),
-    valuationByHash: empty,
-    imageByHash: empty,
-    metadataByHash: empty,
-    uploadDryRunByHash: empty,
-    uploadResultByHash: empty,
-    mintPlanByHash: empty,
-    mintResultByHash: empty,
-    proofSummaryByHash: new Map([[receiptHash, {
-      verification_status: receiptPackage['canonical-receipt.json'].verification_status,
-      hash_valid: verification.hash_valid,
-      violations: verification.rule_violations.length,
-    }]]),
-  };
-}
-
-function buildPackageInventoryRecord(receiptPackage, archiveBundle) {
-  const canonical = receiptPackage['canonical-receipt.json'];
-  const derived = buildReceiptArchiveBundle(
-    buildInventoryReceipt(canonical, packageScan(receiptPackage)),
-  ).inventory_record;
-  if (!archiveBundle) return derived;
-
-  const record = structuredClone(archiveBundle.inventory_record);
-  const authoritativeFields = new Set([
-    ...Object.keys(canonical),
-    'hash_valid',
-    'recomputed_hash',
-    'verifier_passed',
-    'verifier_schema_valid',
-    'verifier_consistency_valid',
-    'verifier_rule_violations',
-    'proof_summary',
-  ]);
-  for (const [field, value] of Object.entries(derived)) {
-    if (authoritativeFields.has(field)) record[field] = structuredClone(value);
-  }
-  return record;
-}
-
-function packageCanonicalEconomics(receiptPackage, recoveryMethod = null) {
-  const economics = receiptPackage['economics.json'];
-  return {
-    status: 'verified',
-    source: RECEIPT_ECONOMICS_VERSION,
-    recovery_method: recoveryMethod,
-    fields: Object.fromEntries(CANONICAL_ECONOMICS_FIELDS.map(field => [
-      field,
-      structuredClone(economics[field]),
-    ])),
-  };
-}
-
 function packageArchiveCompatible(receiptPackage, archiveBundle) {
   if (!archiveBundle) return true;
   const canonical = receiptPackage['canonical-receipt.json'];
@@ -463,6 +411,7 @@ async function buildPackageFirstInventorySnapshot(options) {
     economicsRead.diagnostics.map(diagnosticReceiptHash).filter(Boolean),
   );
   const packageDiagnostics = [...packageRead.diagnostics];
+  const packageProofSources = new Map();
   const packageHashes = new Set([
     ...packageRead.entries.map(entry => entry.receipt_hash),
     ...packageRead.diagnostics.map(item => item.receipt_hash),
@@ -494,13 +443,17 @@ async function buildPackageFirstInventorySnapshot(options) {
       });
       continue;
     }
-    byHash.set(entry.receipt_hash, {
-      ...buildPackageInventoryRecord(entry.receipt_package, archiveBundle),
-      canonical_economics: packageCanonicalEconomics(
-        entry.receipt_package,
-        economicsEntry?.recovery_method ?? null,
-      ),
-    });
+    const engineRoot = options.engineRoot || DEFAULT_ENGINE_ROOT;
+    const proofSource = economicsEntry
+      ? await resolveReceiptProofSourceV1({
+        receiptHash: entry.receipt_hash,
+        packageRoot: options.packageRoot,
+        archiveRoot: options.archiveRoot || resolve(engineRoot, 'data/inventory/receipt-archive-v1'),
+        economicsRoot: options.economicsRoot || resolve(engineRoot, 'data/inventory/receipt-economics-v1'),
+      })
+      : buildPackageNativeProofSourceV1(entry.receipt_package);
+    packageProofSources.set(entry.receipt_hash, proofSource);
+    byHash.set(entry.receipt_hash, proofSource.inventory_record);
   }
 
   const allReceipts = [...byHash.values()].sort((a, b) => a.receipt_hash.localeCompare(b.receipt_hash));
@@ -552,6 +505,10 @@ async function buildPackageFirstInventorySnapshot(options) {
       ? 'receipt_package_v1'
       : (fallbackHashes.has(receipt.receipt_hash) ? 'receipt_archive_v1' : 'current_v12_debug_snapshot'),
   ])));
+  inventoryProofSources.set(finalSnapshot, new Map(receipts.map(receipt => [
+    receipt.receipt_hash,
+    packageProofSources.get(receipt.receipt_hash) || receipt,
+  ])));
   return finalSnapshot;
 }
 
@@ -566,6 +523,12 @@ export function buildInventorySnapshot(options = {}) {
 
 export function getInventoryReceiptSource(snapshot, receiptHash) {
   return inventorySources.get(snapshot)?.get(receiptHash) || null;
+}
+
+export function getInventoryReceiptProofSource(snapshot, receiptHash) {
+  return inventoryProofSources.get(snapshot)?.get(receiptHash)
+    || snapshot?.receipts?.find(receipt => receipt.receipt_hash === receiptHash)
+    || null;
 }
 
 export function getInventoryReceipt(receiptHash, options = {}) {

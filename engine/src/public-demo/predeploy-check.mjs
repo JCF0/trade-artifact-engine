@@ -23,10 +23,14 @@ const REQUIRED_HEADER_LINES = [
 ];
 
 function normalizeBuildOptions(options = {}) {
+  if (options.packageRoot && (!options.engineRoot || !options.archiveRoot || !options.economicsRoot)) {
+    throw new TypeError('packageRoot requires explicit engineRoot, archiveRoot, and economicsRoot');
+  }
   const engineRoot = resolve(options.engineRoot || DEFAULT_ENGINE_ROOT);
   return {
     ...options,
     engineRoot,
+    ...(options.packageRoot ? { packageRoot: resolve(options.packageRoot) } : {}),
     archiveRoot: options.archiveRoot
       ? resolve(options.archiveRoot)
       : resolve(engineRoot, 'data/inventory/receipt-archive-v1'),
@@ -251,63 +255,80 @@ export function runPublicDemoPredeployCheck(options = {}) {
   const files = readBundleFiles(root);
   const generated = buildPublicDemoBundle(normalizeBuildOptions(options.buildOptions));
 
-  compareExpectedInventory(files, generated.files, findings);
-  validateInternalLinks(files, findings);
-  const leak = runPublicDemoLeakCheck(files, {
-    expectedReceiptHashes: generated.receipts.map(receipt => receipt.receipt_hash),
-  });
-  for (const finding of leak.findings) addFinding(findings, `leak_${finding.code}`, finding);
-  validateCoverage(files, findings);
-  validateHeaders(files, findings);
-  validateRobots(files, findings);
-  validateNotFound(files, findings);
-  validateBrandAssets(files, generated, findings);
-  validateCspCompatibility(files, findings);
+  const finish = resolvedGenerated => {
+    compareExpectedInventory(files, resolvedGenerated.files, findings);
+    validateInternalLinks(files, findings);
+    const leak = runPublicDemoLeakCheck(files, {
+      expectedReceiptHashes: resolvedGenerated.receipts.map(receipt => receipt.receipt_hash),
+    });
+    for (const finding of leak.findings) addFinding(findings, `leak_${finding.code}`, finding);
+    validateCoverage(files, findings);
+    validateHeaders(files, findings);
+    validateRobots(files, findings);
+    validateNotFound(files, findings);
+    validateBrandAssets(files, resolvedGenerated, findings);
+    validateCspCompatibility(files, findings);
 
-  const tempRoot = mkdtempSync(join(tmpdir(), 'trade-artifact-public-demo-predeploy-'));
-  try {
-    writePublicDemoBundle(generated, { outRoot: tempRoot });
-    const tempFiles = readBundleFiles(tempRoot);
-    compareByteStable(files, tempFiles, findings);
-  } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
-  }
+    const tempRoot = mkdtempSync(join(tmpdir(), 'trade-artifact-public-demo-predeploy-'));
+    try {
+      writePublicDemoBundle(resolvedGenerated, { outRoot: tempRoot });
+      const tempFiles = readBundleFiles(tempRoot);
+      compareByteStable(files, tempFiles, findings);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
 
-  return {
-    ok: findings.length === 0,
-    root,
-    file_count: Object.keys(files).length,
-    findings,
-    csp: {
-      scripts_present: findings.some(finding => finding.code === 'script_tag_present' || finding.code === 'inline_event_handler_present' || finding.code === 'javascript_url_present'),
-      network_primitives_present: findings.some(finding => finding.code === 'network_primitive_present'),
-      non_self_images_present: findings.some(finding => finding.code === 'image_data_url_rejected' || finding.code === 'external_image_rejected' || finding.code === 'external_css_asset_rejected'),
-    },
+    return {
+      ok: findings.length === 0,
+      root,
+      file_count: Object.keys(files).length,
+      findings,
+      csp: {
+        scripts_present: findings.some(finding => finding.code === 'script_tag_present' || finding.code === 'inline_event_handler_present' || finding.code === 'javascript_url_present'),
+        network_primitives_present: findings.some(finding => finding.code === 'network_primitive_present'),
+        non_self_images_present: findings.some(finding => finding.code === 'image_data_url_rejected' || finding.code === 'external_image_rejected' || finding.code === 'external_css_asset_rejected'),
+      },
+    };
   };
+  return typeof generated?.then === 'function' ? generated.then(finish) : finish(generated);
 }
 
 export function assertPublicDemoPredeployCheck(options = {}) {
   const result = runPublicDemoPredeployCheck(options);
-  if (!result.ok) {
-    const error = new Error(`public demo predeploy check failed: ${result.findings.map(finding => finding.code).join(', ')}`);
-    error.result = result;
-    throw error;
-  }
-  return result;
+  const finish = resolvedResult => {
+    if (!resolvedResult.ok) {
+      const error = new Error(`public demo predeploy check failed: ${resolvedResult.findings.map(finding => finding.code).join(', ')}`);
+      error.result = resolvedResult;
+      throw error;
+    }
+    return resolvedResult;
+  };
+  return typeof result?.then === 'function' ? result.then(finish) : finish(result);
 }
 
 function parseArgs(argv) {
-  const args = { root: '' };
+  const args = { root: '', engineRoot: '', packageRoot: '', archiveRoot: '', economicsRoot: '' };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--root') {
       args.root = argv[i + 1] || '';
       i += 1;
+    } else if (arg === '--engine-root') {
+      args.engineRoot = argv[++i] || '';
+    } else if (arg === '--package-root') {
+      args.packageRoot = argv[++i] || '';
+    } else if (arg === '--archive-root') {
+      args.archiveRoot = argv[++i] || '';
+    } else if (arg === '--economics-root') {
+      args.economicsRoot = argv[++i] || '';
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
   }
   if (!args.root) throw new Error('--root is required');
+  if (args.packageRoot && (!args.engineRoot || !args.archiveRoot || !args.economicsRoot)) {
+    throw new Error('--package-root requires explicit --engine-root, --archive-root, and --economics-root');
+  }
   return args;
 }
 
@@ -316,16 +337,32 @@ export function runCli(argv, io = {}) {
   const stderr = io.stderr || process.stderr;
   try {
     const args = parseArgs(argv);
-    const result = runPublicDemoPredeployCheck({ root: args.root });
-    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return result.ok ? 0 : 1;
+    const result = runPublicDemoPredeployCheck({
+      root: args.root,
+      buildOptions: {
+        ...(args.engineRoot ? { engineRoot: args.engineRoot } : {}),
+        ...(args.packageRoot ? { packageRoot: args.packageRoot } : {}),
+        ...(args.archiveRoot ? { archiveRoot: args.archiveRoot } : {}),
+        ...(args.economicsRoot ? { economicsRoot: args.economicsRoot } : {}),
+      },
+    });
+    const finish = resolvedResult => {
+      stdout.write(`${JSON.stringify(resolvedResult, null, 2)}\n`);
+      return resolvedResult.ok ? 0 : 1;
+    };
+    return typeof result?.then === 'function'
+      ? result.then(finish, error => {
+          stderr.write(`${error.message}\n`);
+          return 1;
+        })
+      : finish(result);
   } catch (error) {
-    stderr.write('Usage: node engine/src/public-demo/predeploy-check.mjs --root <public-demo-dir>\n');
+    stderr.write('Usage: node engine/src/public-demo/predeploy-check.mjs --root <public-demo-dir> [--engine-root <dir> --package-root <dir> --archive-root <dir> --economics-root <dir>]\n');
     stderr.write(`${error.message}\n`);
     return 1;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exit(runCli(process.argv.slice(2)));
+  process.exit(await runCli(process.argv.slice(2)));
 }

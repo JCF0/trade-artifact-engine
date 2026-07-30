@@ -3,7 +3,7 @@ import { resolve } from 'path';
 
 import { DISCLOSURE_TEXT } from '../proof-trust/disclosures.mjs';
 import { DEFAULT_ENGINE_ROOT, V12_DEBUG_ARTIFACTS } from '../inventory/scanner.mjs';
-import { buildInventorySnapshot } from '../inventory/inventory.mjs';
+import { buildInventorySnapshot, getInventoryReceiptProofSource } from '../inventory/inventory.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofCardView } from '../proof-card/view-model.mjs';
 
@@ -70,7 +70,7 @@ export function buildProofGalleryView(options = {}) {
     ? readSampleGalleryManifest({ engineRoot })
     : options.manifest;
 
-  if (!hasCanonicalInventory(engineRoot)) {
+  if (options.packageRoot === undefined && !hasCanonicalInventory(engineRoot)) {
     return {
       gallery_type: 'artifact_sample_gallery',
       title: manifest?.title || 'Artifact Sample Gallery',
@@ -87,44 +87,51 @@ export function buildProofGalleryView(options = {}) {
 
   const snapshot = buildInventorySnapshot({
     engineRoot,
+    ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+    ...(options.archiveRoot === undefined ? {} : { archiveRoot: options.archiveRoot }),
+    ...(options.economicsRoot === undefined ? {} : { economicsRoot: options.economicsRoot }),
     includeLegacy: false,
     includeExcluded: false,
   });
 
-  const receiptByHash = new Map(snapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
-  let orderedReceipts;
+  const finish = resolvedSnapshot => {
+    const receiptByHash = new Map(resolvedSnapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
+    let orderedReceipts;
 
-  if (manifest && Array.isArray(manifest.receipt_hashes)) {
-    orderedReceipts = manifest.receipt_hashes
-      .map(receiptHash => receiptByHash.get(receiptHash))
-      .filter(Boolean);
-  } else {
-    orderedReceipts = [...snapshot.receipts];
-  }
+    if (manifest && Array.isArray(manifest.receipt_hashes)) {
+      orderedReceipts = manifest.receipt_hashes
+        .map(receiptHash => receiptByHash.get(receiptHash))
+        .filter(Boolean);
+    } else {
+      orderedReceipts = [...resolvedSnapshot.receipts];
+    }
 
-  if (receiptType) {
-    orderedReceipts = orderedReceipts.filter(receipt => receipt.receipt_type === receiptType);
-  }
+    if (receiptType) {
+      orderedReceipts = orderedReceipts.filter(receipt => receipt.receipt_type === receiptType);
+    }
 
-  const pagedReceipts = orderedReceipts.slice(offset, offset + limit);
-  const items = pagedReceipts.map(receipt => {
-    const proofDetail = buildProofDetailView(receipt);
-    const cardView = buildProofCardView(proofDetail, { walletDisplayMode });
-    return buildGalleryItem(cardView);
-  });
+    const pagedReceipts = orderedReceipts.slice(offset, offset + limit);
+    const items = pagedReceipts.map(receipt => {
+      const proofSource = getInventoryReceiptProofSource(resolvedSnapshot, receipt.receipt_hash);
+      const proofDetail = buildProofDetailView(proofSource);
+      const cardView = buildProofCardView(proofDetail, { walletDisplayMode });
+      return buildGalleryItem(cardView);
+    });
 
-  return {
-    gallery_type: 'artifact_sample_gallery',
-    title: manifest?.title || 'Artifact Sample Gallery',
-    subtitle: 'Selected sample receipts only. Not a portfolio statement.',
-    count: items.length,
-    empty: items.length === 0,
-    disclosures: [
-      DISCLOSURE_TEXT.selectedReceiptOnly,
-      DISCLOSURE_TEXT.rawQuoteOnly,
-    ],
-    items,
+    return {
+      gallery_type: 'artifact_sample_gallery',
+      title: manifest?.title || 'Artifact Sample Gallery',
+      subtitle: 'Selected sample receipts only. Not a portfolio statement.',
+      count: items.length,
+      empty: items.length === 0,
+      disclosures: [
+        DISCLOSURE_TEXT.selectedReceiptOnly,
+        DISCLOSURE_TEXT.rawQuoteOnly,
+      ],
+      items,
+    };
   };
+  return typeof snapshot?.then === 'function' ? snapshot.then(finish) : finish(snapshot);
 }
 
 export { shortenHash };

@@ -16,9 +16,10 @@
  *   GET  /receipt/:hash/image — rendered receipt PNG
  */
 import express from 'express';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 import { fetchTransactions, normalizeTransactions } from '../pipeline/ingest.mjs';
 import { reconstructCycles } from '../pipeline/reconstruct.mjs';
@@ -46,11 +47,11 @@ import { renderProofGalleryHtml } from '../proof-gallery/render-html.mjs';
 import { renderStaticProofPage } from '../proof-export/render-static-page.mjs';
 import { buildReceiptBoardView } from '../receipt-board/view-model.mjs';
 import { renderReceiptBoardHtml } from '../receipt-board/render-html.mjs';
+import { resolveReceiptProofSourceV1 } from '../proof-source/package-native-proof-source.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
 const RENDERS_DIR = resolve(ROOT, 'data', 'renders');
-mkdirSync(RENDERS_DIR, { recursive: true });
 
 // ── Load Helius key lazily ──
 const envPath = resolve(process.env.USERPROFILE || process.env.HOME, '.openclaw', '.env');
@@ -79,9 +80,16 @@ function getTokenMetadataCache() {
 }
 
 // ── Transaction cache (per-wallet, disk-persisted) ──
-const txCache = new TransactionCache({
-  cacheDir: resolve(ROOT, 'data', 'cache', 'transactions'),
-});
+let transactionCache;
+
+function getTransactionCache() {
+  if (!transactionCache) {
+    transactionCache = new TransactionCache({
+      cacheDir: resolve(ROOT, 'data', 'cache', 'transactions'),
+    });
+  }
+  return transactionCache;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared pipeline helper (cached per wallet per session)
@@ -97,7 +105,7 @@ async function runPipeline(wallet, { token, from, to, maxTxns = 5000 } = {}) {
   const cacheKey = wallet;
 
   // Fetch transactions incrementally (cache-aware)
-  const { transactions: rawTxns, fromCache, fetched, total } = await txCache.fetchIncremental(
+  const { transactions: rawTxns, fromCache, fetched, total } = await getTransactionCache().fetchIncremental(
     wallet, API_KEY, { maxTxns, silent: true }
   );
 
@@ -194,24 +202,75 @@ function asyncHandler(fn) {
   };
 }
 
+const appRootContext = new AsyncLocalStorage();
+
 function getInventoryRoot() {
-  return process.env.TRADE_ARTIFACT_INVENTORY_ROOT
+  const configuredRoots = appRootContext.getStore() || {};
+  return configuredRoots.engineRoot || (process.env.TRADE_ARTIFACT_INVENTORY_ROOT
     ? resolve(process.env.TRADE_ARTIFACT_INVENTORY_ROOT)
-    : ROOT;
+    : ROOT);
 }
 
-function getArchiveEnabledReceipt(receiptHash) {
+function getProofRoots() {
+  const configuredRoots = appRootContext.getStore() || {};
+  const engineRoot = getInventoryRoot();
+  return {
+    engineRoot,
+    packageRoot: configuredRoots.packageRoot,
+    archiveRoot: configuredRoots.archiveRoot || resolve(engineRoot, 'data/inventory/receipt-archive-v1'),
+    economicsRoot: configuredRoots.economicsRoot || resolve(engineRoot, 'data/inventory/receipt-economics-v1'),
+  };
+}
+
+function getArchiveEnabledProofSource(receiptHash) {
+  const roots = getProofRoots();
+  if (roots.packageRoot !== undefined) {
+    return resolveReceiptProofSourceV1({
+      receiptHash,
+      packageRoot: roots.packageRoot,
+      archiveRoot: roots.archiveRoot,
+      economicsRoot: roots.economicsRoot,
+    }).catch(error => {
+      if (error?.code === 'receipt_proof_source_not_found') return null;
+      throw error;
+    });
+  }
   return getInventoryReceipt(receiptHash, {
-    engineRoot: getInventoryRoot(),
+    engineRoot: roots.engineRoot,
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     includeExcluded: false,
     includeArchive: true,
   });
 }
 
+export function createApp(options = {}) {
+  if (options.packageRoot !== undefined) {
+    for (const key of ['engineRoot', 'packageRoot', 'archiveRoot', 'economicsRoot']) {
+      if (typeof options[key] !== 'string' || options[key].trim().length === 0) {
+        throw new TypeError(`explicit ${key} is required when packageRoot is configured`);
+      }
+    }
+  }
+  const roots = Object.freeze(Object.fromEntries(
+    Object.entries(options)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, resolve(value)]),
+  ));
+  const configuredApp = express();
+  configuredApp.use((req, res, next) => appRootContext.run(roots, next));
+  configuredApp.use(app);
+  return configuredApp;
+}
+
 function buildInventoryApiSnapshot(query, { includeLegacy = false } = {}) {
   const parsed = parseInventoryQuery(query);
+  const roots = getProofRoots();
   return buildInventorySnapshot({
-    engineRoot: getInventoryRoot(),
+    engineRoot: roots.engineRoot,
+    ...(roots.packageRoot === undefined ? {} : { packageRoot: roots.packageRoot }),
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     includeLegacy,
     includeExcluded: parsed.includeExcluded,
     filters: parsed.filters,
@@ -425,6 +484,7 @@ app.post('/positions/:id/receipt', asyncHandler(async (req, res) => {
     const customReceipt = buildCustomReceipt(customPosition, verifiedReceipt.verification_hash);
 
     // Render PNG
+    mkdirSync(RENDERS_DIR, { recursive: true });
     const pngPath = resolve(RENDERS_DIR, `${customReceipt.receipt_id}.png`);
     renderReceipt(customReceipt, pngPath);
 
@@ -435,6 +495,7 @@ app.post('/positions/:id/receipt', asyncHandler(async (req, res) => {
   const receipt = buildPositionReceipt(match);
 
   // Render PNG
+  mkdirSync(RENDERS_DIR, { recursive: true });
   const pngPath = resolve(RENDERS_DIR, `${receipt.receipt_id}.png`);
   renderReceipt(receipt, pngPath);
 
@@ -507,13 +568,13 @@ app.get('/rebuild', asyncHandler(async (req, res) => {
 
 // ── GET /api/inventory ──
 app.get('/api/inventory', asyncHandler(async (req, res) => {
-  const snapshot = buildInventoryApiSnapshot(req.query);
+  const snapshot = await buildInventoryApiSnapshot(req.query);
   res.json(snapshot);
 }));
 
 // ── GET /api/inventory/summary ──
 app.get('/api/inventory/summary', asyncHandler(async (req, res) => {
-  const snapshot = buildInventoryApiSnapshot(req.query);
+  const snapshot = await buildInventoryApiSnapshot(req.query);
   res.json({
     summary: buildInventorySummary(snapshot),
   });
@@ -521,7 +582,11 @@ app.get('/api/inventory/summary', asyncHandler(async (req, res) => {
 
 // ── GET /api/proof/:receiptHash ──
 app.get('/api/proof/:receiptHash', asyncHandler(async (req, res) => {
-  const receipt = getArchiveEnabledReceipt(req.params.receiptHash);
+  const { receiptHash } = req.params;
+  if (!isCanonicalReceiptHash(receiptHash)) {
+    return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
+  }
+  const receipt = await getArchiveEnabledProofSource(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof detail found for receipt_hash: ${req.params.receiptHash}` });
@@ -537,7 +602,7 @@ app.get('/api/verifier/:receiptHash', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
   }
 
-  const receipt = getArchiveEnabledReceipt(receiptHash);
+  const receipt = await getArchiveEnabledProofSource(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No verifier record found for receipt_hash: ${receiptHash}` });
@@ -551,7 +616,7 @@ app.get('/api/proof/:receiptHash/card', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
   }
 
-  const receipt = getArchiveEnabledReceipt(receiptHash);
+  const receipt = await getArchiveEnabledProofSource(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof card found for receipt_hash: ${receiptHash}` });
@@ -568,7 +633,7 @@ app.get('/api/proof/:receiptHash/card/preview', asyncHandler(async (req, res) =>
     return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
   }
 
-  const receipt = getArchiveEnabledReceipt(receiptHash);
+  const receipt = await getArchiveEnabledProofSource(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof card preview found for receipt_hash: ${receiptHash}` });
@@ -659,7 +724,11 @@ function parseHostedPreviewQuery(query = {}) {
 }
 
 app.get('/api/proof/:receiptHash/hosted-preview', asyncHandler(async (req, res) => {
-  const receipt = getArchiveEnabledReceipt(req.params.receiptHash);
+  const { receiptHash } = req.params;
+  if (!isCanonicalReceiptHash(receiptHash)) {
+    return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
+  }
+  const receipt = await getArchiveEnabledProofSource(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No hosted proof preview found for receipt_hash: ${req.params.receiptHash}` });
@@ -679,16 +748,24 @@ app.get('/api/proof/:receiptHash/hosted-preview', asyncHandler(async (req, res) 
 // ── GET /api/proof/:receiptHash/export ──
 app.get('/api/gallery', asyncHandler(async (req, res) => {
   const galleryQuery = parseGalleryQuery(req.query);
-  res.json(buildProofGalleryView({
-    engineRoot: getInventoryRoot(),
+  const roots = getProofRoots();
+  res.json(await buildProofGalleryView({
+    engineRoot: roots.engineRoot,
+    ...(roots.packageRoot === undefined ? {} : { packageRoot: roots.packageRoot }),
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     ...galleryQuery,
   }));
 }));
 
 app.get('/api/gallery/preview', asyncHandler(async (req, res) => {
   const galleryQuery = parseGalleryQuery(req.query);
-  const galleryView = buildProofGalleryView({
-    engineRoot: getInventoryRoot(),
+  const roots = getProofRoots();
+  const galleryView = await buildProofGalleryView({
+    engineRoot: roots.engineRoot,
+    ...(roots.packageRoot === undefined ? {} : { packageRoot: roots.packageRoot }),
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     ...galleryQuery,
   });
   res.type('html').send(renderProofGalleryHtml(galleryView));
@@ -696,23 +773,35 @@ app.get('/api/gallery/preview', asyncHandler(async (req, res) => {
 
 app.get('/api/receipt-board', asyncHandler(async (req, res) => {
   const boardQuery = parseReceiptBoardQuery(req.query);
-  res.json(buildReceiptBoardView({
-    engineRoot: getInventoryRoot(),
+  const roots = getProofRoots();
+  res.json(await buildReceiptBoardView({
+    engineRoot: roots.engineRoot,
+    ...(roots.packageRoot === undefined ? {} : { packageRoot: roots.packageRoot }),
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     ...boardQuery,
   }));
 }));
 
 app.get('/api/receipt-board/preview', asyncHandler(async (req, res) => {
   const boardQuery = parseReceiptBoardQuery(req.query);
-  const boardView = buildReceiptBoardView({
-    engineRoot: getInventoryRoot(),
+  const roots = getProofRoots();
+  const boardView = await buildReceiptBoardView({
+    engineRoot: roots.engineRoot,
+    ...(roots.packageRoot === undefined ? {} : { packageRoot: roots.packageRoot }),
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     ...boardQuery,
   });
   res.type('html').send(renderReceiptBoardHtml(boardView));
 }));
 
 app.get('/api/proof/:receiptHash/export', asyncHandler(async (req, res) => {
-  const receipt = getArchiveEnabledReceipt(req.params.receiptHash);
+  const { receiptHash } = req.params;
+  if (!isCanonicalReceiptHash(receiptHash)) {
+    return res.status(400).json({ error: `Malformed receipt_hash: ${receiptHash}` });
+  }
+  const receipt = await getArchiveEnabledProofSource(receiptHash);
 
   if (!receipt) {
     return res.status(404).json({ error: `No proof detail export found for receipt_hash: ${req.params.receiptHash}` });
@@ -757,8 +846,12 @@ app.get('/inventory', asyncHandler(async (req, res) => {
   const query = parseInventoryQuery(req.query);
   // Legacy inventory stays explicit and separate on /inventory/legacy routes,
   // so include_legacy/includeLegacy is intentionally ignored here.
-  const snapshot = buildInventorySnapshot({
-    engineRoot: getInventoryRoot(),
+  const roots = getProofRoots();
+  const snapshot = await buildInventorySnapshot({
+    engineRoot: roots.engineRoot,
+    ...(roots.packageRoot === undefined ? {} : { packageRoot: roots.packageRoot }),
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     includeLegacy: false,
     includeExcluded: query.includeExcluded,
     filters: query.filters,
@@ -771,8 +864,12 @@ app.get('/inventory', asyncHandler(async (req, res) => {
 // ── GET /inventory/:receiptHash ──
 app.get('/inventory/:receiptHash', asyncHandler(async (req, res) => {
   const query = parseInventoryQuery(req.query);
-  const receipt = getInventoryReceipt(req.params.receiptHash, {
-    engineRoot: getInventoryRoot(),
+  const roots = getProofRoots();
+  const receipt = await getInventoryReceipt(req.params.receiptHash, {
+    engineRoot: roots.engineRoot,
+    ...(roots.packageRoot === undefined ? {} : { packageRoot: roots.packageRoot }),
+    archiveRoot: roots.archiveRoot,
+    economicsRoot: roots.economicsRoot,
     includeExcluded: query.includeExcluded,
   });
 
@@ -833,7 +930,7 @@ app.get('/coverage', asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'No coverage data available' });
   }
 
-  res.json({ coverage: cached.coverage, tx_cache: txCache.stats(wallet) });
+  res.json({ coverage: cached.coverage, tx_cache: getTransactionCache().stats(wallet) });
 }));
 
 // ── GET /token/:mint — resolve token metadata ──
@@ -863,8 +960,9 @@ const PORT = portIdx !== -1 && args[portIdx + 1] ? parseInt(args[portIdx + 1]) :
 export { app, runPipeline };
 export default app;
 
-// Listen when run directly. Tests set TRADE_ARTIFACT_TEST=1 to skip.
-if (!process.env.TRADE_ARTIFACT_TEST) {
+// Importing app/createApp never starts a listener.
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  mkdirSync(RENDERS_DIR, { recursive: true });
   const startupApiKey = loadApiKey();
   const server = app.listen(PORT, () => {
     console.log(`\n╔════════════════════════════════════════════════════════════╗`);

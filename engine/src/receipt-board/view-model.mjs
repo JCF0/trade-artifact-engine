@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
-import { buildInventorySnapshot } from '../inventory/inventory.mjs';
+import { buildInventorySnapshot, getInventoryReceiptProofSource } from '../inventory/inventory.mjs';
 import { DEFAULT_ENGINE_ROOT } from '../inventory/scanner.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofCardView } from '../proof-card/view-model.mjs';
@@ -127,8 +127,8 @@ function buildLinks(receiptHash) {
   };
 }
 
-function buildRow(entry, receipt) {
-  const proofDetail = buildProofDetailView(receipt);
+function buildRow(entry, receipt, proofSource) {
+  const proofDetail = buildProofDetailView(proofSource);
   const cardView = buildProofCardView(proofDetail);
   const trust = {
     current_level: cardView.trust.current_level,
@@ -243,7 +243,11 @@ export function buildReceiptBoardView(options = {}) {
         return;
       }
 
-      rows.push(buildRow(entry, receipt));
+      rows.push(buildRow(
+        entry,
+        receipt,
+        getInventoryReceiptProofSource(resolvedSnapshot, receipt.receipt_hash),
+      ));
     });
 
     const rankedRows = finalizeRows(rows);

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'path';
 
-import { buildInventorySnapshot } from '../inventory/inventory.mjs';
+import { buildInventorySnapshot, getInventoryReceiptProofSource } from '../inventory/inventory.mjs';
 import { resolveTokenDisplayMetadata } from '../display-metadata/token-display-registry.mjs';
 import { buildProofDetailView } from '../proof-detail/view-model.mjs';
 import { buildProofVerifierView } from '../proof-verifier/view-model.mjs';
@@ -145,10 +145,10 @@ function addShareCardMetadata(html, formattedModel) {
   return html.replace(marker, `${marker}  <meta name="description" content="${escapeHtml(description)}">\n`);
 }
 
-function buildPublicShareCard(receipt) {
+function buildPublicShareCard(receipt, proofSource) {
   if (receipt.canonical_economics?.status !== 'verified') return null;
   const links = publicLinksFor(receipt.receipt_hash);
-  const model = buildShareCardViewModel(receipt, {
+  const model = buildShareCardViewModel(proofSource, {
     tokenDisplayMetadata: resolveTokenDisplayMetadata(receipt.token_mint),
     links: {
       proof_href: links.shareProofHref,
@@ -195,8 +195,8 @@ function sanitizeArtifacts(artifacts = {}) {
   };
 }
 
-function buildPublicProofDetail(receipt, walletDisplayMode, shareCardEligible) {
-  const detail = buildProofDetailView(receipt);
+function buildPublicProofDetail(receipt, proofSource, walletDisplayMode, shareCardEligible) {
+  const detail = buildProofDetailView(proofSource);
   const links = publicLinksFor(receipt.receipt_hash);
   return {
     ...detail,
@@ -224,8 +224,8 @@ function buildPublicProofDetail(receipt, walletDisplayMode, shareCardEligible) {
   };
 }
 
-function buildPublicVerifier(receipt) {
-  const verifier = buildProofVerifierView(receipt);
+function buildPublicVerifier(receipt, proofSource) {
+  const verifier = buildProofVerifierView(proofSource);
   return {
     ...verifier,
     instructions: {
@@ -349,6 +349,9 @@ function buildSiteManifest({ board, receiptBundles, shareCards, visibility, wall
 
 export function buildPublicDemoBundle(options = {}) {
   const engineRoot = requireExplicitRoot(options.engineRoot, 'engine');
+  const packageRoot = options.packageRoot === undefined
+    ? undefined
+    : requireExplicitRoot(options.packageRoot, 'package');
   const archiveRoot = requireExplicitRoot(options.archiveRoot, 'archive');
   const economicsRoot = requireExplicitRoot(options.economicsRoot, 'economics');
   const visibility = normalizeVisibility(options.visibility);
@@ -363,100 +366,110 @@ export function buildPublicDemoBundle(options = {}) {
 
   const snapshot = buildInventorySnapshot({
     engineRoot,
+    ...(packageRoot === undefined ? {} : { packageRoot }),
     archiveRoot,
     economicsRoot,
     includeArchive: true,
     includeLegacy: false,
     includeExcluded: false,
   });
-  assertNoArchiveDiagnostics(snapshot);
+  const buildFromSnapshot = resolvedSnapshot => {
+    assertNoArchiveDiagnostics(resolvedSnapshot);
+    const receiptByHash = new Map(resolvedSnapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
+    const receipts = selectedHashes.map(receiptHash => {
+      const receipt = receiptByHash.get(receiptHash);
+      if (!receipt) throw new Error(`selected receipt missing from archive-enabled inventory: ${receiptHash}`);
+      assertReceiptEligible(receipt);
+      return receipt;
+    });
+    const proofSourceByHash = new Map(receipts.map(receipt => [
+      receipt.receipt_hash,
+      getInventoryReceiptProofSource(resolvedSnapshot, receipt.receipt_hash),
+    ]));
+    const shareCards = receipts
+      .map(receipt => buildPublicShareCard(receipt, proofSourceByHash.get(receipt.receipt_hash)))
+      .filter(Boolean)
+      .sort((a, b) => a.path.localeCompare(b.path));
+    const shareCardHashes = new Set(shareCards.map(card => card.receiptHash));
+    const boardResult = buildReceiptBoardView({
+      engineRoot,
+      ...(packageRoot === undefined ? {} : { packageRoot }),
+      archiveRoot,
+      economicsRoot,
+      includeExcluded: false,
+      manifest,
+    });
 
-  const receiptByHash = new Map(snapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
-  const receipts = selectedHashes.map(receiptHash => {
-    const receipt = receiptByHash.get(receiptHash);
-    if (!receipt) throw new Error(`selected receipt missing from archive-enabled inventory: ${receiptHash}`);
-    assertReceiptEligible(receipt);
-    return receipt;
-  });
-
-  const shareCards = receipts
-    .map(buildPublicShareCard)
-    .filter(Boolean)
-    .sort((a, b) => a.path.localeCompare(b.path));
-
-  const shareCardHashes = new Set(shareCards.map(card => card.receiptHash));
-  const board = rewriteBoard(buildReceiptBoardView({
-    engineRoot,
-    archiveRoot,
-    economicsRoot,
-    includeExcluded: false,
-    manifest,
-  }), shareCardHashes);
-
-  if (board.rows.length !== selectedHashes.length) {
-    throw new Error(`public demo board row count mismatch: expected ${selectedHashes.length}, got ${board.rows.length}`);
-  }
-
-  const brandAssets = derivePublicDemoBrandAssets();
-
-  const receiptBundles = receipts
-    .map(receipt => {
-      const proofDetail = buildPublicProofDetail(receipt, walletDisplayMode, shareCardHashes.has(receipt.receipt_hash));
-      const bundle = buildPublishBundle(proofDetail, {
-        generatedAt,
-        visibility,
-        wallet_display_mode: walletDisplayMode,
-        base_url: null,
-        asset_base_path: PUBLIC_DEMO_PROOF_ASSET_BASE,
-      });
-      return {
-        receiptHash: receipt.receipt_hash,
-        slug: bundle.slug,
-        bundle,
-        verifier: buildPublicVerifier(receipt),
+    const finish = resolvedBoard => {
+      const board = rewriteBoard(resolvedBoard, shareCardHashes);
+      if (board.rows.length !== selectedHashes.length) {
+        throw new Error(`public demo board row count mismatch: expected ${selectedHashes.length}, got ${board.rows.length}`);
+      }
+      const brandAssets = derivePublicDemoBrandAssets();
+      const receiptBundles = receipts
+        .map(receipt => {
+          const proofSource = proofSourceByHash.get(receipt.receipt_hash);
+          const proofDetail = buildPublicProofDetail(
+            receipt,
+            proofSource,
+            walletDisplayMode,
+            shareCardHashes.has(receipt.receipt_hash),
+          );
+          const bundle = buildPublishBundle(proofDetail, {
+            generatedAt,
+            visibility,
+            wallet_display_mode: walletDisplayMode,
+            base_url: null,
+            asset_base_path: PUBLIC_DEMO_PROOF_ASSET_BASE,
+          });
+          return {
+            receiptHash: receipt.receipt_hash,
+            slug: bundle.slug,
+            bundle,
+            verifier: buildPublicVerifier(receipt, proofSource),
+          };
+        })
+        .sort((a, b) => a.slug.localeCompare(b.slug));
+      const files = {
+        'index.html': renderReceiptBoardHtml(board, { assetBasePath: PUBLIC_DEMO_ASSET_BASE }),
+        'board.json': stableJson(board),
+        'manifest.json': stableJson(buildSiteManifest({
+          board,
+          receiptBundles,
+          shareCards,
+          visibility,
+          walletDisplayMode,
+          sourceRevision,
+          generatedAt,
+          brandAssets,
+        })),
+        '_headers': PUBLIC_DEMO_HEADERS,
+        'robots.txt': PUBLIC_DEMO_ROBOTS,
+        '404.html': renderNotFoundPage(),
+        ...brandAssets.assets,
       };
-    })
-    .sort((a, b) => a.slug.localeCompare(b.slug));
-
-  const files = {
-    'index.html': renderReceiptBoardHtml(board, { assetBasePath: PUBLIC_DEMO_ASSET_BASE }),
-    'board.json': stableJson(board),
-    'manifest.json': stableJson(buildSiteManifest({
-      board,
-      receiptBundles,
-      shareCards,
-      visibility,
-      walletDisplayMode,
-      sourceRevision,
-      generatedAt,
-      brandAssets,
-    })),
-    '_headers': PUBLIC_DEMO_HEADERS,
-    'robots.txt': PUBLIC_DEMO_ROBOTS,
-    '404.html': renderNotFoundPage(),
-    ...brandAssets.assets,
+      for (const item of receiptBundles) {
+        Object.assign(files, flattenReceiptBundle(item.slug, item.bundle));
+        files[`verifier/${item.receiptHash}.json`] = stableJson(item.verifier);
+      }
+      for (const card of shareCards) files[card.path] = card.html;
+      const orderedFiles = {};
+      for (const filename of Object.keys(files).sort()) orderedFiles[filename] = files[filename];
+      const leakCheck = assertPublicDemoLeakCheck(orderedFiles, { expectedReceiptHashes: selectedHashes });
+      return {
+        manifest,
+        board,
+        receipts,
+        brandAssets,
+        shareCards,
+        files: orderedFiles,
+        fileList: Object.keys(orderedFiles),
+        leakCheck,
+      };
+    };
+    return typeof boardResult?.then === 'function' ? boardResult.then(finish) : finish(boardResult);
   };
-
-  for (const item of receiptBundles) {
-    Object.assign(files, flattenReceiptBundle(item.slug, item.bundle));
-    files[`verifier/${item.receiptHash}.json`] = stableJson(item.verifier);
-  }
-  for (const card of shareCards) files[card.path] = card.html;
-
-  const orderedFiles = {};
-  for (const filename of Object.keys(files).sort()) orderedFiles[filename] = files[filename];
-  const leakCheck = assertPublicDemoLeakCheck(orderedFiles, { expectedReceiptHashes: selectedHashes });
-
-  return {
-    manifest,
-    board,
-    receipts,
-    brandAssets,
-    shareCards,
-    files: orderedFiles,
-    fileList: Object.keys(orderedFiles),
-    leakCheck,
-  };
+  return typeof snapshot?.then === 'function' ? snapshot.then(buildFromSnapshot) : buildFromSnapshot(snapshot);
 }
 
 function assertRelativeBundlePath(path) {

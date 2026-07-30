@@ -1,14 +1,22 @@
 import { deriveTrustLevel } from '../proof-trust/trust-model.mjs';
 import { buildReceiptCoverageStatement } from '../coverage-statement/view-model.mjs';
+import {
+  PACKAGE_NATIVE_PROOF_SOURCE_VERSION,
+  proofSourceInventoryRecord,
+} from '../proof-source/package-native-proof-source.mjs';
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-export function buildProofVerifierView(inventoryRecord) {
-  if (!inventoryRecord || typeof inventoryRecord !== 'object') {
+export function buildProofVerifierView(proofSource) {
+  if (!proofSource || typeof proofSource !== 'object') {
     throw new TypeError('inventoryRecord is required');
   }
+  const inventoryRecord = proofSourceInventoryRecord(proofSource);
+  const verification = proofSource.source_version === PACKAGE_NATIVE_PROOF_SOURCE_VERSION
+    ? proofSource.verification_result
+    : null;
 
   const trust = deriveTrustLevel(inventoryRecord);
 
@@ -19,12 +27,12 @@ export function buildProofVerifierView(inventoryRecord) {
     valuation_status: inventoryRecord.valuation_status,
     coverage_statement: buildReceiptCoverageStatement(inventoryRecord),
     verification: {
-      recomputed_hash: inventoryRecord.recomputed_hash ?? null,
-      hash_valid: inventoryRecord.hash_valid ?? null,
-      verifier_passed: inventoryRecord.verifier_passed ?? null,
-      verifier_schema_valid: inventoryRecord.verifier_schema_valid ?? null,
-      verifier_consistency_valid: inventoryRecord.verifier_consistency_valid ?? null,
-      verifier_rule_violations: asArray(inventoryRecord.verifier_rule_violations),
+      recomputed_hash: verification?.recomputed_hash ?? inventoryRecord.recomputed_hash ?? null,
+      hash_valid: verification?.hash_valid ?? inventoryRecord.hash_valid ?? null,
+      verifier_passed: verification?.pass ?? inventoryRecord.verifier_passed ?? null,
+      verifier_schema_valid: verification?.schema_valid ?? inventoryRecord.verifier_schema_valid ?? null,
+      verifier_consistency_valid: verification?.consistency_valid ?? inventoryRecord.verifier_consistency_valid ?? null,
+      verifier_rule_violations: asArray(verification?.rule_violations ?? inventoryRecord.verifier_rule_violations),
     },
     trust: {
       current_level: trust.current_level,

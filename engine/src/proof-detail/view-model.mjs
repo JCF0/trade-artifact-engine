@@ -1,6 +1,7 @@
 import { buildDisclosureSet } from '../proof-trust/disclosures.mjs';
 import { deriveTrustLevel } from '../proof-trust/trust-model.mjs';
 import { buildReceiptCoverageStatement } from '../coverage-statement/view-model.mjs';
+import { proofSourceInventoryRecord } from '../proof-source/package-native-proof-source.mjs';
 
 export const RAW_QUOTE_DISCLOSURE_TEXT = 'Raw quote only. No USD normalization.';
 
@@ -12,10 +13,11 @@ function asNull(value) {
   return value == null ? null : value;
 }
 
-export function buildProofDetailView(inventoryRecord) {
-  if (!inventoryRecord || typeof inventoryRecord !== 'object') {
+export function buildProofDetailView(proofSource) {
+  if (!proofSource || typeof proofSource !== 'object') {
     throw new TypeError('inventoryRecord is required');
   }
+  const inventoryRecord = proofSourceInventoryRecord(proofSource);
 
   const coverageStatement = buildReceiptCoverageStatement(inventoryRecord);
   const trust = {

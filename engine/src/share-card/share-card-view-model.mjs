@@ -1,3 +1,5 @@
+import { proofSourceInventoryRecord } from '../proof-source/package-native-proof-source.mjs';
+
 export const SHARE_CARD_VERSION = 'share_card_v1';
 export const SHARE_CARD_BADGES = Object.freeze([
   'Closed Position',
@@ -199,7 +201,8 @@ function shortenReceiptHash(value) {
   return `${value.slice(0, 12)}...${value.slice(-12)}`;
 }
 
-export function buildShareCardViewModel(inventoryReceipt, options = {}) {
+export function buildShareCardViewModel(proofSource, options = {}) {
+  const inventoryReceipt = proofSourceInventoryRecord(proofSource);
   assertExactKeys(options, ['tokenDisplayMetadata', 'links'], 'invalid_options', 'Share Card options');
   const { tokenDisplayMetadata, links } = options;
   assertExactKeys(links, ['proof_href', 'verifier_href'], 'invalid_options', 'Share Card links');
@@ -212,7 +215,7 @@ export function buildShareCardViewModel(inventoryReceipt, options = {}) {
     throw new ShareCardEligibilityError('receipt_not_verified', 'Share Card v1 requires verified display status');
   }
   if (inventoryReceipt.canonical_economics?.status !== 'verified'
-    || inventoryReceipt.canonical_economics?.source !== 'receipt_economics_v1') {
+    || !['receipt_package_v1', 'receipt_economics_v1'].includes(inventoryReceipt.canonical_economics?.source)) {
     throw new ShareCardEligibilityError('canonical_economics_not_verified', 'Share Card v1 requires verified canonical receipt economics');
   }
 

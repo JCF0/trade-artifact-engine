@@ -6,7 +6,7 @@ import { DEFAULT_ENGINE_ROOT } from '../inventory/scanner.mjs';
 import { buildPublicDemoBundle, writePublicDemoBundle } from './site-bundle.mjs';
 
 function printUsage(stderr = process.stderr) {
-  stderr.write('Usage: node engine/src/public-demo/cli.mjs --dry-run|--write [--out <dir>] [--force] [--engine-root <dir>] [--archive-root <dir>] [--economics-root <dir>] [--visibility unlisted|public] [--wallet-display truncated|redacted] [--source-revision <value>]\n');
+  stderr.write('Usage: node engine/src/public-demo/cli.mjs --dry-run|--write [--out <dir>] [--force] [--engine-root <dir>] [--package-root <dir>] [--archive-root <dir>] [--economics-root <dir>] [--visibility unlisted|public] [--wallet-display truncated|redacted] [--source-revision <value>]\n');
 }
 
 export function parseArgs(argv) {
@@ -16,6 +16,7 @@ export function parseArgs(argv) {
     out: '',
     force: false,
     engineRoot: '',
+    packageRoot: '',
     archiveRoot: '',
     economicsRoot: '',
     visibility: 'unlisted',
@@ -33,6 +34,9 @@ export function parseArgs(argv) {
     } else if (arg === '--force') args.force = true;
     else if (arg === '--engine-root') {
       args.engineRoot = argv[i + 1] || '';
+      i += 1;
+    } else if (arg === '--package-root') {
+      args.packageRoot = argv[i + 1] || '';
       i += 1;
     } else if (arg === '--archive-root') {
       args.archiveRoot = argv[i + 1] || '';
@@ -57,6 +61,9 @@ export function parseArgs(argv) {
   if (args.dryRun === args.write) throw new Error('exactly one of --dry-run or --write is required');
   if (args.write && !args.out) throw new Error('--out is required with --write');
   if (args.walletDisplay === 'full') throw new Error('full wallet display is not allowed for public demo builds');
+  if (args.packageRoot && (!args.engineRoot || !args.archiveRoot || !args.economicsRoot)) {
+    throw new Error('--package-root requires explicit --engine-root, --archive-root, and --economics-root');
+  }
   return args;
 }
 
@@ -77,6 +84,12 @@ export function runCli(argv, io = {}) {
   const stderr = io.stderr || process.stderr;
   const env = io.env || process.env;
 
+  const fail = error => {
+    printUsage(stderr);
+    stderr.write(`${error.message}\n`);
+    return 1;
+  };
+
   try {
     const args = parseArgs(argv);
     const engineRoot = args.engineRoot
@@ -88,6 +101,7 @@ export function runCli(argv, io = {}) {
     const economicsRoot = resolve(args.economicsRoot || resolve(engineRoot, 'data/inventory/receipt-economics-v1'));
     const bundle = buildPublicDemoBundle({
       engineRoot,
+      ...(args.packageRoot ? { packageRoot: resolve(args.packageRoot) } : {}),
       archiveRoot,
       economicsRoot,
       visibility: args.visibility,
@@ -95,25 +109,29 @@ export function runCli(argv, io = {}) {
       sourceRevision: args.sourceRevision || null,
     });
 
-    if (args.dryRun) {
-      stdout.write(renderPlan(bundle));
-      return 0;
-    }
+    const finish = resolvedBundle => {
+      if (args.dryRun) {
+        stdout.write(renderPlan(resolvedBundle));
+        return 0;
+      }
 
-    const written = writePublicDemoBundle(bundle, {
-      outRoot: args.out,
-      force: args.force,
-    });
-    stdout.write(renderPlan(bundle, written.outRoot));
-    stderr.write(`Wrote public demo bundle to ${written.outRoot}\n`);
-    return 0;
+      const written = writePublicDemoBundle(resolvedBundle, {
+        outRoot: args.out,
+        force: args.force,
+      });
+      stdout.write(renderPlan(resolvedBundle, written.outRoot));
+      stderr.write(`Wrote public demo bundle to ${written.outRoot}\n`);
+      return 0;
+    };
+
+    return typeof bundle?.then === 'function'
+      ? bundle.then(finish, fail)
+      : finish(bundle);
   } catch (error) {
-    printUsage(stderr);
-    stderr.write(`${error.message}\n`);
-    return 1;
+    return fail(error);
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exit(runCli(process.argv.slice(2)));
+  process.exit(await runCli(process.argv.slice(2)));
 }
