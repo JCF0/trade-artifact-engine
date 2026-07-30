@@ -11,8 +11,10 @@ import {
   readValidatedReceiptEconomicsWithDiagnostics,
   RECEIPT_ECONOMICS_VERSION,
 } from './receipt-economics-store.mjs';
+import { readReceiptPackageInventory } from './package-inventory.mjs';
 
 export const INVENTORY_VERSION = '1.3-slice-1';
+const inventorySources = new WeakMap();
 
 const CANONICAL_ECONOMICS_FIELDS = Object.freeze([
   'segment_index',
@@ -221,6 +223,104 @@ function attachCanonicalEconomics(receipts, archiveBundles, economicsEntries) {
   });
 }
 
+function packageScan(receiptPackage) {
+  const receiptHash = receiptPackage['manifest.json'].receipt_hash;
+  const verification = receiptPackage['verification.json'];
+  const empty = new Map();
+  return {
+    verifyByHash: new Map([[receiptHash, verification]]),
+    valuationByHash: empty,
+    imageByHash: empty,
+    metadataByHash: empty,
+    uploadDryRunByHash: empty,
+    uploadResultByHash: empty,
+    mintPlanByHash: empty,
+    mintResultByHash: empty,
+    proofSummaryByHash: new Map([[receiptHash, {
+      verification_status: receiptPackage['canonical-receipt.json'].verification_status,
+      hash_valid: verification.hash_valid,
+      violations: verification.rule_violations.length,
+    }]]),
+  };
+}
+
+function buildPackageInventoryRecord(receiptPackage, archiveBundle) {
+  const canonical = receiptPackage['canonical-receipt.json'];
+  const derived = buildReceiptArchiveBundle(
+    buildInventoryReceipt(canonical, packageScan(receiptPackage)),
+  ).inventory_record;
+  if (!archiveBundle) return derived;
+
+  const record = structuredClone(archiveBundle.inventory_record);
+  const authoritativeFields = new Set([
+    ...Object.keys(canonical),
+    'hash_valid',
+    'recomputed_hash',
+    'verifier_passed',
+    'verifier_schema_valid',
+    'verifier_consistency_valid',
+    'verifier_rule_violations',
+    'proof_summary',
+  ]);
+  for (const [field, value] of Object.entries(derived)) {
+    if (authoritativeFields.has(field)) record[field] = structuredClone(value);
+  }
+  return record;
+}
+
+function packageCanonicalEconomics(receiptPackage, recoveryMethod = null) {
+  const economics = receiptPackage['economics.json'];
+  return {
+    status: 'verified',
+    source: RECEIPT_ECONOMICS_VERSION,
+    recovery_method: recoveryMethod,
+    fields: Object.fromEntries(CANONICAL_ECONOMICS_FIELDS.map(field => [
+      field,
+      structuredClone(economics[field]),
+    ])),
+  };
+}
+
+function packageArchiveCompatible(receiptPackage, archiveBundle) {
+  if (!archiveBundle) return true;
+  const canonical = receiptPackage['canonical-receipt.json'];
+  for (const record of [archiveBundle.canonical_receipt_record, archiveBundle.inventory_record]) {
+    for (const [field, value] of Object.entries(record)) {
+      if (Object.hasOwn(canonical, field) && stableJson(canonical[field]) !== stableJson(value)) return false;
+    }
+  }
+  const verification = receiptPackage['verification.json'];
+  const mapped = {
+    hash_valid: verification.hash_valid,
+    recomputed_hash: verification.recomputed_hash,
+    verifier_passed: verification.pass,
+    verifier_schema_valid: verification.schema_valid,
+    verifier_consistency_valid: verification.consistency_valid,
+    verifier_rule_violations: verification.rule_violations,
+    proof_summary: {
+      verification_status: canonical.verification_status,
+      violations: verification.rule_violations.length,
+    },
+  };
+  return Object.entries(mapped).every(([field, value]) => (
+    !Object.hasOwn(archiveBundle.inventory_record, field)
+      || stableJson(archiveBundle.inventory_record[field]) === stableJson(value)
+  ));
+}
+
+function packageEconomicsCompatible(receiptPackage, economicsEntry) {
+  if (!economicsEntry) return true;
+  const economics = receiptPackage['economics.json'];
+  return CANONICAL_ECONOMICS_FIELDS.every(field => (
+    stableJson(economics[field]) === stableJson(economicsEntry.economics[field])
+  ));
+}
+
+function diagnosticReceiptHash(item) {
+  if (/^[a-f0-9]{64}$/.test(item?.receipt_hash || '')) return item.receipt_hash;
+  return /(?:^|\/)receipts\/([a-f0-9]{64})\.json$/.exec(item?.path || '')?.[1] || null;
+}
+
 function filterReceipts(receipts, filters = {}) {
   return receipts.filter(receipt => {
     if (filters.receipt_hash && receipt.receipt_hash !== filters.receipt_hash) return false;
@@ -234,7 +334,7 @@ function filterReceipts(receipts, filters = {}) {
   });
 }
 
-export function buildInventorySnapshot({
+function buildLegacyInventorySnapshot({
   engineRoot = DEFAULT_ENGINE_ROOT,
   archiveRoot,
   economicsRoot,
@@ -314,25 +414,179 @@ export function buildInventorySnapshot({
   };
 }
 
+async function buildPackageFirstInventorySnapshot(options) {
+  const packageRead = await readReceiptPackageInventory({ packageRoot: options.packageRoot });
+  if (options.includeArchive !== true && packageRead.diagnostics.length > 0) {
+    const diagnostic = packageRead.diagnostics[0];
+    const error = new Error('receipt package was excluded');
+    error.name = 'ReceiptPackageInventoryIntegrationError';
+    error.code = diagnostic.code;
+    error.receipt_hash = diagnostic.receipt_hash;
+    error.source = diagnostic.source;
+    error.reason = diagnostic.reason;
+    throw error;
+  }
+  const snapshot = buildLegacyInventorySnapshot({
+    ...options,
+    includeArchive: false,
+    filters: {},
+    limit: undefined,
+    offset: 0,
+  });
+  const archiveRead = options.includeArchive
+    ? readReceiptArchiveBundlesWithDiagnostics({
+      engineRoot: options.engineRoot,
+      archiveRoot: options.archiveRoot,
+    })
+    : { bundles: [], diagnostics: [] };
+  const economicsRead = options.includeArchive
+    ? readValidatedReceiptEconomicsWithDiagnostics({
+      engineRoot: options.engineRoot,
+      archiveRoot: options.archiveRoot,
+      economicsRoot: options.economicsRoot,
+    })
+    : { entries: [], diagnostics: [] };
+  const archiveMerge = options.includeArchive
+    ? mergeArchiveReceipts(snapshot.receipts, archiveRead.bundles)
+    : { receipts: snapshot.receipts, diagnostics: [] };
+  const baseReceipts = options.includeArchive
+    ? attachCanonicalEconomics(archiveMerge.receipts, archiveRead.bundles, economicsRead.entries)
+    : archiveMerge.receipts;
+  const byHash = new Map(baseReceipts.map(receipt => [receipt.receipt_hash, receipt]));
+  const archiveByHash = new Map(archiveRead.bundles.map(bundle => [bundle.receipt_hash, bundle]));
+  const archiveDiagnosticHashes = new Set([
+    ...archiveRead.diagnostics,
+    ...archiveMerge.diagnostics,
+  ].map(diagnosticReceiptHash).filter(Boolean));
+  const economicsByHash = new Map(economicsRead.entries.map(entry => [entry.receipt_hash, entry]));
+  const economicsDiagnosticHashes = new Set(
+    economicsRead.diagnostics.map(diagnosticReceiptHash).filter(Boolean),
+  );
+  const packageDiagnostics = [...packageRead.diagnostics];
+  const packageHashes = new Set([
+    ...packageRead.entries.map(entry => entry.receipt_hash),
+    ...packageRead.diagnostics.map(item => item.receipt_hash),
+  ]);
+
+  for (const item of packageRead.diagnostics) byHash.delete(item.receipt_hash);
+  for (const entry of packageRead.entries) {
+    const archiveBundle = archiveByHash.get(entry.receipt_hash);
+    const economicsEntry = economicsByHash.get(entry.receipt_hash);
+    if (archiveDiagnosticHashes.has(entry.receipt_hash)
+        || !packageArchiveCompatible(entry.receipt_package, archiveBundle)) {
+      byHash.delete(entry.receipt_hash);
+      packageDiagnostics.push({
+        code: 'receipt_package_excluded',
+        receipt_hash: entry.receipt_hash,
+        source: 'receipt_package_v1',
+        reason: 'package_legacy_overlap_mismatch',
+      });
+      continue;
+    }
+    if (economicsDiagnosticHashes.has(entry.receipt_hash)
+        || !packageEconomicsCompatible(entry.receipt_package, economicsEntry)) {
+      byHash.delete(entry.receipt_hash);
+      packageDiagnostics.push({
+        code: 'receipt_package_excluded',
+        receipt_hash: entry.receipt_hash,
+        source: 'receipt_package_v1',
+        reason: 'package_legacy_economics_mismatch',
+      });
+      continue;
+    }
+    byHash.set(entry.receipt_hash, {
+      ...buildPackageInventoryRecord(entry.receipt_package, archiveBundle),
+      canonical_economics: packageCanonicalEconomics(
+        entry.receipt_package,
+        economicsEntry?.recovery_method ?? null,
+      ),
+    });
+  }
+
+  const allReceipts = [...byHash.values()].sort((a, b) => a.receipt_hash.localeCompare(b.receipt_hash));
+  const filters = options.filters || {};
+  const filteredReceipts = filterReceipts(allReceipts, filters);
+  const normalizedOffset = Math.max(0, toInteger(options.offset, 0));
+  const normalizedLimit = options.limit == null
+    ? filteredReceipts.length
+    : Math.max(0, toInteger(options.limit, filteredReceipts.length));
+  const receipts = filteredReceipts.slice(normalizedOffset, normalizedOffset + normalizedLimit);
+  let archive;
+  if (options.includeArchive) {
+    const diagnostics = sortDiagnostics([
+      ...archiveRead.diagnostics,
+      ...archiveMerge.diagnostics,
+      ...economicsRead.diagnostics,
+      ...packageDiagnostics,
+    ]);
+    archive = {
+      included: true,
+      counts: {
+        bundles_read: archiveRead.bundles.length,
+        diagnostics: diagnostics.length,
+      },
+      diagnostics,
+    };
+  }
+  const finalSnapshot = {
+    generated_at: snapshot.generated_at,
+    inventory_version: snapshot.inventory_version,
+    engine_root: snapshot.engine_root,
+    include_legacy: snapshot.include_legacy,
+    include_excluded: snapshot.include_excluded,
+    counts: {
+      ...snapshot.counts,
+      receipts: filteredReceipts.length,
+      returned_receipts: receipts.length,
+    },
+    filters,
+    ...(archive ? { archive } : {}),
+    artifacts: snapshot.artifacts,
+    receipts,
+    legacy_receipts: snapshot.legacy_receipts,
+  };
+  const fallbackHashes = new Set(archiveRead.bundles.map(bundle => bundle.receipt_hash));
+  inventorySources.set(finalSnapshot, new Map(receipts.map(receipt => [
+    receipt.receipt_hash,
+    packageHashes.has(receipt.receipt_hash)
+      ? 'receipt_package_v1'
+      : (fallbackHashes.has(receipt.receipt_hash) ? 'receipt_archive_v1' : 'current_v12_debug_snapshot'),
+  ])));
+  return finalSnapshot;
+}
+
+export function buildInventorySnapshot(options = {}) {
+  // Preserve the established synchronous API unless an explicit package root
+  // opts into the asynchronous Slice 2 package-store reader.
+  if (Object.hasOwn(options, 'packageRoot') && options.packageRoot !== undefined) {
+    return buildPackageFirstInventorySnapshot(options);
+  }
+  return buildLegacyInventorySnapshot(options);
+}
+
+export function getInventoryReceiptSource(snapshot, receiptHash) {
+  return inventorySources.get(snapshot)?.get(receiptHash) || null;
+}
+
 export function getInventoryReceipt(receiptHash, options = {}) {
   const snapshot = buildInventorySnapshot({
     ...options,
     filters: { receipt_hash: receiptHash },
   });
-  return snapshot.receipts[0] || null;
+  const select = resolvedSnapshot => resolvedSnapshot.receipts[0] || null;
+  return typeof snapshot?.then === 'function' ? snapshot.then(select) : select(snapshot);
 }
 
 export function listLegacyInventory(options = {}) {
-  const snapshot = buildInventorySnapshot({
-    ...options,
-    includeLegacy: true,
-  });
-  return snapshot.legacy_receipts;
+  const snapshot = buildInventorySnapshot({ ...options, includeLegacy: true });
+  const select = value => value.legacy_receipts;
+  return typeof snapshot?.then === 'function' ? snapshot.then(select) : select(snapshot);
 }
 
 export function getLegacyInventoryReceipt(verificationHash, options = {}) {
-  const legacyReceipts = listLegacyInventory(options);
-  return legacyReceipts.find(receipt => receipt.verification_hash === verificationHash) || null;
+  const legacy = listLegacyInventory(options);
+  const select = items => items.find(item => item.verification_hash === verificationHash) || null;
+  return typeof legacy?.then === 'function' ? legacy.then(select) : select(legacy);
 }
 
 export function parseInventoryQuery(query = {}) {

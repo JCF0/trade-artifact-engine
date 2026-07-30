@@ -212,53 +212,59 @@ export function buildReceiptBoardView(options = {}) {
     engineRoot,
     archiveRoot: options.archiveRoot,
     economicsRoot: options.economicsRoot,
+    ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
     includeLegacy: false,
     includeExcluded: false,
     includeArchive: true,
   });
-  const receiptByHash = new Map(snapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
+  const buildFromSnapshot = resolvedSnapshot => {
+    const receiptByHash = new Map(resolvedSnapshot.receipts.map(receipt => [receipt.receipt_hash, receipt]));
 
-  manifest.entries.map(normalizeEntry).forEach(entry => {
-    if (!isCanonicalReceiptHash(entry.receipt_hash)) {
-      excludedEntries.push(buildExcludedEntry(entry, 'malformed_receipt_hash'));
-      return;
-    }
+    manifest.entries.map(normalizeEntry).forEach(entry => {
+      if (!isCanonicalReceiptHash(entry.receipt_hash)) {
+        excludedEntries.push(buildExcludedEntry(entry, 'malformed_receipt_hash'));
+        return;
+      }
 
-    if (!rankingSupported) {
-      excludedEntries.push(buildExcludedEntry(entry, 'unsupported_metric'));
-      return;
-    }
+      if (!rankingSupported) {
+        excludedEntries.push(buildExcludedEntry(entry, 'unsupported_metric'));
+        return;
+      }
 
-    const receipt = receiptByHash.get(entry.receipt_hash);
-    if (!receipt) {
-      excludedEntries.push(buildExcludedEntry(entry, 'missing_receipt'));
-      return;
-    }
+      const receipt = receiptByHash.get(entry.receipt_hash);
+      if (!receipt) {
+        excludedEntries.push(buildExcludedEntry(entry, 'missing_receipt'));
+        return;
+      }
 
-    const invalidReason = validateVerifiedReceipt(receipt);
-    if (invalidReason) {
-      excludedEntries.push(buildExcludedEntry(entry, invalidReason));
-      return;
-    }
+      const invalidReason = validateVerifiedReceipt(receipt);
+      if (invalidReason) {
+        excludedEntries.push(buildExcludedEntry(entry, invalidReason));
+        return;
+      }
 
-    rows.push(buildRow(entry, receipt));
-  });
+      rows.push(buildRow(entry, receipt));
+    });
 
-  const rankedRows = finalizeRows(rows);
-  const pagedRows = limit == null
-    ? rankedRows.slice(offset)
-    : rankedRows.slice(offset, offset + limit);
+    const rankedRows = finalizeRows(rows);
+    const pagedRows = limit == null
+      ? rankedRows.slice(offset)
+      : rankedRows.slice(offset, offset + limit);
 
-  return {
-    board_type: BOARD_TYPE,
-    title: manifest.title,
-    subtitle: manifest.subtitle,
-    selection_scope: manifest.selection_scope,
-    ranking: manifest.ranking,
-    count: pagedRows.length,
-    empty: pagedRows.length === 0,
-    disclosures: [...RECEIPT_BOARD_DISCLOSURES],
-    rows: pagedRows,
-    excluded_entries: includeExcluded ? excludedEntries : [],
+    return {
+      board_type: BOARD_TYPE,
+      title: manifest.title,
+      subtitle: manifest.subtitle,
+      selection_scope: manifest.selection_scope,
+      ranking: manifest.ranking,
+      count: pagedRows.length,
+      empty: pagedRows.length === 0,
+      disclosures: [...RECEIPT_BOARD_DISCLOSURES],
+      rows: pagedRows,
+      excluded_entries: includeExcluded ? excludedEntries : [],
+    };
   };
+  return typeof snapshot?.then === 'function'
+    ? snapshot.then(buildFromSnapshot)
+    : buildFromSnapshot(snapshot);
 }
