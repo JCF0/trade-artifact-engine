@@ -111,6 +111,14 @@ V1.10 adds deterministic static public-demo bundle generation and deployment-rea
 
 These v1.10 changes remain static and read-only. They do not deploy, connect GitHub, edit DNS, add a custom domain, add Cloudflare Functions, create accounts, run a database, connect wallets, upload, mint, sign, normalize to USD, or add mainnet behavior. See `engine/docs/v1.10-public-read-only-demo.md`.
 
+V1.12 makes `receipt_package_v1` the authoritative immutable object for packaged receipts and carries that authority through package-first inventory, compatibility views, proof/verifier/board/Share Card/public-demo surfaces, targeted deterministic orchestration, and bounded Helius acquisition:
+- `node engine/src/run-v112-regression.mjs`
+- `engine/docs/v1.12-release-notes.md`
+- `engine/docs/v1.12-limitations.md`
+- `engine/docs/v1.12-operations.md`
+
+The JUP and RAY golden packages pin exact package and member identities. One separately authorized controlled live RAY acquisition reproduced the retained normalized evidence, published receipt hash, and complete five-member package in Slice 7 dry-run. V1.12 does not add hosted reconstruction, wallet-wide target discovery, production package writes from a hosted worker, deployment, upload, mainnet minting, or signing. The devnet mint pipeline remains separate, and the deterministic v1.12 regression runner performs no live Helius call.
+
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
