@@ -1,4 +1,5 @@
 import { fail, ReceiptPackageError } from './errors.mjs';
+import { RECEIPT_PACKAGE_FETCH_PROFILE_V1 } from './profiles.mjs';
 
 export { ReceiptPackageError };
 export const PACKAGE_VERSION = 'receipt_package_v1';
@@ -39,7 +40,7 @@ export const ECONOMICS_RECORD_FIELDS = Object.freeze([
 export const VERIFICATION_FIELDS = Object.freeze([
   'receipt_id', 'receipt_hash', 'recomputed_hash', 'hash_valid', 'rule_violations', 'schema_valid', 'consistency_valid', 'pass',
 ]);
-export const FETCH_PROFILE = 'receipt_scoped_transaction_selection_v1';
+export const FETCH_PROFILE = RECEIPT_PACKAGE_FETCH_PROFILE_V1;
 export const VERSION_IDENTIFIER_PATTERN = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_v[1-9][0-9]*$/;
 export const INPUT_COMMITMENT_FIELDS = Object.freeze([
   'fetch_profile', 'normalization_profile', 'reconstruction_engine_version', 'accounting_method_version',

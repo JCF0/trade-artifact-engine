@@ -235,9 +235,22 @@ Every field equals the corresponding stable canonical field. Overlaying economic
 }
 ```
 
-`fetch_profile` identifies the deterministic receipt-scoped selection rule, not a provider or request configuration. It means only normalized events selected by the canonical `entry_tx_hashes` and `exit_tx_hashes`, in those arrays’ semantic order, participate in receipt reconstruction. Provider identity and wallet lookback are operational data.
+The v1 package profiles are frozen as:
 
-`reconstruction_engine_version` is the stable package-native reconstruction implementation/profile version and is intentionally distinct from the removed operational `source` label. `accounting_method_version` must equal both `canonical-receipt.json.accounting_method` and `canonical-receipt.json.ledger_accounting_version`.
+```text
+fetch_profile = receipt_scoped_transaction_selection_v1
+normalization_profile = artifact_solana_spot_normalization_v1
+reconstruction_engine_version = artifact_position_ledger_receipt_v1
+accounting_method_version = canonical-receipt.json.accounting_method
+```
+
+`receipt_scoped_transaction_selection_v1` is the deterministic receipt-scoped selection algorithm. It selects only normalized transaction events whose transaction hashes occur in the canonical receipt's `entry_tx_hashes` and `exit_tx_hashes`, preserving those arrays' receipt-defined semantic order and rejecting missing, duplicate, or unrelated selected events. It is not a provider, endpoint, pagination, lookback, request, cache, or wallet-history configuration.
+
+`artifact_solana_spot_normalization_v1` is the deterministic Solana spot-event normalization algorithm used by this package standard: it projects selected successful spot swap facts into the stable receipt reconstruction vocabulary (transaction identity, event time/order, token/quote identities, direction, quantities, and raw-quote values) with the v1 decimal, ordering, and quote-classification rules. It excludes raw provider bodies, provider-specific envelopes, request/page metadata, credentials, machine paths, fetch times, and unrelated wallet events.
+
+These two strings are stable package-standard algorithm identifiers. They are not Git tags, commits, release labels, runtime labels, provider profiles, or deployment configurations. Any future algorithm change to either definition requires a new versioned identifier and an explicit package/profile compatibility decision; the existing identifier must never be redefined in place.
+
+`artifact_position_ledger_receipt_v1` identifies the stable package-native position-ledger receipt reconstruction algorithm and is intentionally distinct from the removed operational `source` label. `accounting_method_version` is copied from and must equal both `canonical-receipt.json.accounting_method` and `canonical-receipt.json.ledger_accounting_version`.
 
 The normalization, reconstruction, and accounting identifiers must use the closed versioned-identifier grammar `[a-z][a-z0-9]*(?:_[a-z0-9]+)*_v[1-9][0-9]*`. Free-form run labels and timestamps are not valid profile/version identifiers.
 
@@ -379,9 +392,9 @@ Cross-member/integrity:
 - `member_hash_mismatch`
 - `package_digest_mismatch`
 
-## Slice 2 package-store boundary (proposal only)
+## Slice 2 package-store boundary
 
-A filesystem package store should consume only already-built, already-validated serialized members:
+The filesystem package store consumes only already-built, already-validated serialized members:
 
 ```js
 inspectReceiptPackageV1(receiptHash)

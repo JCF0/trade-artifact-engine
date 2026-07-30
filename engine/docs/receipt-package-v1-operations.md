@@ -156,17 +156,43 @@ during_abort_cleanup
 
 Tests inject once at every required boundary and assert that `inspect`/`readCommitted` observes either absence or one complete validated package, never partial committed content.
 
-## Proposed Slice 3 JUP/RAY golden-package migration
+## Slice 3A offline recovered-package migration
 
-Slice 3 should migrate the two reviewed golden receipts without adding acquisition or orchestration:
+`migrateRecoveredReceiptPackagesV1()` and its CLI convert already-recovered local canonical candidates into packages without acquisition or production publication:
 
-1. Pin the exact reviewed JUP and RAY canonical receipt, verification, archive, economics, and input-commitment source values already present in repository fixtures/evidence. Do not fetch Helius or read mutable production inventory.
-2. In an isolated new temporary root, build each package through `buildReceiptPackageV1()` and validate it through `validateReceiptPackageV1()`.
-3. Serialize through `serializeReceiptPackageV1()` and record the five member SHA-256 values plus `package_digest` in a review report. Confirm JUP and RAY receipt hashes match the intended historical identities.
-4. Stage, validateStage, and commit each package through this adapter. After each commit, call `inspect()` and `readCommitted()` and require exact package digest and byte equality with the in-memory serializer output.
-5. Repeat publication into a second fresh temporary root and require byte-identical member files and identical package digests. Repeat publication in the first root and require `unchanged`.
-6. Exercise an intentional same-receipt/different-package fixture and require `package_store_conflict` without changing either golden directory.
-7. Review the resulting temporary tree and checksums. Keep package UUIDs/paths out of golden data; retain only the five canonical member files per receipt.
-8. Only after explicit approval of the exact target root, copy/publish via stage/commit into a dedicated receipt-package root. Do not write archive/economics indexes, inventory, public-demo output, upload state, mint state, or signing state.
-9. Reconcile any `commit_unknown` with `inspect()` before deciding whether to retry. Never overwrite a malformed or conflicting historical directory.
-10. Run Slice 1, store, v1.9, v1.10, and v1.11 deterministic regressions and compare the target root before/after inventory separately. Git staging/commit/push remains under user control.
+```text
+node engine/src/receipt-package/migrate-recovered-packages.mjs \
+  --candidates <local-recovery-candidate.json> [--candidates <file> ...] \
+  --archive-root <explicit-receipt-archive-v1-root> \
+  --economics-root <explicit-receipt-economics-v1-root>
+
+node engine/src/receipt-package/migrate-recovered-packages.mjs \
+  --candidates <file> [--candidates <file> ...] \
+  --archive-root <path> --economics-root <path> \
+  --write --package-root <explicit-pre-existing-isolated-root>
+```
+
+Dry-run is the default. Archive and economics roots are always mandatory. Write mode additionally requires a pre-existing package root; no `engine/data` or production package root is inferred. Candidate descriptors passed to the API may include `expectedSha256`, in which case the exact file bytes are checked before parsing.
+
+For every unique receipt hash, the migration validates the complete candidate and persisted verifier result, reruns deterministic `verifyReceipt()`, requires exact published-hash reproduction and zero violations, reads compatibility records only through `readReceiptArchiveBundle()` and `readReceiptEconomics()`, compares all overlapping fields, and constructs package-native projections only through `buildReceiptPackageV1()`. Publication uses only `createReceiptPackageFsStore()` stage, staged readback validation, and commit operations. `commit_unknown` is reconciled by store inspection.
+
+The deterministic report contains candidate/eligibility/rejection/write/unchanged/conflict counters, sorted receipt hashes, package digests, all five member hashes, and sorted error codes by candidate identity. Candidate rejection or a conflict found during preflight prevents every planned write. Before the first commit, all would-write packages are staged and read back; a staging/validation failure aborts every still-owned stage and publishes nothing.
+
+The Slice 2 store provides an atomic visibility boundary per receipt, not a multi-receipt transaction. If a race, held per-receipt lock, durability failure, or other publication error occurs after an earlier receipt committed, already committed receipt directories remain immutable and complete; they are never rolled back. The migration aborts every still-owned current/later stage and returns the exact `committed`/`unchanged` counters plus a deterministic error code for reconciliation. Thus the root can contain a committed prefix of the hash-sorted batch, but never a partially visible receipt package. Rerun the identical reviewed batch after resolving the error: validated matching packages become `unchanged`, and absent packages are safely staged again.
+
+The existing Slice 2 failure-evidence rule still applies: if `store.stage()` itself fails after creating its hidden staging directory, it returns no opaque handle and may retain that one hidden partial stage for administrative evidence (`.<receipt-hash>.<uuid>.tmp`). The migration must not guess its path or recursively delete it without the store capability; committed readers never expose it. Cleanup remains deferred to the separately reviewed stale-stage procedure described in the Slice 2 boundary. The golden success criterion is stricter: after successful publication both reviewed roots contain zero hidden stages or locks.
+
+Recovery method, candidate digest, candidate/archive/economics paths, provider provenance, raw history, wallet-wide input digests, operational timestamps, upload, mint, and signing data never enter package members. Archive/economics compatibility roots are read-only and their files and indexes are not rebuilt or changed.
+
+### Golden identities
+
+The focused golden suite pins these byte identities. Any change requires an explicit package/profile-version decision:
+
+| Receipt | `package_digest` | `manifest.json` | `canonical-receipt.json` | `verification.json` | `archive-record.json` | `economics.json` |
+|---|---|---|---|---|---|---|
+| JUP `5fb5732d…a0bbca` | `5b8d2241a70eb68b4bc1b43f3d471dbd677b6d89ba47dc0569f7af7d34e71278` | `2ce234ccedcb52ac555f49129de7a3b6660506b04ed452c02503ec626646f1f6` | `c636cfda958eb87341d3225d33b53b7dc9dcf157def5cc3a054eb56cd4e9eb61` | `851c283e7e321bee61a939f1b39dbfb1f09ec038cdd078ceca50c8f7167c6ad0` | `d28c5a58b920f526c5ed9e08e4e5b034d99285cd7182a1374f1eb9c10697c6ac` | `d8d716459707f3b8c7f95b2f6e64a3c1f1faf91e62629e0477213e4b4ed9ffbd` |
+| RAY `4d33969c…0e4341` | `25e6820d0ac45e8347375eadd824fde2c6ec528b56b637a0144c013da33d5fa2` | `9fffd0746b49b5e3b89dbf113675c76290c7ae10f99542a23b1c385e3c75b41e` | `94717ca77018826e88bf39313c7b4b810ade1d42ed9f507809c649f1f6f3f2cb` | `808c2d03cd54bb13ed418ea034075dc8b523cb01e6a9ce3359d2959498141e6d` | `777987cf14a3e41034923a6acc0e87ce15ec7affef68b0e3fb32890ad24bd695` | `4664d29a151bba54051c4a8ef6044990a2ca474a4b45a421536106e9fa5d0ea8` |
+
+### Proposed Slice 3B authoritative-root procedure
+
+Slice 3B must be a separately authorized controlled migration. Before any write: require reviewed committed migration code and a clean/up-to-date source gate; provision and name the exact dedicated package root; hash the complete archive/economics stores; verify the exact two candidate-file digests and receipt-hash set; run a dry-run requiring `discovered=2`, `eligible=2`, `rejected=0`, `would_write=2`, and zero conflicts. Then write once through this migration API, require `committed=2`, read both packages through the store and compare every byte/digest to the golden table, rerun identically and require `unchanged=2`, inspect the root for exactly two non-hidden committed directories, repeat the privacy scan, and prove archive/economics and tracked repository bytes unchanged. Stop on any malformed existing destination, conflict, `commit_unknown` that cannot be reconciled, source-gate mismatch, or counter/digest drift. No copy, overwrite, archive/index rebuild, inventory/public-demo integration, network, upload, mint, or signing step belongs in Slice 3B.
