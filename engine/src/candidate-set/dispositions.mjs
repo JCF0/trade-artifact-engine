@@ -28,9 +28,9 @@ export function compareTransactionDispositionsV1(left, right) {
 }
 
 export function compareNormalizedEventRecordsV1(left, right) {
-  return left.source_slot - right.source_slot
-    || left.slice7_event.timestamp - right.slice7_event.timestamp
+  return left.slice7_event.timestamp - right.slice7_event.timestamp
     || compareCodeUnits(left.slice7_event.tx_hash, right.slice7_event.tx_hash)
+    || left.source_slot - right.source_slot
     || compareCodeUnits(left.event_digest, right.event_digest);
 }
 

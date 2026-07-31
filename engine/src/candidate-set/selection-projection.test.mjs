@@ -5,6 +5,7 @@ import test from 'node:test';
 import { buildWalletAcquisitionResultV1 } from './acquisition-result.mjs';
 import { buildActivityFindingV1 } from './activity-findings.mjs';
 import { recomputeCoverageV1 } from './coverage.mjs';
+import { compareNormalizedEventRecordsV1 } from './dispositions.mjs';
 import { buildCandidateEvidenceBundleV1 } from './evidence-bundle.mjs';
 import { buildDispositionV1, buildEventRecordV1, computeSourceTransactionDigest } from './identity.mjs';
 import { GENESIS_HASH } from './schema.mjs';
@@ -31,7 +32,7 @@ function raw({ token = TOKEN, timestamp, tx, rawIndex, buy = true }) {
 function evidenceFor(specs) {
   const records = specs.map(spec => buildEventRecordV1({ source_slot: spec.slot, slice7_event: raw(spec) }));
   const dispositions = records.map(record => buildDispositionV1({ tx_hash: record.slice7_event.tx_hash, slot: record.source_slot, block_time: record.slice7_event.timestamp, disposition_type: 'supported_normalized_event', affected_token_mints: [record.slice7_event.token_in_mint, record.slice7_event.token_out_mint].sort(), normalized_event_digests: [record.event_digest], finding_digests: [] }));
-  records.sort((a, b) => a.source_slot - b.source_slot || a.slice7_event.timestamp - b.slice7_event.timestamp || (a.slice7_event.tx_hash < b.slice7_event.tx_hash ? -1 : 1));
+  records.sort(compareNormalizedEventRecordsV1);
   dispositions.sort((a, b) => a.slot - b.slot || (a.tx_hash < b.tx_hash ? -1 : 1));
   records.forEach((record, index) => { if (record.slice7_event.raw_index !== index) throw new Error('fixture raw indexes must follow evidence order'); });
   const coverage = recomputeCoverageV1({ transactionDispositions: dispositions, normalizedEventRecords: records, activityFindings: [], boundary, inputStatus, paginationTerminalReason: 'historical_bound_reached' });
@@ -71,8 +72,8 @@ function expectProjectionCode(evidenceBundle, projection, code) {
 
 test('uses target-acquisition timestamp/signature order even when same-time source slots disagree', () => {
   const evidenceBundle = evidenceFor([
-    { slot: 10, timestamp: 100, tx: 'z-signature', rawIndex: 0, buy: true },
-    { slot: 11, timestamp: 100, tx: 'a-signature', rawIndex: 1, buy: false },
+    { slot: 10, timestamp: 100, tx: 'z-signature', rawIndex: 1, buy: true },
+    { slot: 11, timestamp: 100, tx: 'a-signature', rawIndex: 0, buy: false },
   ]);
   const projection = buildCandidateSelectionProjectionV1({ evidenceBundle, tokenMint: TOKEN });
   assert.deepEqual(projection.receipt_scoped_evidence.events.map(event => event.tx_hash), ['a-signature', 'z-signature']);

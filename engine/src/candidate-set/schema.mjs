@@ -47,6 +47,7 @@ export function assertExactFields(value, fields, context) {
   for (const key of fields) if (!Object.hasOwn(value, key)) fail('missing_field', `${context} is missing field`, { context, field: key });
 }
 function nonempty(value, field) { if (typeof value !== 'string' || value.length === 0) fail('invalid_field', `${field} must be a non-empty string`, { field }); }
+function identifierCode(value, field) { if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) || /(?:api[_-]?key|authorization|bearer|credential|password|secret)/i.test(value)) fail('invalid_field', `${field} must be a bounded non-sensitive identifier code`, { field }); }
 function safe(value, field, nullable = false) { if (nullable && value === null) return; if (!Number.isSafeInteger(value) || value < 0) fail('invalid_field', `${field} must be ${nullable ? 'null or ' : ''}a non-negative safe integer`, { field }); }
 function finite(value, field, { nullable = false, positive = false } = {}) { if (nullable && value === null) return; if (typeof value !== 'number' || !Number.isFinite(value) || Object.is(value, -0) || (positive && value <= 0)) fail('invalid_field', `${field} is invalid`, { field }); }
 function oneOf(value, values, field) { if (!values.includes(value)) fail('invalid_field', `${field} has an unsupported value`, { field }); }
@@ -143,7 +144,7 @@ export function validateDispositionV1(value, { verifyDigest = true } = {}) {
   if (verifyDigest) verifyWithout(value, ['disposition_id','disposition_digest'], value.disposition_digest); return true;
 }
 export function validateSlice7EventV1(value) {
-  assertExactFields(value, SLICE7_EVENT_FIELDS, 'slice7_event'); for (const field of ['wallet','tx_hash','source','token_in_mint','token_out_mint','extraction_method']) nonempty(value[field], field);
+  assertExactFields(value, SLICE7_EVENT_FIELDS, 'slice7_event'); for (const field of ['wallet','tx_hash','token_in_mint','token_out_mint']) nonempty(value[field], field); for (const field of ['source','extraction_method']) identifierCode(value[field], field);
   for (const field of ['timestamp','token_in_decimals','token_out_decimals','raw_index']) safe(value[field], field); if (value.token_in_decimals > 255 || value.token_out_decimals > 255 || value.token_in_mint === value.token_out_mint) fail('invalid_field', 'event identity/decimals are invalid');
   finite(value.token_in_amount, 'token_in_amount', { positive: true }); finite(value.token_out_amount, 'token_out_amount', { positive: true }); return true;
 }
