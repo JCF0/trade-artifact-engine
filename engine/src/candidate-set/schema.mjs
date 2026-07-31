@@ -125,6 +125,7 @@ export function validateFindingV1(value, { verifyDigest = true } = {}) {
   assertExactFields(value.time_range, ['first_observed_at','last_observed_at','first_observed_slot','last_observed_slot'], 'finding.time_range');
   for (const field of Object.keys(value.time_range)) safe(value.time_range[field], field); if (value.time_range.first_observed_at > value.time_range.last_observed_at || value.time_range.first_observed_slot > value.time_range.last_observed_slot) fail('invalid_field', 'finding time range is reversed');
   orderedUniqueStrings(value.affected_token_mints, 'affected_token_mints'); orderedUniqueStrings(value.affected_quote_mints, 'affected_quote_mints');
+  if (value.affected_token_mints.some(mint => value.affected_quote_mints.includes(mint))) fail('invalid_activity_finding', 'affected token and quote mints must be disjoint');
   if (value.impact_scope === 'token_specific' && value.affected_token_mints.length === 0) fail('invalid_field', 'token-specific finding requires an affected mint');
   orderedUniqueStrings(value.source_transaction_digests, 'source_transaction_digests', { digests: true, nonemptyArray: true }); orderedUniqueStrings(value.source_event_digests, 'source_event_digests', { digests: true });
   orderedUniqueStrings(value.reason_codes, 'reason_codes', { nonemptyArray: true }); orderedUniqueStrings(value.disclosure_codes, 'disclosure_codes');

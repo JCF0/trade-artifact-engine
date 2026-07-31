@@ -13,9 +13,11 @@ The acquisition result contains exactly:
 - a finalized chain boundary;
 - fail-closed input status;
 - recomputable coverage;
-- canonical transaction dispositions;
-- canonical normalized event records; and
-- canonical activity findings.
+- transaction dispositions;
+- normalized event records; and
+- activity findings.
+
+Those acquisition-input collections may arrive in noncanonical order. `buildCandidateEvidenceBundleV1()` validates their contents and accounting, canonicalizes all three collections, builds canonical integrity indexes, and validates the completed envelope before issuance.
 
 The contract requires detached plain data without provider response bodies, credentials, URLs, local paths, storage handles or publication state. Exact object shapes and identifier-code fields enforce part of this boundary, but several identity strings (including wallet, transaction hash, blockhash and mint fields) are currently validated only as nonempty strings. A trusted acquisition boundary must therefore prevent sensitive-looking values from entering those fields until lexical validation is hardened.
 
@@ -25,7 +27,7 @@ The only window version is `fixed_lookback_latest_state_v1`. Its identity includ
 
 `initial_before_signature` **must be null**. This is an identity and validation rule: acquisition begins at the latest wallet state and paginates backward. A non-null initial cursor could silently turn a latest-state result into an arbitrary historical slice and is rejected.
 
-The lower bound includes `oldest_allowed_timestamp` and `completion_status: proven`. The Slice 1 product contract permits only fixed lookbacks and no arbitrary historical end date. The current pure schema validates a nonempty lookback-profile identifier and nonnegative duration but does not itself contain the permitted-profile allowlist; the future acquisition/hosted boundary must enforce that allowlist before constructing the pure result.
+The lower bound includes `oldest_allowed_timestamp` and `completion_status: proven`. The Slice 1 product contract permits only fixed lookbacks and no arbitrary historical end date. The current pure schema validates a nonempty lookback-profile identifier, nonnegative duration and a proven lower boundary, but does not enforce `anchor_block_time - oldest_allowed_timestamp === requested_lookback_seconds` and does not contain the permitted-profile allowlist. A future acquisition/hosted boundary must enforce the configured duration relationship and allowlist before constructing the pure result.
 
 ## Finalized slot-aware upper boundary
 
@@ -70,11 +72,11 @@ Supported activity is normalized into the frozen Slice 7 event shape. The canoni
 
 A finding has `impact_scope: token_specific` or `wallet_wide` and independently states whether it blocks candidate projection and receipt publication.
 
-Token-specific unsupported or ambiguous activity blocks authoritative candidate reconstruction only for affected token mints. Other unaffected tokens may still be reconstructed. The blocked token receives a deterministic summary rather than a misleading candidate. These two activity classes are the only source of v1.13 blocked summaries.
+Token-specific unsupported or ambiguous activity blocks authoritative candidate reconstruction only for `affected_token_mints`, which identify position/base-token candidates. `affected_quote_mints` is disjoint contextual quote information and never becomes a blocked position merely by appearing there. The authoritative builder classifies each supported event with the existing ledger quote rules and removes it only when its reconstructed position token is blocked. Other tokens—including tokens sharing USDC or another common quote—remain independently reconstructable. The blocked position token receives a deterministic summary rather than misleading supported-subset economics. These two activity classes are the only source of v1.13 blocked summaries.
 
 Partial history and unobserved inventory are represented on visible candidates through `ledger_evidence_status`, flags, limitations, reason codes and disclosures. External-transfer uncertainty is a candidate limitation/reason code. Mark limitations are valuation states and mark/unrealized reason codes. Balance-boundary mismatch is reserved for a future historical-balance boundary slice and is not claimed as implemented in v1.13.
 
-Wallet-wide uncertainty cannot be isolated safely. Any unresolved wallet-wide finding prevents acquisition-result acceptance for candidate evidence; no evidence bundle or candidate set is emitted.
+Wallet-wide uncertainty cannot be isolated safely. Any unresolved wallet-wide finding prevents issuance through the sole supported constructor, `buildCandidateEvidenceBundleV1()`; no supported production construction path emits an evidence bundle or candidate set.
 
 ## Source-transaction reference identity
 
@@ -94,7 +96,7 @@ Wallet-wide event `raw_index` values are dense in canonical order. At selection 
 
 ## Mark-observation identity
 
-Marks are separate `wallet_mark_observation_v1` content-addressed observations using only `direct_quote_mark_v1`. The canonical evidence profile explicitly commits `mark_profile: direct_quote_mark_v1` together with `mark_max_age_seconds: 300`; both fields participate in evidence and scope identity. A null mark profile requires a null maximum age.
+Marks are separate `wallet_mark_observation_v1` content-addressed observations using only `direct_quote_mark_v1`. An acquisition result may initially declare both mark-profile fields null; evidence construction may enrich that result with mark observations. The completed canonical evidence profile then commits `mark_profile: direct_quote_mark_v1` together with `mark_max_age_seconds: 300`, and both fields participate in evidence and scope identity. A completed evidence profile with a null mark profile requires a null maximum age and no marks.
 
 Mark observations are unique per `(token_mint, quote_mint)` pair. An empty observation collection requires `mark_profile: null` and `mark_max_age_seconds: null`; every nonempty collection requires the frozen profile and 300-second policy.
 
@@ -113,7 +115,7 @@ The evidence bundle also recomputes four ordered digest indexes and counts:
 - activity findings; and
 - mark observations.
 
-The bundle digest hashes the complete payload only. Candidate-set commitments copy the evidence-bundle, coverage and index digests, and candidate-set validation reconstructs the full projection from the bound evidence.
+The bundle digest hashes the complete payload only. Candidate-set commitments copy the evidence-bundle, coverage and index digests. `validateCandidateSetV1()` performs structural and self-consistency validation only; it does not independently establish reconstructed economics. `validateWalletCandidateSetV1AgainstEvidenceBundle()` performs authoritative evidence-bound reconstruction of the full projection and rejects self-consistent forged economics.
 
 ## Fail-closed acquisition behavior
 

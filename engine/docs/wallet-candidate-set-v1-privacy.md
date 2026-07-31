@@ -10,6 +10,8 @@ Slice 1 is a pure local contract; it does not yet implement hosted jobs, authent
 
 `candidate_evidence_bundle_v1` is the replay authority and remains server-side in a later hosted architecture. It contains transaction anchors, normalized event records, findings, marks and integrity indexes needed to reconstruct and audit candidate projections.
 
+`buildCandidateEvidenceBundleV1()` is the only exported production constructor that can issue this envelope. It rejects wallet-wide uncertainty before issuance. Token-local findings keep affected position tokens separate and disjoint from contextual quote mints, so a common quote does not expose or suppress unrelated position candidates merely by being shared.
+
 The browser-facing `wallet_candidate_set_v1` is a smaller projection, but it is not finding-free: it copies the complete structured `activity_findings` array, including source transaction and source event digest anchors, together with candidate projections and blocked summaries. It omits the normalized event-record arrays themselves, transaction-disposition arrays, mark-observation arrays, and the private source-event-to-disposition projection mapping. Visible economics and status fields are candidate projections, not authorization to retrieve the underlying evidence.
 
 ## Digests are not access rights

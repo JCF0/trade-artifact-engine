@@ -187,5 +187,4 @@ export function buildCandidateEvidenceBundleV1(input) {
   return envelope;
 }
 
-export const buildEvidenceBundleV1 = buildCandidateEvidenceBundleV1;
 export const validateEvidenceBundleV1 = validateCandidateEvidenceBundleV1;

@@ -86,6 +86,7 @@ const SAFE_V112_COMPATIBILITY_SUITES = Object.freeze([
 const CANDIDATE_SET_TEST_FILES = Object.freeze([
   'engine/src/candidate-set/acquisition-result.test.mjs',
   'engine/src/candidate-set/activity-findings.test.mjs',
+  'engine/src/candidate-set/authority-boundary.test.mjs',
   'engine/src/candidate-set/blocked-summary.test.mjs',
   'engine/src/candidate-set/builder.test.mjs',
   'engine/src/candidate-set/capabilities.test.mjs',
@@ -105,6 +106,7 @@ const CANDIDATE_SET_TEST_FILES = Object.freeze([
   'engine/src/candidate-set/selection-projection.test.mjs',
   'engine/src/candidate-set/selection-resolver.test.mjs',
   'engine/src/candidate-set/serialize.test.mjs',
+  'engine/src/candidate-set/token-isolation.test.mjs',
 ]);
 
 const SLICE_1F_SUITES = Object.freeze([
@@ -219,8 +221,8 @@ for (const result of results) {
 const compatibilityResults = results.filter(result => result.v112Compatible === true);
 const compatibilityFailures = compatibilityResults.filter(result => !result.ok);
 console.log('');
-console.log(`v1.12 compatibility suites run: ${compatibilityResults.length}`);
-console.log(`v1.12 compatibility suites failed: ${compatibilityFailures.length}`);
+console.log(`safety-adapted v1.12 compatibility suites run: ${compatibilityResults.length}`);
+console.log(`safety-adapted v1.12 compatibility suites failed: ${compatibilityFailures.length}`);
 console.log(`Suites run: ${results.length}`);
 console.log(`Suites passed: ${results.length - failures.length}`);
 console.log(`Suites failed: ${failures.length}`);

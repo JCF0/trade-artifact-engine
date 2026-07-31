@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import {
   buildSourceTransactionReferenceV1, sourceTransactionDigestPreimage, computeSourceTransactionDigest,
-  buildFindingV1, findingDigestPreimage, buildDispositionV1, buildEventRecordV1,
+  buildFindingV1, findingDigestPreimage, buildDispositionV1,
   buildMarkObservationV1, buildBlockedSummaryV1, buildCandidateV1,
   candidateDigestPreimage, computeCoverageDigest, computeDigestIndex,
-  computeWindowDigest, computeScopeDigest, buildEvidenceBundleV1, evidenceBundleDigestPreimage,
+  computeWindowDigest, computeScopeDigest, evidenceBundleDigestPreimage,
   buildCandidateSetV1, candidateSetDigestPreimage,
 } from './identity.mjs';
 import { GENESIS_HASH } from './schema.mjs';
@@ -35,19 +35,24 @@ const scopeInput = { scope_version: 'wallet_candidate_scope_input_v1', chain: 's
 const profiles = { wallet_acquisition_profile: 'wallet_wide_bounded_history_v1', wallet_normalization_profile: 'artifact_wallet_wide_solana_spot_normalization_v1', reconstruction_engine_version: 'artifact_position_ledger_receipt_v1', accounting_method_version: 'weighted_average_position_accounting_v1', mark_profile: null, mark_max_age_seconds: null };
 const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 2, anchor_blockhash: 'blockhash', history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
 const inputStatus = { coverage_status: 'complete', acquisition_complete: true, normalization_complete: true, classification_complete: true, pagination_complete: true, historical_bound_proven: true, chain_boundary_proven: true, truncated: false, capped: false, partial: false, provider_uncertain: false };
-const evidence = buildEvidenceBundleV1({ scope: scopeInput, profiles, boundary, input_status: inputStatus, coverage, transaction_dispositions: [], normalized_event_records: [], activity_findings: [], mark_observations: [] });
-assert.deepEqual(evidenceBundleDigestPreimage(evidence), evidence.payload); assert.ok(Object.isFrozen(evidence.payload.integrity));
-assert.throws(() => buildEvidenceBundleV1({ scope: scopeInput, profiles, boundary, input_status: inputStatus, coverage, transaction_dispositions: [], normalized_event_records: [], activity_findings: [], mark_observations: [mark, mark] }), error => error.code === 'duplicate_value');
-let mapCalls = 0; const hostileMarks = [];
-Object.defineProperty(hostileMarks, 'map', { enumerable: true, get() { mapCalls += 1; throw new Error('map invoked'); } });
-assert.throws(() => buildEvidenceBundleV1({ scope: scopeInput, profiles, boundary, input_status: inputStatus, coverage, transaction_dispositions: [], normalized_event_records: [], activity_findings: [], mark_observations: hostileMarks }), error => error.code === 'sparse_array_not_allowed'); assert.equal(mapCalls, 0);
-const wrongEvent = buildEventRecordV1({ source_slot: 41, slice7_event: { wallet: 'wallet', timestamp: 1700000000, tx_hash: 'y'.repeat(88), source: 'swap', token_in_mint: 'mintA', token_in_amount: 1, token_in_decimals: 6, token_out_mint: 'mintB', token_out_amount: 2, token_out_decimals: 6, extraction_method: 'balance_delta', raw_index: 0 } });
-const wrongDisposition = buildDispositionV1({ tx_hash: 'z'.repeat(88), slot: 42, block_time: 1700000000, disposition_type: 'supported_normalized_event', affected_token_mints: ['mintA'], normalized_event_digests: [wrongEvent.event_digest], finding_digests: [] });
-assert.throws(() => buildEvidenceBundleV1({ scope: scopeInput, profiles, boundary, input_status: inputStatus, coverage, transaction_dispositions: [wrongDisposition], normalized_event_records: [wrongEvent], activity_findings: [], mark_observations: [] }), error => error.code === 'event_source_mismatch');
+const integrity = {
+  transaction_dispositions_digest: computeDigestIndex('wallet_transaction_disposition_index_v1', []),
+  normalized_events_digest: computeDigestIndex('wallet_normalized_event_index_v1', []),
+  activity_findings_digest: computeDigestIndex('wallet_activity_finding_index_v1', []),
+  mark_observations_digest: computeDigestIndex('wallet_mark_observation_index_v1', []),
+  transaction_disposition_count: 0,
+  normalized_event_count: 0,
+  activity_finding_count: 0,
+  mark_observation_count: 0,
+};
+const evidencePayload = { scope: scopeInput, profiles, boundary, input_status: inputStatus, coverage, transaction_dispositions: [], normalized_event_records: [], activity_findings: [], mark_observations: [], integrity };
+const evidencePreimage = evidenceBundleDigestPreimage(evidencePayload);
+assert.deepEqual(evidencePreimage, evidencePayload); assert.ok(Object.isFrozen(evidencePreimage));
+const evidenceDigest = sha256CanonicalJson(evidencePayload);
 const windowDigest = computeWindowDigest({ chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, wallet: 'wallet', window });
 const scopeDigest = computeScopeDigest({ chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, wallet: 'wallet', window_digest: windowDigest, coverage_digest: coverage.coverage_digest, profiles });
 const scope = { scope_version: 'wallet_candidate_scope_v1', scope_digest: scopeDigest, window_digest: windowDigest, chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, wallet: 'wallet', window };
-const payload = { scope, profiles, commitments: { evidence_bundle_digest: evidence.evidence_bundle_digest, coverage_digest: coverage.coverage_digest, transaction_dispositions_digest: evidence.payload.integrity.transaction_dispositions_digest, normalized_events_digest: evidence.payload.integrity.normalized_events_digest, activity_findings_digest: evidence.payload.integrity.activity_findings_digest, mark_observations_digest: evidence.payload.integrity.mark_observations_digest }, coverage, counts: { candidate_count: 0, closed_candidate_count: 0, partial_candidate_count: 0, open_candidate_count: 0, limited_candidate_count: 0, selectable_candidate_count: 0, blocked_summary_count: 0, finding_count: 0 }, candidates: [], blocked_summaries: [], activity_findings: [] };
+const payload = { scope, profiles, commitments: { evidence_bundle_digest: evidenceDigest, coverage_digest: coverage.coverage_digest, transaction_dispositions_digest: integrity.transaction_dispositions_digest, normalized_events_digest: integrity.normalized_events_digest, activity_findings_digest: integrity.activity_findings_digest, mark_observations_digest: integrity.mark_observations_digest }, coverage, counts: { candidate_count: 0, closed_candidate_count: 0, partial_candidate_count: 0, open_candidate_count: 0, limited_candidate_count: 0, selectable_candidate_count: 0, blocked_summary_count: 0, finding_count: 0 }, candidates: [], blocked_summaries: [], activity_findings: [] };
 const set = buildCandidateSetV1(payload); assert.deepEqual(candidateSetDigestPreimage(set), payload); assert.ok(Object.isFrozen(set.payload));
 assert.throws(() => buildCandidateSetV1({ ...payload, metadata: { candidate_set_digest: d('f') } }), error => error.code === 'candidate_set_digest_in_payload' || error.code === 'unknown_field');
 const otherProjection = structuredClone(projection); otherProjection.wallet = 'other-wallet';

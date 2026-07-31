@@ -62,7 +62,7 @@ The mapping is returned only under private resolver audit provenance. It is not 
 
 Before handoff, the resolver rebuilds receipt-scoped evidence, regenerates the existing position ledger, and regenerates receipt candidates with the frozen weighted-average accounting profile. It locates exactly one candidate by wallet, token mint, receipt type and segment index.
 
-The regenerated legacy `candidate_hash` must equal the candidate's committed `ledger_candidate_hash`. Full candidate-set validation then reconstructs every candidate, blocked summary, count, finding, scope and evidence commitment from the evidence bundle. Self-consistent but forged projections are therefore rejected.
+The regenerated legacy `candidate_hash` must equal the candidate's committed `ledger_candidate_hash`. The structural `validateCandidateSetV1()` check proves schema and self-consistency only. The resolver additionally invokes `validateWalletCandidateSetV1AgainstEvidenceBundle()`, which reconstructs every candidate, blocked summary, count, finding, scope and evidence commitment from the evidence bundle. Self-consistent but forged projections are therefore rejected at the authoritative evidence-bound boundary.
 
 ## Exact Slice 7 dry-run request
 

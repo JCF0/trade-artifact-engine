@@ -10,7 +10,7 @@ Slice 1 is a local, deterministic contract and transformation layer. It accepts 
 
 It does not acquire live wallet history, call Helius, persist evidence or results, create hosted jobs, expose an API or UI, publish a page, upload content, sign a claim, mint an asset, or deploy anything.
 
-The production candidate-set module graph enforces this pure capability boundary: it has no environment-variable access, timers, randomness, dynamic loading, child processes, filesystem or network imports, or import-time side effects.
+The current transitive production closure has no active environment-variable, timer, randomness, dynamic-loading, child-process, filesystem, network, provider, storage, publication, signing, minting or deployment capability and has no import-time side effects. Its ledger dependency reaches a shared constants module containing inert Helius and Irys endpoint strings, but no provider or network operation is reachable. The static capability audit validates the present closure and common direct capability forms; it is not claimed as a parser-level proof against every possible future JavaScript indirection.
 
 ## The two immutable objects
 
@@ -26,6 +26,8 @@ The evidence bundle is the private authoritative replay object for one wallet an
 - token-local activity findings;
 - optional direct-quote mark observations under the identity-bound `direct_quote_mark_v1` policy with `mark_max_age_seconds: 300`; and
 - recomputable integrity indexes and counts.
+
+`buildCandidateEvidenceBundleV1()` in `evidence-bundle.mjs` is the sole exported production constructor that can issue an object labeled `candidate_evidence_bundle_v1`. Identity helpers expose digest/preimage operations only and cannot issue that envelope. The constructor validates complete acquisition and classification, exact disposition/event/finding accounting, wallet-wide rejection, canonical ordering, coverage, integrity indexes and the finished digest before returning.
 
 ### `wallet_candidate_set_v1`
 
@@ -53,7 +55,7 @@ Payloads containing their own envelope digest are rejected. Candidate identity d
 
 Wallet identity is explicit in the Solana mainnet-beta scope and every candidate selection key. Network identity includes the frozen Solana mainnet-beta genesis hash.
 
-Window identity uses `fixed_lookback_latest_state_v1`: a fixed-lookback identifier and duration ending at a proven finalized acquisition boundary. The initial cursor is always null, proving acquisition began from latest state rather than an arbitrary historical cursor. The lower bound must be proven complete. Product-level permitted-profile allowlisting remains a responsibility of the future acquisition/hosted boundary; the pure schema currently validates only a nonempty profile identifier and nonnegative duration.
+Window identity uses `fixed_lookback_latest_state_v1`: a fixed-lookback identifier, requested duration, and proven lower boundary associated with a finalized acquisition boundary. The initial cursor is always null, proving acquisition began from latest state rather than an arbitrary historical cursor. The lower bound must be proven complete. The pure schema does not currently enforce `anchor_block_time - oldest_allowed_timestamp === requested_lookback_seconds`, and product-level permitted-profile allowlisting remains a responsibility of the future acquisition/hosted boundary; it currently validates only a nonempty profile identifier and nonnegative duration.
 
 Coverage identity commits to the complete disposition partition, normalized event and finding counts, observed time/slot bounds, and the terminal reason (`historical_bound_reached` or `provider_exhaustion`). Coverage is recomputed from evidence rather than trusted as caller prose.
 
@@ -79,9 +81,9 @@ These axes are not collapsed into one optimistic label.
 - A realized-partial candidate records realized economics while the position remains open. It has a finalized snapshot boundary and is visible only.
 - An open snapshot records remaining inventory, cost basis, realized PnL to date, and an available or explicitly unavailable direct-quote mark. It is visible only.
 - A limited candidate keeps identity, token, segment, timestamps, observed event counts, flags, limitations, reason codes and disclosures, but uses `economics_status: unavailable_partial_history`, `economics: null`, `snapshot: null` and `valuation_status: unavailable`. Unknown basis, realized/unrealized PnL and valuation are never represented by zero. It is visible only and never publication eligible, even when a current mark was supplied.
-- Disposition-backed activity findings are exactly `unsupported_activity` and `ambiguous_activity`. Token-specific findings of those types block that token from authoritative ledger reconstruction and produce a blocked summary instead of a candidate.
+- Disposition-backed activity findings are exactly `unsupported_activity` and `ambiguous_activity`. `affected_token_mints` identifies position candidates blocked by the finding; `affected_quote_mints` is disjoint contextual quote information and does not itself block a position. Authoritative filtering classifies each event with the existing ledger quote rules and excludes it only when its reconstructed position/base token is blocked, so a common quote such as USDC cannot suppress unrelated candidates.
 - Partial history and unobserved inventory are candidate evidence limitations, not transaction activity findings. External-transfer uncertainty is represented by candidate flags, limitations and reason codes. Mark limitations are valuation states and mark/unrealized reason codes. `balance_boundary_mismatch` is future historical-balance-boundary work and is not an implemented v1.13 finding.
-- Unresolved wallet-wide impact blocks evidence-bundle and candidate-set construction entirely.
+- Unresolved wallet-wide impact blocks evidence-bundle issuance through every supported production construction path and therefore blocks candidate-set construction entirely.
 
 “Clean” describes evidence quality under this bounded contract; it is not a receipt or proof claim.
 
@@ -95,7 +97,9 @@ Canonical JSON and SHA-256 make repeated builds, source permutations and detache
 
 ## Relationship to the position ledger and receipt candidates
 
-Slice 1 reuses the existing `buildPositionLedger()` and `generateReceiptCandidates()` implementation. It does not introduce a second accounting engine. Candidate projection reconstructs each legacy receipt candidate from complete receipt-scoped evidence and preserves exact equality of the existing `candidate_hash` as `ledger_candidate_hash`. Weighted-average raw-quote accounting remains frozen.
+Slice 1 reuses the existing `classifyEvent()`, `buildPositionLedger()` and `generateReceiptCandidates()` implementation. It does not introduce a second quote classifier or accounting engine. Candidate projection reconstructs each legacy receipt candidate from complete receipt-scoped evidence and preserves exact equality of the existing `candidate_hash` as `ledger_candidate_hash`. Weighted-average raw-quote accounting remains frozen.
+
+`validateCandidateSetV1()` proves only the candidate-set schema, local identities, counts and self-consistency. It does not independently prove caller-supplied economics. `validateWalletCandidateSetV1AgainstEvidenceBundle()` is the authoritative boundary: it reconstructs the complete candidate set from the bound evidence and rejects self-consistent forged projections.
 
 ## Relationship to Slice 7 and `receipt_package_v1`
 

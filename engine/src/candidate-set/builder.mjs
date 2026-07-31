@@ -1,4 +1,4 @@
-import { buildPositionLedger } from '../ledger/position-ledger.mjs';
+import { buildPositionLedger, classifyEvent } from '../ledger/position-ledger.mjs';
 import { generateReceiptCandidates } from '../ledger/receipt-candidates.mjs';
 import { canonicalizeActivityFindingsV1 } from './activity-findings.mjs';
 import { buildBlockedSummariesV1, buildBlockedTokenOverlayV1 } from './blocked-summary.mjs';
@@ -75,7 +75,10 @@ function constructCandidateSetPayload(evidenceBundle) {
   const overlay = buildBlockedTokenOverlayV1({ activityFindings: evidence.activity_findings });
   const blockedTokenMints = new Set(overlay.blockedTokenMints);
   const supportedEvents = evidence.normalized_event_records
-    .filter(record => !blockedTokenMints.has(record.slice7_event.token_in_mint) && !blockedTokenMints.has(record.slice7_event.token_out_mint))
+    .filter(record => {
+      const position = classifyEvent(record.slice7_event);
+      return position.action === null || !blockedTokenMints.has(position.baseMint);
+    })
     .map(record => record.slice7_event);
   const ledger = buildPositionLedger(supportedEvents, { accountingMethodVersion: evidence.profiles.accounting_method_version });
   const ledgerCandidates = generateReceiptCandidates(ledger, evidence.scope.wallet, { chain: evidence.scope.chain, snapshotAt: evidence.boundary.anchor_block_time });

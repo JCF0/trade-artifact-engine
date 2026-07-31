@@ -1,10 +1,10 @@
 import { cloneAndFreeze, clonePlainData, assertPlainJsonValue } from './plain-data.mjs';
 import { fail } from './errors.mjs';
 import {
-  SOURCE_TRANSACTION_REFERENCE_VERSION, EVIDENCE_BUNDLE_VERSION, FINDING_VERSION, FINDING_IDENTITY_VERSION,
+  SOURCE_TRANSACTION_REFERENCE_VERSION, FINDING_VERSION, FINDING_IDENTITY_VERSION,
   DISPOSITION_VERSION, EVENT_RECORD_VERSION, MARK_OBSERVATION_VERSION,
   CANDIDATE_VERSION, CANDIDATE_IDENTITY_VERSION, BLOCKED_SUMMARY_VERSION, CANDIDATE_SET_VERSION,
-  validateSourceTransactionReferenceV1, validateEvidenceBundleV1, validateFindingV1,
+  validateSourceTransactionReferenceV1, validateFindingV1,
   validateDispositionV1, validateEventRecordV1, validateMarkObservationV1,
   validateBlockedSummaryV1, validateCandidateV1, validateCandidateSetV1,
 } from './schema.mjs';
@@ -88,22 +88,6 @@ export function computeReceiptScopedEvidenceDigest(input) { return sha256Canonic
 
 export function evidenceBundleDigestPreimage(bundleOrPayload) { return cloneAndFreeze(Object.hasOwn(bundleOrPayload, 'payload') ? bundleOrPayload.payload : bundleOrPayload); }
 export function computeEvidenceBundleDigest(value) { return sha256CanonicalJson(evidenceBundleDigestPreimage(value)); }
-export function buildEvidenceBundleV1(input) {
-  exactInput(input, ['scope','profiles','boundary','input_status','coverage','transaction_dispositions','normalized_event_records','activity_findings','mark_observations'], 'evidence bundle input');
-  const integrity = {
-    transaction_dispositions_digest: computeDigestIndex('wallet_transaction_disposition_index_v1', input.transaction_dispositions.map(item => item.disposition_digest)),
-    normalized_events_digest: computeDigestIndex('wallet_normalized_event_index_v1', input.normalized_event_records.map(item => item.event_digest)),
-    activity_findings_digest: computeDigestIndex('wallet_activity_finding_index_v1', input.activity_findings.map(item => item.finding_digest)),
-    mark_observations_digest: computeDigestIndex('wallet_mark_observation_index_v1', input.mark_observations.map(item => item.mark_observation_digest)),
-    transaction_disposition_count: input.transaction_dispositions.length,
-    normalized_event_count: input.normalized_event_records.length,
-    activity_finding_count: input.activity_findings.length,
-    mark_observation_count: input.mark_observations.length,
-  };
-  const payload = cloneAndFreeze({ ...input, integrity });
-  const result = cloneAndFreeze({ evidence_bundle_version: EVIDENCE_BUNDLE_VERSION, evidence_bundle_digest: sha256CanonicalJson(payload), payload });
-  validateEvidenceBundleV1(result); return result;
-}
 
 export function candidateDigestPreimage(value) {
   return cloneAndFreeze({ candidate_identity_version: value.candidate_identity_version, receipt_scoped_evidence_digest: value.receipt_scoped_evidence_digest, ledger_candidate_hash: value.ledger_candidate_hash, projection: value.projection });
