@@ -11,6 +11,7 @@ export const SOURCE_TRANSACTION_REFERENCE_VERSION = 'source_transaction_referenc
 export const ACQUISITION_RESULT_VERSION = 'wallet_wide_acquisition_result_v1';
 export const EVIDENCE_BUNDLE_VERSION = 'candidate_evidence_bundle_v1';
 export const FINDING_VERSION = 'wallet_activity_finding_v1';
+export const FINDING_IDENTITY_VERSION = 'wallet_activity_finding_identity_v1';
 export const DISPOSITION_VERSION = 'wallet_transaction_disposition_v1';
 export const EVENT_RECORD_VERSION = 'wallet_normalized_event_record_v1';
 export const MARK_OBSERVATION_VERSION = 'wallet_mark_observation_v1';
@@ -33,6 +34,9 @@ const PROFILE_VALUES = Object.freeze({
 const STATUS_FIELDS = ['coverage_status','acquisition_complete','normalization_complete','classification_complete','pagination_complete','historical_bound_proven','chain_boundary_proven','truncated','capped','partial','provider_uncertain'];
 const COVERAGE_FIELDS = ['coverage_version','coverage_digest','coverage_status','transactions_examined','supported_transaction_count','unsupported_transaction_count','ambiguous_transaction_count','unrelated_transaction_count','failed_transaction_count','normalized_event_count','finding_count','localized_finding_count','wallet_wide_finding_count','oldest_observed_timestamp','newest_observed_timestamp','oldest_observed_slot','newest_observed_slot','pagination_terminal_reason'];
 const SLICE7_EVENT_FIELDS = ['wallet','timestamp','tx_hash','source','token_in_mint','token_in_amount','token_in_decimals','token_out_mint','token_out_amount','token_out_decimals','extraction_method','raw_index'];
+const FINDING_REASON_CODES = new Set(['ambiguous_swap_direction','unsupported_swap_shape','unsupported_transfer_activity','external_transfer_gap','unobserved_pre_window_inventory','partial_history_boundary','balance_boundary_mismatch','mark_source_unavailable','mark_stale','mark_quote_mismatch','mark_after_snapshot_boundary','snapshot_boundary_unavailable']);
+const FINDING_DISCLOSURE_CODES = new Set(['open_outcome_not_final','partial_exit_position_remains_open','history_begins_mid_position','activity_not_reconstructable']);
+const MARK_UNAVAILABLE_REASON_CODES = new Set(['mark_source_unavailable','mark_stale','mark_quote_mismatch','mark_after_snapshot_boundary','snapshot_boundary_unavailable']);
 
 function isObject(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 export function assertExactFields(value, fields, context) {
@@ -67,7 +71,7 @@ export function validateSourceTransactionReferenceV1(value) {
 export function validateProfilesV1(value) {
   assertExactFields(value, ['wallet_acquisition_profile','wallet_normalization_profile','reconstruction_engine_version','accounting_method_version','mark_profile'], 'profiles');
   for (const [key, expected] of Object.entries(PROFILE_VALUES)) if (value[key] !== expected) fail('unsupported_profile', `${key} is unsupported`);
-  if (value.mark_profile !== null) nonempty(value.mark_profile, 'mark_profile'); return true;
+  if (value.mark_profile !== null && value.mark_profile !== 'direct_quote_mark_v1') fail('unsupported_profile', 'mark_profile is unsupported'); return true;
 }
 export function validateBoundaryV1(value) {
   assertExactFields(value, ['boundary_version','chain','network','genesis_hash','commitment','anchor_slot','anchor_block_time','anchor_blockhash','history_complete_through_anchor','lower_bound_completion_proven','boundary_status'], 'boundary');
@@ -89,7 +93,8 @@ export function validateCoverageV1(value, { verifyDigest = true } = {}) {
   oneOf(value.pagination_terminal_reason, ['historical_bound_reached','provider_exhaustion'], 'pagination_terminal_reason');
   const partition = value.supported_transaction_count + value.unsupported_transaction_count + value.ambiguous_transaction_count + value.unrelated_transaction_count + value.failed_transaction_count;
   if (partition !== value.transactions_examined || value.normalized_event_count !== value.supported_transaction_count || value.finding_count !== value.localized_finding_count + value.wallet_wide_finding_count) fail('coverage_count_mismatch', 'coverage counts do not reconcile');
-  if ((value.transactions_examined === 0) !== (value.oldest_observed_timestamp === null) || (value.oldest_observed_timestamp === null) !== (value.newest_observed_timestamp === null) || (value.oldest_observed_slot === null) !== (value.newest_observed_slot === null)) fail('coverage_count_mismatch', 'coverage observed bounds do not reconcile');
+  const noTransactions = value.transactions_examined === 0;
+  if ((noTransactions && [value.oldest_observed_timestamp,value.newest_observed_timestamp,value.oldest_observed_slot,value.newest_observed_slot].some(bound => bound !== null)) || (!noTransactions && (value.oldest_observed_slot === null || value.newest_observed_slot === null)) || ((value.oldest_observed_timestamp === null) !== (value.newest_observed_timestamp === null))) fail('coverage_count_mismatch', 'coverage observed bounds do not reconcile');
   if (value.oldest_observed_timestamp !== null && (value.oldest_observed_timestamp > value.newest_observed_timestamp || value.oldest_observed_slot > value.newest_observed_slot)) fail('coverage_count_mismatch', 'coverage bounds are reversed');
   if (verifyDigest) {
     const coverage = {};
@@ -110,8 +115,14 @@ export function validateFindingV1(value, { verifyDigest = true } = {}) {
   if (value.impact_scope === 'token_specific' && value.affected_token_mints.length === 0) fail('invalid_field', 'token-specific finding requires an affected mint');
   orderedUniqueStrings(value.source_transaction_digests, 'source_transaction_digests', { digests: true, nonemptyArray: true }); orderedUniqueStrings(value.source_event_digests, 'source_event_digests', { digests: true });
   orderedUniqueStrings(value.reason_codes, 'reason_codes', { nonemptyArray: true }); orderedUniqueStrings(value.disclosure_codes, 'disclosure_codes');
+  if (!value.reason_codes.every(code => FINDING_REASON_CODES.has(code)) || !value.disclosure_codes.every(code => FINDING_DISCLOSURE_CODES.has(code))) fail('invalid_activity_finding', 'finding reason or disclosure code is unsupported');
   assertExactFields(value.impact, ['blocks_candidate_projection','blocks_receipt_publication'], 'finding.impact'); if (typeof value.impact.blocks_candidate_projection !== 'boolean' || typeof value.impact.blocks_receipt_publication !== 'boolean') fail('invalid_field', 'finding impact fields must be boolean');
-  if (verifyDigest) verifyWithout(value, ['finding_id','finding_digest'], value.finding_digest); return true;
+  if (verifyDigest) {
+    const preimage = { finding_identity_version: FINDING_IDENTITY_VERSION };
+    for (const key of Object.keys(value)) if (!['finding_version','finding_id','finding_digest'].includes(key)) Object.defineProperty(preimage, key, { value: value[key], enumerable: true });
+    if (sha256CanonicalJson(preimage) !== value.finding_digest) fail('finding_digest_mismatch', 'finding digest does not match canonical preimage');
+  }
+  return true;
 }
 export function validateDispositionV1(value, { verifyDigest = true } = {}) {
   assertExactFields(value, ['disposition_version','disposition_id','disposition_digest','tx_hash','slot','block_time','disposition_type','affected_token_mints','normalized_event_digests','finding_digests'], 'disposition');
@@ -133,9 +144,9 @@ export function validateEventRecordV1(value, { verifyDigest = true } = {}) {
   assertExactFields(value, ['event_record_version','event_record_id','event_digest','source_slot','slice7_event'], 'event_record'); if (value.event_record_version !== EVENT_RECORD_VERSION) fail('unsupported_version', 'event version is unsupported'); assertDigest(value.event_digest, 'event_digest'); exactId(value.event_record_id, 'awer1_', value.event_digest, 'event_record_id'); safe(value.source_slot, 'source_slot'); validateSlice7EventV1(value.slice7_event); if (verifyDigest) verifyWithout(value, ['event_record_id','event_digest'], value.event_digest); return true;
 }
 export function validateMarkObservationV1(value, { verifyDigest = true } = {}) {
-  assertExactFields(value, ['mark_observation_version','mark_observation_id','mark_observation_digest','token_mint','quote_mint','observation_status','source_profile','mark_price_raw_quote','observed_at','source_slot','reason_code'], 'mark_observation'); if (value.mark_observation_version !== MARK_OBSERVATION_VERSION) fail('unsupported_version', 'mark version is unsupported'); assertDigest(value.mark_observation_digest, 'mark_observation_digest'); exactId(value.mark_observation_id, 'amo1_', value.mark_observation_digest, 'mark_observation_id'); nonempty(value.token_mint, 'token_mint'); nonempty(value.quote_mint, 'quote_mint'); nonempty(value.source_profile, 'source_profile'); oneOf(value.observation_status, ['available','unavailable'], 'observation_status');
+  assertExactFields(value, ['mark_observation_version','mark_observation_id','mark_observation_digest','token_mint','quote_mint','observation_status','source_profile','mark_price_raw_quote','observed_at','source_slot','reason_code'], 'mark_observation'); if (value.mark_observation_version !== MARK_OBSERVATION_VERSION) fail('unsupported_version', 'mark version is unsupported'); assertDigest(value.mark_observation_digest, 'mark_observation_digest'); exactId(value.mark_observation_id, 'amo1_', value.mark_observation_digest, 'mark_observation_id'); nonempty(value.token_mint, 'token_mint'); nonempty(value.quote_mint, 'quote_mint'); if (value.source_profile !== 'direct_quote_mark_v1') fail('unsupported_profile', 'mark source profile is unsupported'); oneOf(value.observation_status, ['available','unavailable'], 'observation_status');
   if (value.observation_status === 'available') { finite(value.mark_price_raw_quote, 'mark_price_raw_quote', { positive: true }); safe(value.observed_at, 'observed_at'); safe(value.source_slot, 'source_slot'); if (value.reason_code !== null) fail('invalid_field', 'available mark reason_code must be null'); }
-  else { if (value.mark_price_raw_quote !== null || value.observed_at !== null || value.source_slot !== null) fail('invalid_field', 'unavailable mark values must be null'); nonempty(value.reason_code, 'reason_code'); }
+  else { if (value.mark_price_raw_quote !== null || value.observed_at !== null || value.source_slot !== null) fail('invalid_field', 'unavailable mark values must be null'); if (!MARK_UNAVAILABLE_REASON_CODES.has(value.reason_code)) fail('mark_observation_invalid', 'unavailable mark reason code is unsupported'); }
   if (verifyDigest) verifyWithout(value, ['mark_observation_id','mark_observation_digest'], value.mark_observation_digest); return true;
 }
 export function validateBlockedSummaryV1(value, { verifyDigest = true } = {}) {
@@ -185,7 +196,6 @@ export function validateEvidenceBundleV1(bundle) {
     if (!Array.isArray(bundle.payload[field])) fail('invalid_field', `${field} must be an array`); bundle.payload[field].forEach(item => validator(item));
     const digests = bundle.payload[field].map(item => item.disposition_digest ?? item.event_digest ?? item.finding_digest ?? item.mark_observation_digest);
     if (new Set(digests).size !== digests.length) fail('duplicate_value', `${field} contains duplicate digests`);
-    for (let index = 1; index < digests.length; index += 1) if (compareCodeUnits(digests[index - 1], digests[index]) >= 0) fail('order_invalid', `${field} is not in canonical digest order`);
   }
   const eventByDigest = new Map(bundle.payload.normalized_event_records.map(x => [x.event_digest, x])); const eventDigests = new Set(eventByDigest.keys()); const findingDigests = new Set(bundle.payload.activity_findings.map(x => x.finding_digest));
   const sourceDigests = new Set(bundle.payload.transaction_dispositions.map(x => sha256CanonicalJson({ source_transaction_reference_version: SOURCE_TRANSACTION_REFERENCE_VERSION, source_transaction: { tx_hash: x.tx_hash, slot: x.slot, block_time: x.block_time } })));

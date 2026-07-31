@@ -29,7 +29,6 @@ export function validateWalletAcquisitionResultV1(result) {
   unique(result.transaction_dispositions.map(item => item.disposition_digest), 'duplicate_transaction_disposition');
   unique(result.normalized_event_records.map(item => item.event_digest), 'duplicate_normalized_event');
   unique(result.activity_findings.map(item => item.finding_digest), 'duplicate_activity_finding');
-  for (const digests of [result.transaction_dispositions.map(x => x.disposition_digest), result.normalized_event_records.map(x => x.event_digest), result.activity_findings.map(x => x.finding_digest)]) for (let index = 1; index < digests.length; index += 1) if (digests[index - 1] >= digests[index]) fail('order_invalid', 'authoritative arrays must be in canonical digest order');
   const eventByDigest = new Map(result.normalized_event_records.map(item => [item.event_digest, item]));
   const eventDigests = new Set(eventByDigest.keys());
   const findingDigests = new Set(result.activity_findings.map(item => item.finding_digest));

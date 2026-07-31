@@ -3,7 +3,13 @@ import { fail } from './errors.mjs';
 
 function pathText(path) { return path.length ? path.join('.') : '<root>'; }
 
-export function assertPlainJsonValue(value, path = [], seen = new Set()) {
+const MAX_JSON_DEPTH = 256;
+const MAX_JSON_NODES = 100000;
+
+export function assertPlainJsonValue(value, path = [], seen = new Set(), depth = 0, budget = { nodes: 0 }) {
+  budget.nodes += 1;
+  if (budget.nodes > MAX_JSON_NODES) fail('json_node_limit_exceeded', `JSON value exceeds maximum node count at ${pathText(path)}`);
+  if (depth > MAX_JSON_DEPTH) fail('json_depth_exceeded', `JSON value exceeds maximum depth at ${pathText(path)}`);
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return true;
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || Object.is(value, -0)) fail('invalid_json_number', `invalid JSON number at ${pathText(path)}`);
@@ -23,7 +29,7 @@ export function assertPlainJsonValue(value, path = [], seen = new Set()) {
   for (const [key, descriptor] of entries) {
     if (!descriptor.enumerable) fail('non_enumerable_field_not_allowed', `non-enumerable field at ${pathText([...path, key])}`);
     if (!Object.hasOwn(descriptor, 'value')) fail('accessor_not_allowed', `accessor at ${pathText([...path, key])}`);
-    assertPlainJsonValue(descriptor.value, [...path, key], seen);
+    assertPlainJsonValue(descriptor.value, [...path, key], seen, depth + 1, budget);
   }
   seen.delete(value);
   return true;

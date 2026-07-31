@@ -1,7 +1,7 @@
 import { cloneAndFreeze, clonePlainData, assertPlainJsonValue } from './plain-data.mjs';
 import { fail } from './errors.mjs';
 import {
-  SOURCE_TRANSACTION_REFERENCE_VERSION, EVIDENCE_BUNDLE_VERSION, FINDING_VERSION,
+  SOURCE_TRANSACTION_REFERENCE_VERSION, EVIDENCE_BUNDLE_VERSION, FINDING_VERSION, FINDING_IDENTITY_VERSION,
   DISPOSITION_VERSION, EVENT_RECORD_VERSION, MARK_OBSERVATION_VERSION,
   CANDIDATE_VERSION, CANDIDATE_IDENTITY_VERSION, BLOCKED_SUMMARY_VERSION, CANDIDATE_SET_VERSION,
   validateSourceTransactionReferenceV1, validateEvidenceBundleV1, validateFindingV1,
@@ -39,11 +39,20 @@ export function computeSourceTransactionDigest(reference) { return sha256Canonic
 export const sourceTransactionReferenceDigestPreimage = sourceTransactionDigestPreimage;
 export const computeSourceTransactionReferenceDigest = computeSourceTransactionDigest;
 
-export function findingDigestPreimage(value) { return without(value, ['finding_id','finding_digest']); }
+export function findingDigestPreimage(value) {
+  assertPlainJsonValue(value);
+  const preimage = { finding_identity_version: FINDING_IDENTITY_VERSION };
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (!['finding_version','finding_id','finding_digest'].includes(key)) Object.defineProperty(preimage, key, { value: clonePlainData(descriptor.value), enumerable: true, writable: true, configurable: true });
+  }
+  return cloneAndFreeze(preimage);
+}
 export function computeFindingDigest(value) { return sha256CanonicalJson(findingDigestPreimage(value)); }
 export function buildFindingV1(input) {
   const fields = ['finding_type','severity','impact_scope','time_range','affected_token_mints','affected_quote_mints','source_transaction_digests','source_event_digests','reason_codes','impact','disclosure_codes']; exactInput(input, fields, 'finding input');
-  return buildAddressed(input, 'finding_version', FINDING_VERSION, 'finding_id', 'aaf1_', 'finding_digest', validateFindingV1);
+  const digest = sha256CanonicalJson(findingDigestPreimage(input));
+  const result = cloneAndFreeze({ finding_version: FINDING_VERSION, finding_id: `aaf1_${digest}`, finding_digest: digest, ...input });
+  validateFindingV1(result); return result;
 }
 export function dispositionDigestPreimage(value) { return without(value, ['disposition_id','disposition_digest']); }
 export function computeDispositionDigest(value) { return sha256CanonicalJson(dispositionDigestPreimage(value)); }

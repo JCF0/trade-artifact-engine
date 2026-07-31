@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { buildDispositionV1, buildEventRecordV1, buildFindingV1, computeSourceTransactionDigest } from './identity.mjs';
+import { GENESIS_HASH } from './schema.mjs';
+import { recomputeCoverageV1, validateRecomputedCoverageV1 } from './coverage.mjs';
+
+const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 50, anchor_block_time: 500, anchor_blockhash: 'hash', history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
+const inputStatus = { coverage_status: 'complete', acquisition_complete: true, normalization_complete: true, classification_complete: true, pagination_complete: true, historical_bound_proven: true, chain_boundary_proven: true, truncated: false, capped: false, partial: false, provider_uncertain: false };
+const event = buildEventRecordV1({ source_slot: 20, slice7_event: { wallet: 'wallet', timestamp: 200, tx_hash: 'tx2', source: 'swap', token_in_mint: 'A', token_in_amount: 1, token_in_decimals: 6, token_out_mint: 'B', token_out_amount: 2, token_out_decimals: 6, extraction_method: 'balance_delta', raw_index: 0 } });
+const supported = buildDispositionV1({ tx_hash: 'tx2', slot: 20, block_time: 200, disposition_type: 'supported_normalized_event', affected_token_mints: ['A', 'B'], normalized_event_digests: [event.event_digest], finding_digests: [] });
+const source = { tx_hash: 'tx1', slot: 10, block_time: 100 };
+const finding = buildFindingV1({ finding_type: 'unsupported_activity', severity: 'candidate_blocking', impact_scope: 'token_specific', time_range: { first_observed_at: 100, last_observed_at: 100, first_observed_slot: 10, last_observed_slot: 10 }, affected_token_mints: ['C'], affected_quote_mints: [], source_transaction_digests: [computeSourceTransactionDigest(source)], source_event_digests: [], reason_codes: ['unsupported_swap_shape'], impact: { blocks_candidate_projection: true, blocks_receipt_publication: true }, disclosure_codes: ['activity_not_reconstructable'] });
+const unsupported = buildDispositionV1({ ...source, disposition_type: 'unsupported_activity', affected_token_mints: ['C'], normalized_event_digests: [], finding_digests: [finding.finding_digest] });
+const args = { transactionDispositions: [unsupported, supported], normalizedEventRecords: [event], activityFindings: [finding], boundary, inputStatus, paginationTerminalReason: 'historical_bound_reached' };
+const coverage = recomputeCoverageV1(args);
+assert.equal(coverage.transactions_examined, 2);
+assert.equal(coverage.supported_transaction_count, 1);
+assert.equal(coverage.unsupported_transaction_count, 1);
+assert.equal(coverage.oldest_observed_timestamp, 100);
+assert.equal(coverage.newest_observed_timestamp, 200);
+assert.equal(coverage.oldest_observed_slot, 10);
+assert.equal(coverage.newest_observed_slot, 20);
+assert.equal(coverage.localized_finding_count, 1);
+assert.ok(Object.isFrozen(coverage));
+assert.doesNotThrow(() => validateRecomputedCoverageV1(coverage, args));
+const lied = { ...coverage, transactions_examined: 3 };
+assert.throws(() => validateRecomputedCoverageV1(lied, args), error => ['coverage_count_mismatch', 'coverage_digest_mismatch'].includes(error.code));
+const incomplete = { ...inputStatus, pagination_complete: false };
+assert.throws(() => recomputeCoverageV1({ ...args, inputStatus: incomplete }), error => error.code === 'incomplete_acquisition_input');
+console.log('candidate-set coverage: PASS');
