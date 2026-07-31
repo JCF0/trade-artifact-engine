@@ -119,6 +119,16 @@ V1.12 makes `receipt_package_v1` the authoritative immutable object for packaged
 
 The JUP and RAY golden packages pin exact package and member identities. One separately authorized controlled live RAY acquisition reproduced the retained normalized evidence, published receipt hash, and complete five-member package in Slice 7 dry-run. V1.12 does not add hosted reconstruction, wallet-wide target discovery, production package writes from a hosted worker, deployment, upload, mainnet minting, or signing. The devnet mint pipeline remains separate, and the deterministic v1.12 regression runner performs no live Helius call.
 
+V1.13 Slice 1 adds pure, private-by-default wallet candidate evidence, candidate-set projection, and two-digest selection contracts without adding live wallet-wide acquisition or hosted/product capabilities:
+- `engine/docs/wallet-candidate-set-v1.md`
+- `engine/docs/wallet-candidate-set-v1-evidence.md`
+- `engine/docs/wallet-candidate-set-v1-privacy.md`
+- `engine/docs/wallet-candidate-set-v1-limitations.md`
+- `engine/docs/wallet-candidate-set-v1-selection.md`
+- `node engine/src/run-v113-regression.mjs`
+
+The v1.13 runner uses direct deterministic Node commands and a safe v1.12 compatibility gate; it does not invoke npm, the old commit-bearing v1.12 wrapper, live providers, package-store commits, production publication, upload, signing, minting, or deployment. Some maintained compatibility tests exercise local APIs and temporary non-package fixture/write roots only.
+
 ## What It Does
 
 1. Pulls your trade history from Solana (via Helius)
