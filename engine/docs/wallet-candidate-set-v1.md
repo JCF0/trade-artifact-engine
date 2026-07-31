@@ -24,7 +24,7 @@ The evidence bundle is the private authoritative replay object for one wallet an
 - one disposition for every examined transaction;
 - canonical normalized event records;
 - token-local activity findings;
-- optional direct-quote mark observations; and
+- optional direct-quote mark observations under the identity-bound `direct_quote_mark_v1` policy with `mark_max_age_seconds: 300`; and
 - recomputable integrity indexes and counts.
 
 ### `wallet_candidate_set_v1`
@@ -68,6 +68,7 @@ A candidate has a semantic selection key `(wallet, token_mint, receipt_type, seg
 - `valuation_status`: raw quote or a precise mark state;
 - `selection_status`: selectable or visible only;
 - `package_eligibility`: eligible closed position or not publication eligible; and
+- `economics_status`: available or unavailable because history begins mid-position; and
 - the existing ledger eligibility booleans.
 
 These axes are not collapsed into one optimistic label.
@@ -77,8 +78,9 @@ These axes are not collapsed into one optimistic label.
 - A clean closed candidate has closed ledger status, raw-quote economics, zero remaining quantity/cost basis, and verified-receipt ledger eligibility. Only this combination is selectable and package eligible.
 - A realized-partial candidate records realized economics while the position remains open. It has a finalized snapshot boundary and is visible only.
 - An open snapshot records remaining inventory, cost basis, realized PnL to date, and an available or explicitly unavailable direct-quote mark. It is visible only.
-- A limited candidate exposes reconstructable partial-history information with `limited_partial_history`; it is never publication eligible.
-- Token-specific unsupported or ambiguous activity, or a blocking `partial_history_boundary`, `external_transfer_gap`, `unobserved_inventory`, or `balance_boundary_mismatch` finding, blocks that token from authoritative ledger reconstruction and produces a blocked summary instead of a candidate.
+- A limited candidate keeps identity, token, segment, timestamps, observed event counts, flags, limitations, reason codes and disclosures, but uses `economics_status: unavailable_partial_history`, `economics: null`, `snapshot: null` and `valuation_status: unavailable`. Unknown basis, realized/unrealized PnL and valuation are never represented by zero. It is visible only and never publication eligible, even when a current mark was supplied.
+- Disposition-backed activity findings are exactly `unsupported_activity` and `ambiguous_activity`. Token-specific findings of those types block that token from authoritative ledger reconstruction and produce a blocked summary instead of a candidate.
+- Partial history and unobserved inventory are candidate evidence limitations, not transaction activity findings. External-transfer uncertainty is represented by candidate flags, limitations and reason codes. Mark limitations are valuation states and mark/unrealized reason codes. `balance_boundary_mismatch` is future historical-balance-boundary work and is not an implemented v1.13 finding.
 - Unresolved wallet-wide impact blocks evidence-bundle and candidate-set construction entirely.
 
 “Clean” describes evidence quality under this bounded contract; it is not a receipt or proof claim.
@@ -89,6 +91,8 @@ Transaction dispositions, event records, findings, marks, candidate projections,
 
 Canonical JSON and SHA-256 make repeated builds, source permutations and detached caller mutation byte-stable.
 
+`direct_quote_mark_v1` is usable only when token and quote mints match, price is positive and finite, source slot and observation time are not after the finalized snapshot boundary, and age is at most 300 seconds. Ages 0, 299 and 300 are fresh; age 301 is stale. Stale, future, unavailable and quote-mismatched marks produce null unrealized values and are never described as fresh.
+
 ## Relationship to the position ledger and receipt candidates
 
 Slice 1 reuses the existing `buildPositionLedger()` and `generateReceiptCandidates()` implementation. It does not introduce a second accounting engine. Candidate projection reconstructs each legacy receipt candidate from complete receipt-scoped evidence and preserves exact equality of the existing `candidate_hash` as `ledger_candidate_hash`. Weighted-average raw-quote accounting remains frozen.
@@ -98,6 +102,8 @@ Slice 1 reuses the existing `buildPositionLedger()` and `generateReceiptCandidat
 Selection resolves one clean verified closed candidate to the existing Slice 7 targeted orchestrator request. The request is dry-run only and contains target-local normalized events, complete input status, the exact target key and frozen package profiles. Slice 7 then regenerates the ledger candidate and can build the authoritative five-member `receipt_package_v1` in memory.
 
 Slice 1 does not alter `receipt_package_v1` identity. The current resolver's private audit provenance contains candidate-set, evidence-bundle, candidate, receipt-scoped-evidence and legacy ledger-candidate digests plus the source projection mapping; it contains no job or network provenance. Any later operational job/network provenance and candidate-set-to-package linkage must remain separate private audit metadata and must not be inserted into package members.
+
+The v1.13 regression runner selects exactly the three current JUP-like, RAY-like and dry-run store-isolation tests by anchored full test name. The literals are code-unit escaped, TAP is parsed fail-closed, and the gate requires exactly three selected and passed tests with no selected skip or failure.
 
 ## Anti-overclaim boundary
 

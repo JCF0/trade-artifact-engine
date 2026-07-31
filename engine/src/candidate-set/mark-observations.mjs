@@ -87,7 +87,6 @@ export function validateMarkObservationsV1(markObservations, options = {}) {
     const key = observationKey(mark);
     if (digests.has(mark.mark_observation_digest) || ids.has(mark.mark_observation_id) || observationKeys.has(key)) fail('duplicate_mark_observation', 'mark observations must be unique by identity and token/quote pair');
     digests.add(mark.mark_observation_digest); ids.add(mark.mark_observation_id); observationKeys.add(key);
-    if (mark.source_slot !== null && (mark.source_slot > anchorSlot || mark.observed_at > anchorBlockTime)) fail('mark_observation_invalid', 'available mark lies after the finalized boundary');
     if (index > 0 && compareMarkObservationsV1(markObservations[index - 1], mark) >= 0) fail('order_invalid', 'mark observations are not canonically ordered');
   }
   return true;

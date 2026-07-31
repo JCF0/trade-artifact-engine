@@ -29,6 +29,23 @@ assert.equal(snapshot.unrealized_pnl.unrealized_pnl_pct, 100);
 assert.deepEqual(snapshot.disclosure_codes, ['open_outcome_not_final', 'partial_exit_position_remains_open']);
 assert.ok(Object.isFrozen(snapshot) && Object.isFrozen(snapshot.mark));
 
+for (const [age, expectedFreshness, expectValuation] of [
+  [0, 'fresh', true],
+  [299, 'fresh', true],
+  [300, 'fresh', true],
+  [301, 'stale', false],
+  [999, 'stale', false],
+]) {
+  const observation = buildMarkObservationV1({
+    token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1',
+    mark_price_raw_quote: 3, observed_at: boundary.anchor_block_time - age, source_slot: 99, reason_code: null,
+  });
+  const aged = buildOpenPositionSnapshotV1({ position, boundary, markObservation: observation });
+  assert.equal(aged.mark.freshness_status, expectedFreshness, `age ${age}`);
+  assert.equal(aged.mark.reason_code, expectValuation ? null : 'mark_stale', `age ${age}`);
+  assert.equal(aged.unrealized_pnl !== null, expectValuation, `age ${age}`);
+}
+
 const stale = buildMarkObservationV1({
   token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'unavailable', source_profile: 'direct_quote_mark_v1',
   mark_price_raw_quote: null, observed_at: null, source_slot: null, reason_code: 'mark_stale',
@@ -53,5 +70,12 @@ const future = buildMarkObservationV1({
 const futureSnapshot = buildOpenPositionSnapshotV1({ position, boundary, markObservation: future });
 assert.equal(futureSnapshot.mark.freshness_status, 'after_boundary');
 assert.equal(futureSnapshot.unrealized_pnl, null);
+const futureSlot = buildMarkObservationV1({
+  token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1',
+  mark_price_raw_quote: 3, observed_at: 1000, source_slot: 101, reason_code: null,
+});
+const futureSlotSnapshot = buildOpenPositionSnapshotV1({ position, boundary, markObservation: futureSlot });
+assert.equal(futureSlotSnapshot.mark.freshness_status, 'after_boundary');
+assert.equal(futureSlotSnapshot.unrealized_pnl, null);
 assert.throws(() => buildOpenPositionSnapshotV1({ position, boundary: null, markObservation: null }), error => error.code === 'snapshot_boundary_unavailable');
 console.log('candidate-set open snapshots: PASS');

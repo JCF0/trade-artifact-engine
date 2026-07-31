@@ -126,11 +126,23 @@ test('realized partial, clean open, and partial-history candidates remain visibl
 
   const limited = candidateFor(built, 'LIMITED-HISTORY');
   assert.equal(limited.projection.ledger_evidence_status, 'limited_partial_history');
-  assert.equal(limited.projection.economics.total_bought_qty, 0);
-  assert.equal(limited.projection.economics.remaining_cost_basis_quote, 0);
+  assert.equal(limited.projection.economics_status, 'unavailable_partial_history');
+  assert.equal(limited.projection.economics, null);
+  assert.equal(limited.projection.snapshot, null);
+  assert.equal(limited.projection.valuation_status, 'unavailable');
   assert.equal(limited.projection.selection_status, 'visible_only');
   assert.equal(limited.projection.package_eligibility, 'not_publication_eligible_v1');
   expectSelectionCode(built, limited, 'candidate_not_selectable');
+
+  const partiallyObserved = candidateFor(built, 'PARTIALLY-OBSERVED');
+  assert.equal(partiallyObserved.projection.ledger_evidence_status, 'limited_partial_history');
+  assert.equal(partiallyObserved.projection.economics_status, 'unavailable_partial_history');
+  assert.equal(partiallyObserved.projection.economics, null);
+  assert.equal(partiallyObserved.projection.snapshot, null);
+  assert.equal(partiallyObserved.projection.valuation_status, 'unavailable');
+  assert.equal(partiallyObserved.projection.event_counts.buys, 1);
+  assert.equal(partiallyObserved.projection.event_counts.sells, 1);
+  expectSelectionCode(built, partiallyObserved, 'candidate_not_selectable');
 });
 
 test('localized unsupported and ambiguous activity isolate tokens with ambiguous precedence', () => {
@@ -260,7 +272,11 @@ test('mark variants flow through evidence and candidate-set construction with bo
   const afterSpec = structuredClone(base);
   afterSpec.marks[1].observed_at = base.anchorBlockTime + 1;
   afterSpec.marks[1].source_slot = base.anchorSlot + 1;
-  assert.throws(() => buildDeterministicCandidateFixtureV1(afterSpec), error => error.code === 'mark_observation_invalid');
+  const after = projectionFor(afterSpec);
+  assert.equal(after.valuation_status, 'mark_after_boundary');
+  assert.equal(after.snapshot.mark.freshness_status, 'after_boundary');
+  assert.equal(after.snapshot.mark.mark_price_raw_quote, null);
+  assert.equal(after.snapshot.unrealized_pnl, null);
 });
 
 test('golden JUP and RAY complete chain preserves exact receipt, package, and five member hashes without a store', async () => {

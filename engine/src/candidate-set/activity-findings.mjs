@@ -8,15 +8,6 @@ export const ACTIVITY_FINDING_REASON_CODES_V1 = Object.freeze([
   'ambiguous_swap_direction',
   'unsupported_swap_shape',
   'unsupported_transfer_activity',
-  'external_transfer_gap',
-  'unobserved_pre_window_inventory',
-  'partial_history_boundary',
-  'balance_boundary_mismatch',
-  'mark_source_unavailable',
-  'mark_stale',
-  'mark_quote_mismatch',
-  'mark_after_snapshot_boundary',
-  'snapshot_boundary_unavailable',
 ]);
 
 export const ACTIVITY_FINDING_DISCLOSURE_CODES_V1 = Object.freeze([
@@ -29,11 +20,6 @@ export const ACTIVITY_FINDING_DISCLOSURE_CODES_V1 = Object.freeze([
 const REASONS_BY_TYPE = Object.freeze({
   unsupported_activity: new Set(['unsupported_swap_shape', 'unsupported_transfer_activity']),
   ambiguous_activity: new Set(['ambiguous_swap_direction']),
-  partial_history_boundary: new Set(['partial_history_boundary']),
-  external_transfer_gap: new Set(['external_transfer_gap']),
-  unobserved_inventory: new Set(['unobserved_pre_window_inventory']),
-  mark_source_limitation: new Set(['mark_source_unavailable', 'mark_stale', 'mark_quote_mismatch', 'mark_after_snapshot_boundary', 'snapshot_boundary_unavailable']),
-  balance_boundary_mismatch: new Set(['balance_boundary_mismatch']),
 });
 
 function validateFindingSemantics(finding) {
@@ -41,10 +27,7 @@ function validateFindingSemantics(finding) {
   if (!finding.reason_codes.every(code => allowedReasons.has(code))) fail('invalid_activity_finding', 'activity finding reason code is invalid');
   if (!finding.disclosure_codes.every(code => ACTIVITY_FINDING_DISCLOSURE_CODES_V1.includes(code))) fail('invalid_activity_finding', 'activity finding disclosure code is invalid');
 
-  const isMarkLimitation = finding.finding_type === 'mark_source_limitation';
-  if (isMarkLimitation) {
-    if (finding.severity !== 'informational' || finding.impact_scope !== 'token_specific' || finding.impact.blocks_candidate_projection || finding.impact.blocks_receipt_publication) fail('invalid_activity_finding', 'mark limitation impact is invalid');
-  } else if (finding.severity !== 'candidate_blocking' || !finding.impact.blocks_candidate_projection || !finding.impact.blocks_receipt_publication) {
+  if (finding.severity !== 'candidate_blocking' || !finding.impact.blocks_candidate_projection || !finding.impact.blocks_receipt_publication) {
     fail('invalid_activity_finding', 'candidate-blocking finding impact is invalid');
   }
   if (finding.impact_scope === 'wallet_wide') {

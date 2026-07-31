@@ -67,7 +67,7 @@ function validateProfilesMatch(evidenceProfiles, acquisitionProfiles) {
   for (const field of ['wallet_acquisition_profile','wallet_normalization_profile','reconstruction_engine_version','accounting_method_version']) {
     if (evidenceProfiles[field] !== acquisitionProfiles[field]) fail('unsupported_profile', 'evidence profiles do not match acquisition profiles');
   }
-  if (acquisitionProfiles.mark_profile !== null && acquisitionProfiles.mark_profile !== evidenceProfiles.mark_profile) fail('unsupported_profile', 'acquisition mark profile conflicts with evidence profile');
+  if (acquisitionProfiles.mark_profile !== null && (acquisitionProfiles.mark_profile !== evidenceProfiles.mark_profile || acquisitionProfiles.mark_max_age_seconds !== evidenceProfiles.mark_max_age_seconds)) fail('unsupported_profile', 'acquisition mark profile conflicts with evidence profile');
 }
 
 export function validateCandidateEvidenceBundleV1(bundle) {

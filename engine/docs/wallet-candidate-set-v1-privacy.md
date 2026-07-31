@@ -26,6 +26,8 @@ The current schema enforces exact object shapes and stronger lexical restriction
 
 Findings use bounded reason and disclosure codes rather than provider error prose. Errors expose stable sanitized codes and do not preserve raw causes. Subject to the trusted-input caveat above, content identity remains portable across machines, providers and future storage implementations.
 
+The disposition-backed finding taxonomy contains only unsupported and ambiguous activity. Partial history, unobserved inventory and external-transfer uncertainty remain candidate-level status/flag/limitation/reason disclosures; mark limitations remain valuation states. Limited candidates expose no numeric placeholder economics or mark-derived valuation: their authoritative economics and snapshot values are null.
+
 ## Resolver audit provenance
 
 The pure selection resolver returns two separate structures:

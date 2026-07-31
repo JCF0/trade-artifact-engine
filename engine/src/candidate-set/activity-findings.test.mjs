@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { buildActivityFindingV1, canonicalizeActivityFindingsV1, validateActivityFindingsV1 } from './activity-findings.mjs';
+import { validateFindingV1 } from './schema.mjs';
 
 const txA = 'a'.repeat(64);
 const txB = 'b'.repeat(64);
@@ -36,4 +37,21 @@ assert.throws(() => validateActivityFindingsV1([badReason], {
 }), error => ['finding_digest_mismatch', 'invalid_activity_finding'].includes(error.code));
 const duplicate = [tokenFinding, tokenFinding];
 assert.throws(() => canonicalizeActivityFindingsV1(duplicate), error => error.code === 'duplicate_activity_finding');
+
+for (const [findingType, reasonCode] of [
+  ['partial_history_boundary', 'partial_history_boundary'],
+  ['external_transfer_gap', 'external_transfer_gap'],
+  ['unobserved_inventory', 'unobserved_pre_window_inventory'],
+  ['balance_boundary_mismatch', 'balance_boundary_mismatch'],
+  ['mark_source_limitation', 'mark_stale'],
+]) {
+  const removed = structuredClone(tokenFinding);
+  removed.finding_type = findingType;
+  removed.reason_codes = [reasonCode];
+  assert.throws(
+    () => validateFindingV1(removed, { verifyDigest: false }),
+    error => error.code === 'invalid_field',
+    `${findingType} must not enter canonical v1.13 activity findings`,
+  );
+}
 console.log('candidate-set activity findings: PASS');

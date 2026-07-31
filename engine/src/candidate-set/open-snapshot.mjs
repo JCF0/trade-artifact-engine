@@ -1,9 +1,9 @@
 import { fail } from './errors.mjs';
 import { assertPlainJsonValue, cloneAndFreeze } from './plain-data.mjs';
 import { roundPct, roundPrice } from '../ledger/precision.mjs';
-import { validateBoundaryV1, validateMarkObservationV1 } from './schema.mjs';
+import { MARK_PROFILE_MAX_AGE_SECONDS, MARK_PROFILE_VERSION, validateBoundaryV1, validateMarkObservationV1 } from './schema.mjs';
 
-const MARK_PROFILE = 'direct_quote_mark_v1';
+const MARK_PROFILE = MARK_PROFILE_VERSION;
 const REASON_TO_FRESHNESS = Object.freeze({
   mark_source_unavailable: 'unavailable',
   mark_stale: 'stale',
@@ -35,6 +35,7 @@ function resolveMark(position, boundary, observation) {
   if (observation.token_mint !== position.token_mint || observation.quote_mint !== position.quote_mint) return unavailableMark('mark_quote_mismatch');
   if (observation.observation_status === 'unavailable') return unavailableMark(observation.reason_code);
   if (observation.source_slot > boundary.anchor_slot || observation.observed_at > boundary.anchor_block_time) return unavailableMark('mark_after_snapshot_boundary');
+  if (boundary.anchor_block_time - observation.observed_at > MARK_PROFILE_MAX_AGE_SECONDS) return unavailableMark('mark_stale');
   return {
     status: 'available',
     mark_profile: observation.source_profile,

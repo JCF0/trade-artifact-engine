@@ -23,6 +23,7 @@ export const DEFAULT_PROFILES = Object.freeze({
   reconstruction_engine_version: 'artifact_position_ledger_receipt_v1',
   accounting_method_version: 'weighted_average_position_accounting_v1',
   mark_profile: 'direct_quote_mark_v1',
+  mark_max_age_seconds: 300,
 });
 
 export const COMPLETE_INPUT_STATUS = Object.freeze({
@@ -173,6 +174,7 @@ export function buildDeterministicCandidateFixtureV1(spec, { permuteInput = fals
   const profiles = {
     ...DEFAULT_PROFILES,
     mark_profile: (spec.marks ?? []).length === 0 ? null : DEFAULT_PROFILES.mark_profile,
+    mark_max_age_seconds: (spec.marks ?? []).length === 0 ? null : DEFAULT_PROFILES.mark_max_age_seconds,
     ...(spec.profiles ?? {}),
   };
   const boundary = makeBoundary(anchorSlot, anchorBlockTime);
@@ -274,11 +276,15 @@ export const FIXTURE_MATRIX = deepFreeze({
       eventSpec({ token: 'REALIZED-PARTIAL', timestamp: 100, signature: 'partial-buy', slot: 10, buy: true, tokenAmount: 10, quoteAmount: 20 }),
       eventSpec({ token: 'REALIZED-PARTIAL', timestamp: 200, signature: 'partial-sell', slot: 20, buy: false, tokenAmount: 2, quoteAmount: 6 }),
       eventSpec({ token: 'CLEAN-OPEN', timestamp: 300, signature: 'open-buy', slot: 30, buy: true, tokenAmount: 4, quoteAmount: 8 }),
+      eventSpec({ token: 'PARTIALLY-OBSERVED', timestamp: 350, signature: 'partially-observed-buy', slot: 35, buy: true, tokenAmount: 1, quoteAmount: 2 }),
       eventSpec({ token: 'LIMITED-HISTORY', timestamp: 400, signature: 'limited-sell', slot: 40, buy: false, tokenAmount: 3, quoteAmount: 9 }),
+      eventSpec({ token: 'PARTIALLY-OBSERVED', timestamp: 450, signature: 'partially-observed-sell', slot: 45, buy: false, tokenAmount: 3, quoteAmount: 9 }),
     ],
     marks: [
       Object.freeze({ token_mint: 'REALIZED-PARTIAL', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null }),
       Object.freeze({ token_mint: 'CLEAN-OPEN', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 990, source_slot: 99, reason_code: null }),
+      Object.freeze({ token_mint: 'LIMITED-HISTORY', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null }),
+      Object.freeze({ token_mint: 'PARTIALLY-OBSERVED', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null }),
     ],
   }),
   localizedUnsupported: Object.freeze({

@@ -30,6 +30,8 @@ The resolver:
 
 Missing, duplicated, forged, replayed into another set, visible-only or publication-ineligible candidates fail closed.
 
+Limited partial-history candidates are authentic visible members but are never selectable. They carry `economics_status: unavailable_partial_history`, null authoritative economics and snapshot values, `valuation_status: unavailable`, and explicit history/inventory reason and disclosure codes; a supplied current mark does not make unknown basis or PnL available.
+
 ## Receipt-scoped event projection
 
 Selection projects every normalized event that affects the target token and excludes unrelated wallet events. The source event record and its unique supported transaction disposition are independently recomputed and mapped.
@@ -98,3 +100,13 @@ Slice 7 performs its existing canonical regeneration and package validation in m
 The deterministic JUP and RAY fixtures pass through candidate evidence, candidate-set construction, two-digest selection and Slice 7 dry-run without changing their established v1.12 identities. The exact canonical receipt hashes, package digests and all five package member hashes remain pinned.
 
 This invariance demonstrates that candidate discovery and private selection are an upstream projection and resolver layer. They do not add candidate-set or network provenance to `receipt_package_v1`, and they do not alter existing package bytes.
+
+## Exact targeted regression gate
+
+The v1.13 runner derives one anchored regular expression from these three complete test names:
+
+- `JUP-like closed position builds the pinned deterministic package without mutating input`;
+- `RAY-like evidence reproduces pinned receipt and package bytes`; and
+- `dry-run never touches an injected package store`.
+
+Every UTF-16 code unit is escaped literally before alternation. TAP output is parsed and reconciled fail-closed; exactly three selected tests must be present and pass, no selected test may skip, no similarly named test may match, and malformed or inconsistent TAP fails the gate. The complete targeted-orchestrator file is never run unfiltered by this runner.

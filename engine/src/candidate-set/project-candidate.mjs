@@ -126,20 +126,27 @@ export function projectCandidateV1(input) {
   validateLegacyCandidate(candidate, input.receiptScopedEvidence, input.boundary);
   const limited = candidate.status === 'partial_history' || candidate.flags.some(flag => LIMITED_FLAGS.has(flag));
   const isClosed = candidate.candidate_type === 'closed_position';
-  const snapshot = isClosed ? null : buildOpenPositionSnapshotV1({ position: candidate, boundary: input.boundary, markObservation: input.markObservation });
+  const snapshot = isClosed || limited ? null : buildOpenPositionSnapshotV1({ position: candidate, boundary: input.boundary, markObservation: input.markObservation });
   const cleanEligible = isClosed && !limited && candidate.status === 'closed' && candidate.eligible_for_closed_position_receipt === true && candidate.eligible_for_verified_receipt === true;
+  const limitedReasonCodes = limited ? [
+    'partial_history_boundary',
+    'unobserved_pre_window_inventory',
+    ...(candidate.flags.includes('external_transfer_possible') ? ['external_transfer_gap'] : []),
+  ] : [];
   const disclosureCodes = uniqueSorted([
     ...(snapshot?.disclosure_codes ?? []),
     ...findings.flatMap(finding => finding.disclosure_codes),
+    ...(limited ? ['activity_not_reconstructable', 'history_begins_mid_position'] : []),
   ]);
   const projection = {
     candidate_type: candidate.candidate_type,
     position_status: isClosed ? 'closed' : 'open',
     ledger_evidence_status: limited ? 'limited_partial_history' : 'clean',
     boundary_status: isClosed ? 'not_applicable' : 'proven',
-    valuation_status: isClosed ? 'raw_quote' : valuationStatus(snapshot),
+    valuation_status: limited ? 'unavailable' : isClosed ? 'raw_quote' : valuationStatus(snapshot),
     selection_status: cleanEligible ? 'selectable' : 'visible_only',
     package_eligibility: cleanEligible ? 'eligible_closed_position_v1' : 'not_publication_eligible_v1',
+    economics_status: limited ? 'unavailable_partial_history' : 'available',
     chain: 'solana',
     network: 'mainnet-beta',
     wallet: candidate.wallet,
@@ -151,11 +158,11 @@ export function projectCandidateV1(input) {
     last_event_at: candidate.last_event_at,
     event_counts: { buys: candidate.num_buys, sells: candidate.num_sells, supported_events: input.receiptScopedEvidence.events.length, associated_findings: findings.length },
     ledger_eligibility: { eligible_for_closed_position: candidate.eligible_for_closed_position_receipt, eligible_for_verified_receipt: candidate.eligible_for_verified_receipt },
-    economics: buildEconomics(candidate),
+    economics: limited ? null : buildEconomics(candidate),
     snapshot,
     flags: uniqueSorted(candidate.flags),
     limitations: uniqueSorted(candidate.warnings),
-    reason_codes: uniqueSorted(findings.flatMap(finding => finding.reason_codes)),
+    reason_codes: uniqueSorted([...findings.flatMap(finding => finding.reason_codes), ...limitedReasonCodes]),
     disclosure_codes: disclosureCodes,
   };
   return buildCandidateV1({

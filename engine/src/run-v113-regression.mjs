@@ -2,9 +2,14 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import {
+  TARGETED_ORCHESTRATOR_TEST_NAMES_V113,
+  TARGETED_ORCHESTRATOR_TEST_PATTERN_V113,
+  parseExactTargetedTapV113,
+} from './v113-targeted-filter.mjs';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const TARGETED_DRY_RUN_PATTERN = 'JUP-like|RAY-like|dry-run never';
+const TARGETED_DRY_RUN_PATTERN = TARGETED_ORCHESTRATOR_TEST_PATTERN_V113;
 
 // Slice 1F safety adaptation: the old v1.12 wrapper is not invoked because it
 // includes package-store commit tests. These maintained v1.12 suites are run
@@ -109,11 +114,17 @@ const SLICE_1F_SUITES = Object.freeze([
     files: CANDIDATE_SET_TEST_FILES,
   },
   {
+    gate: 'runner safety',
+    name: 'v1.13 exact targeted-filter fail-closed self-check',
+    files: ['engine/src/v113-targeted-filter.test.mjs'],
+  },
+  {
     gate: 'targeted dry run',
     v112Compatible: true,
     name: `v1.13 targeted orchestrator dry-run invariance (${TARGETED_DRY_RUN_PATTERN})`,
     files: ['engine/src/receipt-package/targeted-orchestrator.test.mjs'],
     testNamePattern: TARGETED_DRY_RUN_PATTERN,
+    exactTargetedTap: true,
   },
   {
     gate: 'same-mint invariance',
@@ -164,15 +175,24 @@ function runSuite(suite) {
     timeout: 300000,
   });
   const output = `${result.stdout || ''}${result.stderr || ''}`;
-  const ok = result.status === 0 && result.error === undefined;
+  let targetedAudit = null;
+  let auditError = null;
+  if (suite.exactTargetedTap === true) {
+    try {
+      targetedAudit = parseExactTargetedTapV113(output);
+    } catch (error) {
+      auditError = error;
+    }
+  }
+  const ok = result.status === 0 && result.error === undefined && auditError === null;
   return {
     ...suite,
     ok,
     status: result.status,
     signal: result.signal,
-    error: result.error,
+    error: result.error ?? auditError,
     output,
-    summary: summarize(output),
+    summary: targetedAudit === null ? summarize(output) : `${targetedAudit.selected} exact tests selected and passed; ${targetedAudit.skipped} selected tests skipped`,
   };
 }
 
@@ -180,6 +200,7 @@ console.log('Trade Artifact v1.13 Slice 1 Regression Runner');
 console.log('Direct deterministic Node commands only. No npm wrapper, live network/provider call, credential loading, production package/archive/economics/public-demo write, upload, signing, minting, or deployment.');
 console.log('Slice 1F safety adaptation: run-v112-regression.mjs and commit-bearing v1.12 package-store suites are not executed; maintained safe v1.12 suites run directly.');
 console.log(`Targeted orchestrator filter: ${TARGETED_DRY_RUN_PATTERN}`);
+console.log(`Exact targeted tests (${TARGETED_ORCHESTRATOR_TEST_NAMES_V113.length}): ${TARGETED_ORCHESTRATOR_TEST_NAMES_V113.join(' | ')}`);
 console.log('');
 
 const results = SUITES.map(runSuite);

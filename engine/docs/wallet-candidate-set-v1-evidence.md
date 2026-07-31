@@ -9,7 +9,7 @@ Slice 1 defines and validates the pure result contract for complete wallet-wide 
 The acquisition result contains exactly:
 
 - `scope`;
-- frozen acquisition, normalization, reconstruction, accounting and mark profiles;
+- frozen acquisition, normalization, reconstruction, accounting and mark profiles, including `mark_max_age_seconds`;
 - a finalized chain boundary;
 - fail-closed input status;
 - recomputable coverage;
@@ -64,13 +64,15 @@ and:
 
 Every normalized event is referenced by exactly one supported disposition. Every disposition-backed finding is referenced and its source backlinks, affected mints and time/slot range must exactly reconcile. Duplicate transaction, disposition, event or finding identities fail closed.
 
-Supported activity is normalized into the frozen Slice 7 event shape. Unsupported and ambiguous activity becomes structured, code-only findings rather than provider prose. Unrelated and failed activity remains accounted for but contributes no event or finding.
+Supported activity is normalized into the frozen Slice 7 event shape. The canonical disposition-backed finding taxonomy is closed to exactly `unsupported_activity` and `ambiguous_activity`; those classes become structured, code-only findings rather than provider prose. Unrelated and failed activity remains accounted for but contributes no event or finding. `partial_history_boundary`, `external_transfer_gap`, `unobserved_inventory`, `mark_source_limitation` and `balance_boundary_mismatch` are rejected as v1.13 activity finding types.
 
 ## Token-local versus wallet-wide impact
 
 A finding has `impact_scope: token_specific` or `wallet_wide` and independently states whether it blocks candidate projection and receipt publication.
 
-Token-specific unsupported or ambiguous activity blocks authoritative candidate reconstruction only for affected token mints. Token-specific blocking findings with reason `partial_history_boundary`, `external_transfer_gap`, `unobserved_inventory`, or `balance_boundary_mismatch` have the same projection-blocking result. Other unaffected tokens may still be reconstructed. The blocked token receives a deterministic summary rather than a misleading candidate.
+Token-specific unsupported or ambiguous activity blocks authoritative candidate reconstruction only for affected token mints. Other unaffected tokens may still be reconstructed. The blocked token receives a deterministic summary rather than a misleading candidate. These two activity classes are the only source of v1.13 blocked summaries.
+
+Partial history and unobserved inventory are represented on visible candidates through `ledger_evidence_status`, flags, limitations, reason codes and disclosures. External-transfer uncertainty is a candidate limitation/reason code. Mark limitations are valuation states and mark/unrealized reason codes. Balance-boundary mismatch is reserved for a future historical-balance boundary slice and is not claimed as implemented in v1.13.
 
 Wallet-wide uncertainty cannot be isolated safely. Any unresolved wallet-wide finding prevents acquisition-result acceptance for candidate evidence; no evidence bundle or candidate set is emitted.
 
@@ -92,11 +94,11 @@ Wallet-wide event `raw_index` values are dense in canonical order. At selection 
 
 ## Mark-observation identity
 
-Marks are separate `wallet_mark_observation_v1` content-addressed observations using only `direct_quote_mark_v1`.
+Marks are separate `wallet_mark_observation_v1` content-addressed observations using only `direct_quote_mark_v1`. The canonical evidence profile explicitly commits `mark_profile: direct_quote_mark_v1` together with `mark_max_age_seconds: 300`; both fields participate in evidence and scope identity. A null mark profile requires a null maximum age.
 
-Mark observations are unique per `(token_mint, quote_mint)` pair. An empty observation collection requires `mark_profile: null`; every nonempty collection requires the frozen `direct_quote_mark_v1` profile.
+Mark observations are unique per `(token_mint, quote_mint)` pair. An empty observation collection requires `mark_profile: null` and `mark_max_age_seconds: null`; every nonempty collection requires the frozen profile and 300-second policy.
 
-An available mark binds token mint, quote mint, positive raw-quote price, observation time and source slot, and has a null reason code. It must not be after the finalized snapshot boundary.
+An available observation binds token mint, quote mint, positive finite raw-quote price, observation time and source slot, and has a null reason code. Snapshot valuation uses it only when token and quote match, `source_slot <= anchor_slot`, `observed_at <= snapshot_at`, and `snapshot_at - observed_at <= 300`. Ages 0, 299 and 300 are fresh; age 301 and older are stale. Future observations may remain committed evidence but are projected as after-boundary/unavailable valuation and never used for unrealized PnL.
 
 An unavailable mark carries null price/time/slot and one exact reason code: source unavailable, stale, quote mismatch, after snapshot boundary, or snapshot boundary unavailable. Missing or unusable marks remain null; they never become zero.
 

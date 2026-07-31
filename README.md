@@ -127,7 +127,9 @@ V1.13 Slice 1 adds pure, private-by-default wallet candidate evidence, candidate
 - `engine/docs/wallet-candidate-set-v1-selection.md`
 - `node engine/src/run-v113-regression.mjs`
 
-The v1.13 runner uses direct deterministic Node commands and a safe v1.12 compatibility gate; it does not invoke npm, the old commit-bearing v1.12 wrapper, live providers, package-store commits, production publication, upload, signing, minting, or deployment. Some maintained compatibility tests exercise local APIs and temporary non-package fixture/write roots only.
+The v1.13 evidence taxonomy has exactly two disposition-backed finding types: `unsupported_activity` and `ambiguous_activity`. Partial history, unobserved inventory and external-transfer uncertainty are candidate evidence limitations expressed through ledger status, flags, limitations, reason codes and disclosures; balance-boundary mismatch remains future work; mark limitations are valuation states. Limited partial-history candidates remain visible-only with `economics_status: unavailable_partial_history`, null economics/snapshot values and unavailable valuation rather than numeric-zero placeholders. The identity-bound `direct_quote_mark_v1` profile commits to `mark_max_age_seconds: 300`; ages 0 through 300 seconds are usable when all slot, timestamp, mint, quote and positive-price checks pass, while age 301 and all future/mismatched/unavailable states produce null unrealized valuation.
+
+The v1.13 runner uses direct deterministic Node commands and a safe v1.12 compatibility gate; it does not invoke npm, the old commit-bearing v1.12 wrapper, live providers, package-store commits, production publication, upload, signing, minting, or deployment. Its targeted Slice 7 gate uses an anchored, code-unit-escaped alternation of exactly three complete test names, parses TAP fail-closed, and requires all three selected tests to pass with none selected as skipped. Some maintained compatibility tests exercise local APIs and temporary non-package fixture/write roots only.
 
 ## What It Does
 
