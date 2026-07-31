@@ -1,6 +1,6 @@
 import { fail } from './errors.mjs';
 import { computeEventRecordDigest, computeReceiptScopedEvidenceDigest } from './identity.mjs';
-import { compareNormalizedEventRecordsV1 } from './dispositions.mjs';
+import { compareCodeUnits } from './order.mjs';
 import { assertPlainJsonValue, cloneAndFreeze, clonePlainData } from './plain-data.mjs';
 import { canonicalJson } from './serialize.mjs';
 import { EVENT_RECORD_VERSION, validateEventRecordV1, validateSlice7EventV1 } from './schema.mjs';
@@ -45,6 +45,15 @@ function affectsToken(record, tokenMint) {
   return event.token_in_mint === tokenMint || event.token_out_mint === tokenMint;
 }
 
+// Preserve the target-scoped acquisition and Slice 7 reconstruction order:
+// timestamp, then transaction signature. Rich source coordinates only close ties.
+export function compareReceiptScopedEventRecordsV1(left, right) {
+  return left.slice7_event.timestamp - right.slice7_event.timestamp
+    || compareCodeUnits(left.slice7_event.tx_hash, right.slice7_event.tx_hash)
+    || left.source_slot - right.source_slot
+    || compareCodeUnits(left.event_digest, right.event_digest);
+}
+
 export function validateReceiptScopedEvidenceV1(value) {
   assertPlainJsonValue(value, ['receipt_scoped_evidence']);
   assertExactObject(value, FIELDS, 'invalid_receipt_scoped_evidence', 'receipt-scoped evidence shape is invalid');
@@ -71,7 +80,7 @@ export function validateReceiptScopedEvidenceV1(value) {
       const previousEvent = { ...value.events[index - 1], raw_index: previousReference.source_raw_index };
       const previousRecord = { source_slot: previousReference.source_slot, event_digest: previousReference.event_digest, slice7_event: previousEvent };
       const currentRecord = { source_slot: reference.source_slot, event_digest: reference.event_digest, slice7_event: sourceEvent };
-      if (compareNormalizedEventRecordsV1(previousRecord, currentRecord) >= 0) fail('receipt_scoped_event_order_mismatch', 'receipt-scoped events are not in canonical source order');
+      if (compareReceiptScopedEventRecordsV1(previousRecord, currentRecord) >= 0) fail('receipt_scoped_event_order_mismatch', 'receipt-scoped events are not in canonical source order');
     }
   }
   const expected = computeReceiptScopedEvidenceDigest(digestInput(value));
@@ -89,8 +98,8 @@ export function buildReceiptScopedEvidenceV1(input) {
   });
   const scoped = records.filter(record => affectsToken(record, input.tokenMint));
   if (scoped.length === 0) fail('candidate_evidence_empty', 'candidate token has no supported normalized evidence');
-  scoped.sort(compareNormalizedEventRecordsV1);
-  for (let index = 1; index < scoped.length; index += 1) if (compareNormalizedEventRecordsV1(scoped[index - 1], scoped[index]) === 0) fail('duplicate_normalized_event', 'receipt-scoped evidence contains duplicate events');
+  scoped.sort(compareReceiptScopedEventRecordsV1);
+  for (let index = 1; index < scoped.length; index += 1) if (compareReceiptScopedEventRecordsV1(scoped[index - 1], scoped[index]) === 0) fail('duplicate_normalized_event', 'receipt-scoped evidence contains duplicate events');
   const body = {
     wallet: input.wallet,
     token_mint: input.tokenMint,
