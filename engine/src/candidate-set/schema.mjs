@@ -26,6 +26,12 @@ export const WINDOW_VERSION = 'fixed_lookback_latest_state_v1';
 export const BOUNDARY_VERSION = 'solana_finalized_acquisition_boundary_v1';
 export const MARK_PROFILE_VERSION = 'direct_quote_mark_v1';
 export const MARK_PROFILE_MAX_AGE_SECONDS = 300;
+export const LOOKBACK_SECONDS_BY_PROFILE_V1 = Object.freeze({
+  lookback_7d_v1: 604800,
+  lookback_30d_v1: 2592000,
+  lookback_90d_v1: 7776000,
+  lookback_180d_v1: 15552000,
+});
 
 const PROFILE_VALUES = Object.freeze({
   wallet_acquisition_profile: 'wallet_wide_bounded_history_v1',
@@ -251,6 +257,16 @@ export function validateEvidenceBundleV1(bundle) {
 }
 export function validateScopeInputV1(value) {
   assertExactFields(value, ['scope_version','chain','network','genesis_hash','wallet','window'], 'scope'); if (value.scope_version !== SCOPE_INPUT_VERSION || value.chain !== 'solana' || value.network !== 'mainnet-beta' || value.genesis_hash !== GENESIS_HASH) fail('invalid_chain_identity', 'scope chain identity is invalid'); nonempty(value.wallet, 'wallet'); assertExactFields(value.window, ['window_version','lookback_profile','requested_lookback_seconds','initial_before_signature','lower_bound'], 'scope.window'); if (value.window.window_version !== WINDOW_VERSION || value.window.initial_before_signature !== null) fail('non_null_latest_state_cursor', 'latest-state window requires null initial cursor'); nonempty(value.window.lookback_profile, 'lookback_profile'); safe(value.window.requested_lookback_seconds, 'requested_lookback_seconds'); assertExactFields(value.window.lower_bound, ['oldest_allowed_timestamp','completion_status'], 'scope.window.lower_bound'); safe(value.window.lower_bound.oldest_allowed_timestamp, 'oldest_allowed_timestamp'); if (value.window.lower_bound.completion_status !== 'proven') fail('historical_bound_unproven', 'lower bound must be proven'); return true;
+}
+export function validateWalletAcquisitionScopeBoundaryV1(scope, boundary) {
+  validateScopeInputV1(scope);
+  validateBoundaryV1(boundary);
+  const expectedSeconds = LOOKBACK_SECONDS_BY_PROFILE_V1[scope.window.lookback_profile];
+  if (expectedSeconds === undefined) fail('unsupported_lookback_profile', 'wallet acquisition lookback profile is unsupported');
+  if (scope.window.requested_lookback_seconds !== expectedSeconds) fail('lookback_boundary_mismatch', 'wallet acquisition lookback profile and duration do not match');
+  const derivedSeconds = boundary.anchor_block_time - scope.window.lower_bound.oldest_allowed_timestamp;
+  if (!Number.isSafeInteger(derivedSeconds) || derivedSeconds !== expectedSeconds) fail('lookback_boundary_mismatch', 'wallet acquisition lower boundary does not match the finalized anchor');
+  return true;
 }
 function rejectDigestBacklink(value, key, code) { if (value === null || typeof value !== 'object') return; for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) { if (Array.isArray(value) && name === 'length') continue; if (name === key) fail(code, `${key} is forbidden in payload`); if (Object.hasOwn(descriptor, 'value')) rejectDigestBacklink(descriptor.value, key, code); } }
 function validateBlockedSummaryRelations(payload) {

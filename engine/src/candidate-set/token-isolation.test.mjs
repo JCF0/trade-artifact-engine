@@ -17,10 +17,10 @@ import {
 const JUP_MINT = JUP_GOLDEN.tokenMint;
 const RAY_MINT = RAY_GOLDEN.tokenMint;
 
-function blockingFinding({ type = 'unsupported_activity', token, signature, slot, quote = USDC_MINT }) {
+function blockingFinding({ type = 'unsupported_activity', token, signature, slot, quote = USDC_MINT, timestamp = 300 + slot }) {
   return {
     type,
-    timestamp: 300 + slot,
+    timestamp,
     signature,
     slot,
     tokens: [token],
@@ -42,7 +42,7 @@ test('common quote attack does not suppress a valid JUP USDC candidate', () => {
     name: 'common_quote_attack',
     wallet: 'isolation-wallet',
     events: [...JUP_GOLDEN.events],
-    findings: [blockingFinding({ token: USDC_MINT, signature: 'quote-finding', slot: 30 })],
+    findings: [blockingFinding({ token: USDC_MINT, signature: 'quote-finding', slot: 30, timestamp: 1782068815 })],
   });
   const jup = result.candidateSet.payload.candidates.find(candidate => candidate.projection.token_mint === JUP_MINT);
   assert.ok(jup);
@@ -56,7 +56,7 @@ test('a real blocked JUP token has no economics while unrelated RAY remains avai
     name: 'real_blocked_position',
     wallet: 'isolation-wallet',
     events: [...JUP_GOLDEN.events, ...RAY_GOLDEN.events],
-    findings: [blockingFinding({ token: JUP_MINT, signature: 'jup-finding', slot: 30 })],
+    findings: [blockingFinding({ token: JUP_MINT, signature: 'jup-finding', slot: 30, timestamp: 1782068815 })],
   });
   assert.ok(!candidateMints(result).includes(JUP_MINT));
   assert.ok(candidateMints(result).includes(RAY_MINT));
@@ -81,8 +81,8 @@ test('ambiguous precedence consolidates per position token only', () => {
     wallet: 'isolation-wallet',
     events: [...JUP_GOLDEN.events, ...RAY_GOLDEN.events],
     findings: [
-      blockingFinding({ token: JUP_MINT, signature: 'jup-unsupported', slot: 30 }),
-      blockingFinding({ type: 'ambiguous_activity', token: JUP_MINT, signature: 'jup-ambiguous', slot: 31 }),
+      blockingFinding({ token: JUP_MINT, signature: 'jup-unsupported', slot: 30, timestamp: 1782068815 }),
+      blockingFinding({ type: 'ambiguous_activity', token: JUP_MINT, signature: 'jup-ambiguous', slot: 31, timestamp: 1782068816 }),
     ],
   });
   assert.deepEqual(candidateMints(result), [RAY_MINT]);
@@ -98,8 +98,8 @@ test('authoritative evidence and candidates are invariant to valid acquisition c
     wallet: 'isolation-wallet',
     events: [...JUP_GOLDEN.events, ...RAY_GOLDEN.events],
     findings: [
-      blockingFinding({ type: 'ambiguous_activity', token: JUP_MINT, signature: 'jup-permutation-finding', slot: 30 }),
-      blockingFinding({ token: RAY_MINT, signature: 'ray-permutation-finding', slot: 31, quote: USDT_MINT }),
+      blockingFinding({ type: 'ambiguous_activity', token: JUP_MINT, signature: 'jup-permutation-finding', slot: 30, timestamp: 1782068815 }),
+      blockingFinding({ token: RAY_MINT, signature: 'ray-permutation-finding', slot: 31, quote: USDT_MINT, timestamp: 1782068816 }),
     ],
   };
   const canonical = buildDeterministicCandidateFixtureV1(spec);

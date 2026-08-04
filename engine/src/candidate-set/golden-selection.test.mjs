@@ -109,7 +109,7 @@ test('realized partial, clean open, and partial-history candidates remain visibl
   assert.equal(partial.projection.economics.realized_pnl_quote, 2);
   assert.equal(partial.projection.economics.remaining_qty, 8);
   assert.equal(partial.projection.economics.remaining_cost_basis_quote, 16);
-  assert.equal(partial.projection.snapshot.snapshot_at, 1000);
+  assert.equal(partial.projection.snapshot.snapshot_at, FIXTURE_MATRIX.openAndPartialHistory.anchorBlockTime);
   assert.equal(partial.projection.selection_status, 'visible_only');
   assert.equal(partial.projection.package_eligibility, 'not_publication_eligible_v1');
   expectSelectionCode(built, partial, 'candidate_not_selectable');

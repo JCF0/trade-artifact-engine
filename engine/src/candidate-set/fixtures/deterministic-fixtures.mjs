@@ -124,7 +124,7 @@ function buildFindingGroup(spec) {
   return { finding, disposition };
 }
 
-function makeScope(wallet, oldestAllowedTimestamp) {
+function makeScope(wallet, oldestAllowedTimestamp, lookbackProfile, requestedLookbackSeconds) {
   return {
     scope_version: 'wallet_candidate_scope_input_v1',
     chain: 'solana',
@@ -133,8 +133,8 @@ function makeScope(wallet, oldestAllowedTimestamp) {
     wallet,
     window: {
       window_version: 'fixed_lookback_latest_state_v1',
-      lookback_profile: 'lookback_30d_v1',
-      requested_lookback_seconds: 2592000,
+      lookback_profile: lookbackProfile,
+      requested_lookback_seconds: requestedLookbackSeconds,
       initial_before_signature: null,
       lower_bound: { oldest_allowed_timestamp: oldestAllowedTimestamp, completion_status: 'proven' },
     },
@@ -169,8 +169,15 @@ export function buildDeterministicCandidateFixtureV1(spec, { permuteInput = fals
   const allSlots = dispositions.map(item => item.slot);
   const allTimes = dispositions.map(item => item.block_time).filter(value => value !== null);
   const anchorSlot = spec.anchorSlot ?? (allSlots.length ? Math.max(...allSlots) + 100 : 100);
-  const anchorBlockTime = spec.anchorBlockTime ?? (allTimes.length ? Math.max(...allTimes) + 100 : 1000);
-  const oldestAllowedTimestamp = spec.oldestAllowedTimestamp ?? Math.max(0, (allTimes.length ? Math.min(...allTimes) : 1) - 1);
+  const anchorBlockTime = spec.anchorBlockTime ?? Math.max(2592000, allTimes.length ? Math.max(...allTimes) + 100 : 2592000);
+  const minimumSourceTime = allTimes.length ? Math.min(...allTimes) : anchorBlockTime;
+  const lookbackOptions = [
+    ['lookback_30d_v1', 2592000],
+    ['lookback_90d_v1', 7776000],
+    ['lookback_180d_v1', 15552000],
+  ];
+  const [lookbackProfile, requestedLookbackSeconds] = lookbackOptions.find(([, seconds]) => anchorBlockTime - minimumSourceTime <= seconds) ?? lookbackOptions.at(-1);
+  const oldestAllowedTimestamp = spec.oldestAllowedTimestamp ?? anchorBlockTime - requestedLookbackSeconds;
   const profiles = {
     ...DEFAULT_PROFILES,
     mark_profile: (spec.marks ?? []).length === 0 ? null : DEFAULT_PROFILES.mark_profile,
@@ -178,7 +185,7 @@ export function buildDeterministicCandidateFixtureV1(spec, { permuteInput = fals
     ...(spec.profiles ?? {}),
   };
   const boundary = makeBoundary(anchorSlot, anchorBlockTime);
-  const scope = makeScope(wallet, oldestAllowedTimestamp);
+  const scope = makeScope(wallet, oldestAllowedTimestamp, lookbackProfile, requestedLookbackSeconds);
   const inputStatus = { ...COMPLETE_INPUT_STATUS };
   const coverage = recomputeCoverageV1({
     transactionDispositions: dispositions,
@@ -191,7 +198,7 @@ export function buildDeterministicCandidateFixtureV1(spec, { permuteInput = fals
   const acquisitionInput = {
     acquisition_result_version: 'wallet_wide_acquisition_result_v1',
     scope,
-    profiles,
+    profiles: { ...profiles, mark_profile: null, mark_max_age_seconds: null },
     boundary,
     input_status: inputStatus,
     coverage,
@@ -271,7 +278,7 @@ export const FIXTURE_MATRIX = deepFreeze({
     ],
   }),
   openAndPartialHistory: Object.freeze({
-    name: 'open_partial_and_limited', wallet: 'matrix-wallet', anchorSlot: 100, anchorBlockTime: 1000,
+    name: 'open_partial_and_limited', wallet: 'matrix-wallet', anchorSlot: 100, anchorBlockTime: 2592000,
     events: [
       eventSpec({ token: 'REALIZED-PARTIAL', timestamp: 100, signature: 'partial-buy', slot: 10, buy: true, tokenAmount: 10, quoteAmount: 20 }),
       eventSpec({ token: 'REALIZED-PARTIAL', timestamp: 200, signature: 'partial-sell', slot: 20, buy: false, tokenAmount: 2, quoteAmount: 6 }),
@@ -281,23 +288,23 @@ export const FIXTURE_MATRIX = deepFreeze({
       eventSpec({ token: 'PARTIALLY-OBSERVED', timestamp: 450, signature: 'partially-observed-sell', slot: 45, buy: false, tokenAmount: 3, quoteAmount: 9 }),
     ],
     marks: [
-      Object.freeze({ token_mint: 'REALIZED-PARTIAL', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null }),
-      Object.freeze({ token_mint: 'CLEAN-OPEN', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 990, source_slot: 99, reason_code: null }),
-      Object.freeze({ token_mint: 'LIMITED-HISTORY', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null }),
-      Object.freeze({ token_mint: 'PARTIALLY-OBSERVED', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null }),
+      Object.freeze({ token_mint: 'REALIZED-PARTIAL', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 2591990, source_slot: 99, reason_code: null }),
+      Object.freeze({ token_mint: 'CLEAN-OPEN', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 2591990, source_slot: 99, reason_code: null }),
+      Object.freeze({ token_mint: 'LIMITED-HISTORY', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 2591990, source_slot: 99, reason_code: null }),
+      Object.freeze({ token_mint: 'PARTIALLY-OBSERVED', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 2591990, source_slot: 99, reason_code: null }),
     ],
   }),
   localizedUnsupported: Object.freeze({
     name: 'localized_unsupported', wallet: 'matrix-wallet',
     events: [...JUP_GOLDEN.events],
-    findings: [Object.freeze({ type: 'unsupported_activity', timestamp: 300, signature: 'unsupported-tx', slot: 30, tokens: ['BLOCKED'], quotes: [USDC_MINT], reason: 'unsupported_swap_shape' })],
+    findings: [Object.freeze({ type: 'unsupported_activity', timestamp: 1782068815, signature: 'unsupported-tx', slot: 30, tokens: ['BLOCKED'], quotes: [USDC_MINT], reason: 'unsupported_swap_shape' })],
   }),
   localizedAmbiguous: Object.freeze({
     name: 'localized_ambiguous_precedence', wallet: 'matrix-wallet',
     events: [...JUP_GOLDEN.events],
     findings: [
-      Object.freeze({ type: 'unsupported_activity', timestamp: 300, signature: 'unsupported-tx', slot: 30, tokens: ['BLOCKED'], quotes: [USDC_MINT], reason: 'unsupported_swap_shape' }),
-      Object.freeze({ type: 'ambiguous_activity', timestamp: 301, signature: 'ambiguous-tx', slot: 31, tokens: ['BLOCKED'], quotes: [USDC_MINT], reason: 'ambiguous_swap_direction' }),
+      Object.freeze({ type: 'unsupported_activity', timestamp: 1782068815, signature: 'unsupported-tx', slot: 30, tokens: ['BLOCKED'], quotes: [USDC_MINT], reason: 'unsupported_swap_shape' }),
+      Object.freeze({ type: 'ambiguous_activity', timestamp: 1782068816, signature: 'ambiguous-tx', slot: 31, tokens: ['BLOCKED'], quotes: [USDC_MINT], reason: 'ambiguous_swap_direction' }),
     ],
   }),
   walletWideAmbiguous: Object.freeze({
