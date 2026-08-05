@@ -1,3 +1,4 @@
+import { classifyEvent } from '../../ledger/position-ledger.mjs';
 import { buildWalletAcquisitionResultV1 } from '../acquisition-result.mjs';
 import { buildActivityFindingV1, canonicalizeActivityFindingsV1 } from '../activity-findings.mjs';
 import { buildWalletCandidateSetV1 } from '../builder.mjs';
@@ -83,12 +84,14 @@ function aggregateSameMintInputs(spec) {
 }
 
 function buildSupportedDisposition(record) {
+  const classified = classifyEvent(record.slice7_event);
+  if (!['buy','sell'].includes(classified.action)) throw new TypeError('fixture event must be a quote-position spot operation');
   return buildDispositionV1({
     tx_hash: record.slice7_event.tx_hash,
     slot: record.source_slot,
     block_time: record.slice7_event.timestamp,
     disposition_type: 'supported_normalized_event',
-    affected_token_mints: [record.slice7_event.token_in_mint, record.slice7_event.token_out_mint].sort(compareCodeUnits),
+    affected_token_mints: [classified.baseMint],
     normalized_event_digests: [record.event_digest],
     finding_digests: [],
   });

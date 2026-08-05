@@ -31,7 +31,7 @@ function raw({ token = TOKEN, timestamp, tx, rawIndex, buy = true }) {
 
 function evidenceFor(specs) {
   const records = specs.map(spec => buildEventRecordV1({ source_slot: spec.slot, slice7_event: raw(spec) }));
-  const dispositions = records.map(record => buildDispositionV1({ tx_hash: record.slice7_event.tx_hash, slot: record.source_slot, block_time: record.slice7_event.timestamp, disposition_type: 'supported_normalized_event', affected_token_mints: [record.slice7_event.token_in_mint, record.slice7_event.token_out_mint].sort(), normalized_event_digests: [record.event_digest], finding_digests: [] }));
+  const dispositions = records.map(record => buildDispositionV1({ tx_hash: record.slice7_event.tx_hash, slot: record.source_slot, block_time: record.slice7_event.timestamp, disposition_type: 'supported_normalized_event', affected_token_mints: [record.slice7_event.token_in_mint === QUOTE ? record.slice7_event.token_out_mint : record.slice7_event.token_in_mint], normalized_event_digests: [record.event_digest], finding_digests: [] }));
   records.sort(compareNormalizedEventRecordsV1);
   dispositions.sort((a, b) => a.slot - b.slot || (a.tx_hash < b.tx_hash ? -1 : 1));
   records.forEach((record, index) => { if (record.slice7_event.raw_index !== index) throw new Error('fixture raw indexes must follow evidence order'); });

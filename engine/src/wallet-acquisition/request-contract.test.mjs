@@ -73,7 +73,7 @@ test('accepts and freezes every permitted lookback profile', () => {
   }
 });
 
-test('exports the exact stable sanitized Slice 1 error taxonomy', () => {
+test('exports the exact stable sanitized wallet-acquisition error taxonomy through Slice 2', () => {
   assert.deepEqual(WALLET_ACQUISITION_ERROR_CODES_V1, [
     'invalid_acquisition_request',
     'unsupported_lookback_profile',
@@ -92,6 +92,13 @@ test('exports the exact stable sanitized Slice 1 error taxonomy', () => {
     'acquisition_truncated',
     'provider_uncertain',
     'acquisition_deadline_exceeded',
+    'invalid_source_transaction',
+    'source_transaction_mismatch',
+    'transaction_disposition_failed',
+    'normalization_failed',
+    'normalization_ambiguous',
+    'wallet_wide_impact_unresolved',
+    'event_finding_reconciliation_failed',
   ]);
 });
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { QUOTE_MINTS, USDC_MINT } from '../pipeline/constants.mjs';
 import { buildDispositionV1, buildEventRecordV1, buildFindingV1, computeSourceTransactionDigest } from './identity.mjs';
 import {
   canonicalizeTransactionDispositionsV1,
@@ -11,7 +12,7 @@ const event = buildEventRecordV1({
   source_slot: 9,
   slice7_event: {
     wallet, timestamp: 90, tx_hash: 'supported-tx', source: 'swap',
-    token_in_mint: 'QUOTE', token_in_amount: 10, token_in_decimals: 6,
+    token_in_mint: USDC_MINT, token_in_amount: 10, token_in_decimals: 6,
     token_out_mint: 'TOKEN', token_out_amount: 5, token_out_decimals: 6,
     extraction_method: 'balance_delta', raw_index: 0,
   },
@@ -19,7 +20,7 @@ const event = buildEventRecordV1({
 const supported = buildDispositionV1({
   tx_hash: 'supported-tx', slot: 9, block_time: 90,
   disposition_type: 'supported_normalized_event',
-  affected_token_mints: ['QUOTE', 'TOKEN'],
+  affected_token_mints: ['TOKEN'],
   normalized_event_digests: [event.event_digest], finding_digests: [],
 });
 const unsupportedSource = { tx_hash: 'unsupported-tx', slot: 8, block_time: 80 };
@@ -48,6 +49,19 @@ assert.doesNotThrow(() => validateDispositionAccountingV1({
   anchorSlot: 10,
 }));
 
+QUOTE_MINTS.delete(USDC_MINT);
+try {
+  assert.doesNotThrow(() => validateDispositionAccountingV1({
+    transactionDispositions: canonical,
+    normalizedEventRecords: [event],
+    activityFindings: [finding],
+    wallet,
+    anchorSlot: 10,
+  }));
+} finally {
+  QUOTE_MINTS.add(USDC_MINT);
+}
+
 assert.throws(() => validateDispositionAccountingV1({
   transactionDispositions: canonical,
   normalizedEventRecords: [event],
@@ -57,7 +71,7 @@ assert.throws(() => validateDispositionAccountingV1({
 }), error => error.code === 'finding_disposition_mismatch');
 
 const wrongMint = structuredClone(supported);
-wrongMint.affected_token_mints = ['TOKEN'];
+wrongMint.affected_token_mints = [USDC_MINT, 'TOKEN'];
 assert.throws(() => validateDispositionAccountingV1({
   transactionDispositions: [unsupported, wrongMint], normalizedEventRecords: [event], activityFindings: [finding], wallet, anchorSlot: 10,
 }), error => error.code === 'disposition_digest_mismatch' || error.code === 'event_disposition_mismatch');

@@ -84,7 +84,7 @@ test('malformed disposition accounting cannot reach a content-addressed evidence
   } = originalDisposition;
   const malformedDisposition = buildDispositionV1({
     ...dispositionInput,
-    affected_token_mints: [JUP_GOLDEN.tokenMint],
+    affected_token_mints: [JUP_GOLDEN.quoteMint, JUP_GOLDEN.tokenMint].sort(),
   });
   const malformed = buildWalletAcquisitionResultV1({
     ...structuredClone(normal.acquisitionResult),

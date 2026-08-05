@@ -1,3 +1,5 @@
+import { classifyEvent } from '../ledger/position-ledger.mjs';
+import { SOL_MINT, USDC_MINT, USDT_MINT } from '../pipeline/constants.mjs';
 import { cloneAndFreeze, clonePlainData, assertPlainJsonValue } from './plain-data.mjs';
 import { compareCodeUnits } from './order.mjs';
 import { fail } from './errors.mjs';
@@ -12,6 +14,24 @@ import {
   computeFindingDigest,
   computeSourceTransactionDigest,
 } from './identity.mjs';
+
+const QUOTE_MINTS_V1 = Object.freeze([SOL_MINT, USDC_MINT, USDT_MINT]);
+
+function stableClassifyEvent(event) {
+  const inputIsQuote = QUOTE_MINTS_V1.includes(event.token_in_mint);
+  const outputIsQuote = QUOTE_MINTS_V1.includes(event.token_out_mint);
+  const stable = inputIsQuote && !outputIsQuote
+    ? { action: 'buy', baseMint: event.token_out_mint, quoteMint: event.token_in_mint }
+    : !inputIsQuote && outputIsQuote
+      ? { action: 'sell', baseMint: event.token_in_mint, quoteMint: event.token_out_mint }
+      : { action: null };
+  const shared = classifyEvent(event);
+  return shared.action === stable.action
+    && shared.baseMint === stable.baseMint
+    && shared.quoteMint === stable.quoteMint
+    ? shared
+    : stable;
+}
 
 function compareNullableNumbers(left, right) {
   if (left === right) return 0;
@@ -111,7 +131,9 @@ export function validateDispositionAccountingV1(input) {
       eventReferenceCounts.set(event.event_digest, eventReferenceCounts.get(event.event_digest) + 1);
       if (event.slice7_event.tx_hash !== disposition.tx_hash || event.source_slot !== disposition.slot || (disposition.block_time !== null && event.slice7_event.timestamp !== disposition.block_time)) fail('event_source_mismatch', 'event source does not match its disposition');
       if (event.source_slot > anchorSlot || event.slice7_event.wallet !== wallet) fail('event_scope_mismatch', 'normalized event is outside the acquisition scope');
-      exactStringSet(disposition.affected_token_mints, sortedUnique([event.slice7_event.token_in_mint, event.slice7_event.token_out_mint]), 'event_disposition_mismatch', 'supported disposition affected mints do not match its event');
+      const classifiedEvent = stableClassifyEvent(event.slice7_event);
+      if (!['buy','sell'].includes(classifiedEvent.action)) fail('event_disposition_mismatch', 'supported event is not a quote-position spot operation');
+      exactStringSet(disposition.affected_token_mints, [classifiedEvent.baseMint], 'event_disposition_mismatch', 'supported disposition affected position mint does not match its event');
       continue;
     }
 

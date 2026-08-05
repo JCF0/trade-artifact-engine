@@ -18,6 +18,13 @@ export const WALLET_ACQUISITION_ERROR_CODES_V1 = Object.freeze([
   'acquisition_truncated',
   'provider_uncertain',
   'acquisition_deadline_exceeded',
+  'invalid_source_transaction',
+  'source_transaction_mismatch',
+  'transaction_disposition_failed',
+  'normalization_failed',
+  'normalization_ambiguous',
+  'wallet_wide_impact_unresolved',
+  'event_finding_reconciliation_failed',
 ]);
 
 const ERROR_MESSAGES = Object.freeze({
@@ -38,6 +45,13 @@ const ERROR_MESSAGES = Object.freeze({
   acquisition_truncated: 'wallet acquisition was truncated',
   provider_uncertain: 'wallet acquisition provider outcome is uncertain',
   acquisition_deadline_exceeded: 'wallet acquisition deadline was exceeded',
+  invalid_source_transaction: 'wallet source transaction is invalid',
+  source_transaction_mismatch: 'wallet source transaction evidence is inconsistent',
+  transaction_disposition_failed: 'wallet transaction disposition could not be constructed',
+  normalization_failed: 'wallet transaction normalization failed',
+  normalization_ambiguous: 'wallet transaction normalization is ambiguous',
+  wallet_wide_impact_unresolved: 'wallet-wide transaction impact is unresolved',
+  event_finding_reconciliation_failed: 'wallet transaction event and finding references are inconsistent',
 });
 
 const ERROR_CODE_SET = new Set(WALLET_ACQUISITION_ERROR_CODES_V1);
