@@ -53,10 +53,23 @@ function structuredGroups(transaction, wallet) {
 }
 
 function exactScaledDecimal(value, decimals) {
-  if (typeof value !== 'string' || !Number.isSafeInteger(decimals) || decimals < 0 || decimals > 18) return null;
-  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(value);
+  if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 18) return null;
+  const numeric = typeof value === 'number';
+  const decimal = numeric
+    ? Number.isFinite(value) && value > 0 && !Object.is(value, -0) ? String(value) : null
+    : typeof value === 'string' ? value : null;
+  if (decimal === null) return null;
+  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(decimal);
   if (match === null || (match[2]?.length ?? 0) > decimals) return null;
   const scaled = `${match[1]}${(match[2] ?? '').padEnd(decimals, '0')}`.replace(/^0+(?=[0-9])/, '');
+  if (numeric) {
+    const integer = BigInt(scaled);
+    const maximum = BigInt(Number.MAX_SAFE_INTEGER);
+    const divisor = 10 ** decimals;
+    if (integer > maximum || Number(integer) / divisor !== value) return null;
+    if (integer > 0n && Number(integer - 1n) / divisor === value) return null;
+    if (integer < maximum && Number(integer + 1n) / divisor === value) return null;
+  }
   return scaled === '0' ? null : scaled;
 }
 

@@ -45,8 +45,8 @@ test('projects Raydium/Orca evidence, native transfers, failures, and unresolved
     { userAccount: WALLET, mint: JUP, rawTokenAmount: { tokenAmount: '100000000', decimals: 6 } },
   ] }];
   const fallbackEvidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: fallback });
-  assert.deepEqual(fallbackEvidence.token_transfer_legs, []);
-  assert.equal(fallbackEvidence.unresolved_wallet_effects.filter(effect => effect.effect_id.startsWith('token-unresolved-')).length, 2);
+  assert.deepEqual(fallbackEvidence.token_transfer_legs.map(leg => leg.raw_amount), ['25000000', '100000000']);
+  assert.equal(fallbackEvidence.unresolved_wallet_effects.filter(effect => effect.effect_id.startsWith('token-unresolved-')).length, 0);
   assert.equal(fallbackEvidence.account_closures.length, 0);
   assert.deepEqual(fallbackEvidence.unresolved_wallet_effects.filter(effect => effect.effect_id.startsWith('unbound-account-close-')).map(effect => effect.mint), [USDC, JUP]);
   const failed = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: enhanced('failed', { failed: true }) });
@@ -55,7 +55,7 @@ test('projects Raydium/Orca evidence, native transfers, failures, and unresolved
   assert.deepEqual(unresolved.unresolved_wallet_effects, [{ effect_id: 'token-self-0', mint: JUP }]);
 });
 
-test('never recovers exact raw token amounts from binary floats and accepts only exact decimal strings', () => {
+test('accepts safe exactly-scaled provider numbers and rejects unsafe binary-float raw recovery', () => {
   const binary = enhanced('binary-float', { transfers: false, type: 'TRANSFER', program: null });
   binary.events = {};
   binary.tokenTransfers = [{ fromUserAccount: WALLET, toUserAccount: 'Pool', mint: USDC, tokenAmount: 9007199254.740992 }];
@@ -71,6 +71,12 @@ test('never recovers exact raw token amounts from binary floats and accepts only
   rounded.signature = providerSignature('rounded-decimal');
   rounded.tokenTransfers[0].tokenAmount = '9007199254.740992';
   assert.equal(projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: rounded }).token_transfer_legs.length, 0);
+
+  const aliasedSafeInteger = structuredClone(binary);
+  aliasedSafeInteger.signature = providerSignature('aliased-safe-integer');
+  aliasedSafeInteger.tokenTransfers[0].tokenAmount = 9007199254.74089;
+  aliasedSafeInteger.accountData[0].tokenBalanceChanges[0].rawTokenAmount.tokenAmount = '-9007199254740890';
+  assert.equal(projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: aliasedSafeInteger }).token_transfer_legs.length, 0);
 });
 
 test('does not use arbitrary mint mentions and fails malformed ownership/amount/body shapes closed', () => {
