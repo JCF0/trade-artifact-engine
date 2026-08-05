@@ -6,9 +6,9 @@ A normal wallet owner should be able to see which reconstructed positions are pl
 
 ## Pure Slice 1 boundary
 
-Slice 1 is a local, deterministic contract and transformation layer. It accepts already-acquired, normalized, completely classified Solana mainnet-beta evidence; validates and content-addresses that evidence; reconstructs the existing position ledger; projects candidates; and resolves an authorized selection into an in-memory Slice 7 dry-run request.
+Slice 1 is a local, deterministic contract and transformation layer. It accepts normalized, completely classified Solana mainnet-beta evidence; validates and content-addresses that evidence; reconstructs the existing position ledger; projects candidates; and resolves an authorized selection into an in-memory Slice 7 dry-run request. Artifact v1.14 now supplies the upstream read-only wallet-wide bounded acquisition boundary that produces this evidence contract.
 
-It does not acquire live wallet history, call Helius, persist evidence or results, create hosted jobs, expose an API or UI, publish a page, upload content, sign a claim, mint an asset, or deploy anything.
+The candidate-set layer itself does not call a provider, persist evidence or results, create hosted jobs, expose an API or UI, publish a page, upload content, sign a claim, mint an asset, or deploy anything. The v1.14 acquisition adapter uses only injected read-only Solana RPC and Helius Enhanced capabilities; deterministic tests supply offline fixtures and make no provider request.
 
 The current transitive production closure has no active environment-variable, timer, randomness, dynamic-loading, child-process, filesystem, network, provider, storage, publication, signing, minting or deployment capability and has no import-time side effects. Its ledger dependency reaches a shared constants module containing inert Helius and Irys endpoint strings, but no provider or network operation is reachable. The static capability audit validates the present closure and common direct capability forms; it is not claimed as a parser-level proof against every possible future JavaScript indirection.
 
@@ -55,7 +55,7 @@ Payloads containing their own envelope digest are rejected. Candidate identity d
 
 Wallet identity is explicit in the Solana mainnet-beta scope and every candidate selection key. Network identity includes the frozen Solana mainnet-beta genesis hash.
 
-Window identity uses `fixed_lookback_latest_state_v1`: a fixed-lookback identifier, requested duration, and proven lower boundary associated with a finalized acquisition boundary. The initial cursor is always null, proving acquisition began from latest state rather than an arbitrary historical cursor. The lower bound must be proven complete. The pure schema does not currently enforce `anchor_block_time - oldest_allowed_timestamp === requested_lookback_seconds`, and product-level permitted-profile allowlisting remains a responsibility of the future acquisition/hosted boundary; it currently validates only a nonempty profile identifier and nonnegative duration.
+Window identity uses `fixed_lookback_latest_state_v1`: a fixed-lookback identifier, requested duration, and proven lower boundary associated with a finalized acquisition boundary. The initial cursor is always null, proving acquisition began from latest state rather than an arbitrary historical cursor. The lower bound must be proven complete. The v1.14 acquisition request allowlists 7d, 30d, 90d, and 180d profiles, binds each to its exact duration, and derives `oldest_allowed_timestamp = anchor_block_time - requested_lookback_seconds`. The downstream evidence schema still validates the supplied completed window rather than independently re-performing request-policy allowlisting.
 
 Coverage identity commits to the complete disposition partition, normalized event and finding counts, observed time/slot bounds, and the terminal reason (`historical_bound_reached` or `provider_exhaustion`). Coverage is recomputed from evidence rather than trusted as caller prose.
 

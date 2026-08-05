@@ -3,11 +3,11 @@
 Artifact v1.13 Slice 1 is intentionally narrow.
 
 - It provides pure local contracts, canonical builders, validators, deterministic fixtures and a pure selection resolver only.
-- It does not implement a live wallet-wide Helius adapter.
+- Artifact v1.14 adds an upstream read-only wallet-wide adapter for finalized Solana RPC enumeration plus exact Helius Enhanced enrichment; the candidate-set layer remains provider-neutral and pure.
 - It does not provide hosted storage, background jobs, authentication, an API or a UI.
 - The evidence contract supports Solana mainnet-beta only and pins the mainnet-beta genesis hash.
-- The product contract supports fixed permitted latest-state lookbacks only; the current pure schema does not embed the permitted-profile allowlist, so a future acquisition/hosted boundary must enforce it.
-- The pure schema proves the configured lower boundary but does not currently enforce `anchor_block_time - oldest_allowed_timestamp === requested_lookback_seconds`; the future acquisition boundary must enforce that duration relationship.
+- The product contract supports fixed permitted latest-state lookbacks only. The v1.14 acquisition request allowlists 7d, 30d, 90d, and 180d; a future hosted policy may expose a narrower subset.
+- The v1.14 acquisition boundary derives `oldest_allowed_timestamp = anchor_block_time - requested_lookback_seconds`; the downstream pure evidence schema validates the completed window rather than independently re-running request-policy checks.
 - It does not support an arbitrary historical end date or a non-null initial history cursor.
 - Position and PnL accounting remain raw-quote only.
 - It does not perform cross-quote valuation or USD normalization.
@@ -26,7 +26,7 @@ Artifact v1.13 Slice 1 is intentionally narrow.
 - Candidate sets are not complete-wallet performance claims, portfolio statements, track records, receipts, proofs or authorization tokens.
 - Content digests do not confer access rights.
 - Plain-data validation currently bounds depth and total node count. Additional string-byte limits, extreme object-width limits, and lexical sensitive-value checks for generic wallet/transaction/blockhash/mint identity strings remain future hardening; the trusted acquisition boundary must enforce the privacy prohibition in the meantime.
-- A later live acquisition adapter must still prove that acquisition began at latest state, used a null initial cursor, respected the finalized upper boundary, and reached or exhausted the permitted lower bound without caps, truncation or provider uncertainty.
+- The v1.14 adapter proves latest-state acquisition from a null initial cursor, a finalized coherent upper boundary, and lower-bound sentinel or provider exhaustion. Caps, truncation, stale-head evidence, timeout, protocol mismatch, or provider uncertainty produce no acquisition result. Controlled live validation remains separately authorized and was not performed in deterministic closeout.
 - Hosted retention, deletion, authentication, random job handles and private storage policy remain undecided.
 - Public transaction anchors and any later published proof can remain correlatable with public wallet activity.
 - The regression runner's targeted Slice 7 gate uses anchored, code-unit-escaped full-name selection for exactly three tests and fails unless all three selected tests pass without a selected skip and TAP counts reconcile.

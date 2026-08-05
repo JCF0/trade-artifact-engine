@@ -2,7 +2,7 @@
 
 ## Scope
 
-Slice 1 defines and validates the pure result contract for complete wallet-wide acquisition. It does **not** implement the live wallet-wide acquisition adapter and does not call Helius or any other provider. A later adapter must produce this exact provider-neutral result before candidate construction can begin.
+Slice 1 defines and validates the pure result contract for complete wallet-wide acquisition. Artifact v1.14 implements the upstream read-only bounded adapter that produces this provider-neutral result from injected finalized Solana RPC and Helius Enhanced capabilities. Deterministic regression supplies offline capabilities only and performs no live provider request.
 
 ## `wallet_wide_acquisition_result_v1`
 
@@ -27,7 +27,7 @@ The only window version is `fixed_lookback_latest_state_v1`. Its identity includ
 
 `initial_before_signature` **must be null**. This is an identity and validation rule: acquisition begins at the latest wallet state and paginates backward. A non-null initial cursor could silently turn a latest-state result into an arbitrary historical slice and is rejected.
 
-The lower bound includes `oldest_allowed_timestamp` and `completion_status: proven`. The Slice 1 product contract permits only fixed lookbacks and no arbitrary historical end date. The current pure schema validates a nonempty lookback-profile identifier, nonnegative duration and a proven lower boundary, but does not enforce `anchor_block_time - oldest_allowed_timestamp === requested_lookback_seconds` and does not contain the permitted-profile allowlist. A future acquisition/hosted boundary must enforce the configured duration relationship and allowlist before constructing the pure result.
+The lower bound includes `oldest_allowed_timestamp` and `completion_status: proven`. The product contract permits only fixed lookbacks and no arbitrary historical end date. The v1.14 acquisition request allowlists `lookback_7d_v1`, `lookback_30d_v1`, `lookback_90d_v1`, and `lookback_180d_v1`, binds each profile to its exact duration, and derives the lower bound by exact subtraction before constructing the pure result. The downstream evidence schema validates the completed window but does not independently re-run request-policy allowlisting.
 
 ## Finalized slot-aware upper boundary
 
@@ -123,4 +123,4 @@ Candidate evidence requires every status gate to be complete: acquisition, norma
 
 A terminal reason must be exactly `historical_bound_reached` or `provider_exhaustion`. Caps, incomplete pages, uncertain cursors, missing latest-state proof, unproven lower-bound completion, or any other ambiguous terminal condition produce no candidate evidence.
 
-The future live adapter must prove both latest-state acquisition from a null initial cursor and complete backward acquisition through the permitted lower bound. Slice 1 currently supplies only the pure contract, validators, canonicalizers and deterministic fixtures for that future capability.
+The v1.14 adapter proves both latest-state acquisition from a null initial cursor and complete backward acquisition through the permitted lower bound. It fails closed on stale-head evidence, caps, truncation, timeout, provider uncertainty, malformed pagination, or exact enrichment-set mismatch. Live validation of that adapter remains a separately authorized operation and was not performed for deterministic v1.14 closeout.

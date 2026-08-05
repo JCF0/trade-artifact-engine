@@ -131,9 +131,18 @@ The v1.13 evidence taxonomy has exactly two disposition-backed finding types: `u
 
 The v1.13 runner uses direct deterministic Node commands and a safe v1.12 compatibility gate; it does not invoke npm, the old commit-bearing v1.12 wrapper, live providers, package-store commits, production publication, upload, signing, minting, or deployment. Its targeted Slice 7 gate uses an anchored, code-unit-escaped alternation of exactly three complete test names, parses TAP fail-closed, and requires all three selected tests to pass with none selected as skipped. Some maintained compatibility tests exercise local APIs and temporary non-package fixture/write roots only.
 
+V1.14 adds **Wallet-Wide Bounded Acquisition v1**, a read-only deterministic boundary from one wallet and a permitted fixed lookback through the existing candidate and package pipeline:
+- finalized Solana `getSignaturesForAddress` history is the completeness index;
+- exact Helius Enhanced Transactions enrich the canonical signature set but are not the completeness authority;
+- every in-window source receives exactly one of `supported_normalized_event`, `unsupported_activity`, `ambiguous_activity`, `unrelated_activity`, or `failed_transaction`;
+- exact retained Helius bodies replay through acquisition, evidence, candidate construction, digest-only selection, and the existing Slice 7 package dry run; and
+- `node engine/src/run-v114-regression.mjs` runs the safety-adapted v1.13 baseline, every wallet-acquisition test, syntax checks, and runner/documentation safety checks with direct Node execution only.
+
+The retained-provider and acquisition-to-candidate integration gates preserve the pinned JUP and RAY receipt, package, and five-member identities. Retained Solana RPC envelopes do not currently exist; finalized RPC pages are synthetic, and other provider-shaped negative/coverage fixtures are labeled synthetic. This is provider-attested completeness, not a trustless proof against malicious or jointly inconsistent providers. V1.14 remains mainnet-beta, fixed-lookback, raw-quote, one-supported-event-per-transaction, and fail-closed on safe-budget exhaustion. It adds no hosted beta, API, UI, jobs, persistence, publication, package-store commit, upload, signing, minting, deployment, live marks, or fund custody/control. Controlled live validation was not performed in this closeout and remains separately authorized. See `engine/docs/v1.14-release-notes.md`, `engine/docs/v1.14-wallet-wide-acquisition.md`, `engine/docs/v1.14-operations.md`, and `engine/docs/v1.14-limitations.md`.
+
 ## Legacy/full-pipeline capabilities
 
-The following describes the repository's pre-existing full pipeline, not the pure v1.13 candidate-set slice. Slice 1 does not call Helius, sign, upload, mint, deploy, or expose those capabilities. Its present transitive closure contains inert endpoint constants from a shared legacy constants module but no provider/network operation.
+The following describes the repository's pre-existing full pipeline, not the v1.14 read-only wallet-acquisition boundary or the pure v1.13 candidate-set layer. V1.14's deterministic runner does not call a live provider, sign, upload, mint, deploy, or expose those capabilities. The separately documented future hosted beta has not been implemented or validated live.
 
 1. Pulls your trade history from Solana (via Helius)
 2. Reconstructs trade cycles (buy -> sell loops)
