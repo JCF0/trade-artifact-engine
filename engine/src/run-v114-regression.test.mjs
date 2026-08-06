@@ -49,19 +49,32 @@ test('v1.14 runner is direct-Node, safety-adapted, capability-minimal, and exclu
   assert.doesNotMatch(runner, /targeted-orchestrator\.test\.mjs|package-store|publication|upload|signing|minting|deployment/);
 });
 
-test('v1.14 documentation consistently distinguishes implemented acquisition, retained evidence, synthetic RPC, and future live validation', () => {
+test('v1.14 documentation records the bounded controlled-live result and required post-hardening rerun without overclaiming', () => {
   const documents = Object.fromEntries(DOCUMENTATION_PATHS.map(path => [path, read(path)]));
   const combined = Object.values(documents).join('\n');
   for (const obsolete of [
     /does not implement (?:a )?live wallet-wide Helius adapter/i,
     /future live adapter must prove/i,
     /does not acquire live wallet history/i,
+    /live validation (?:has not occurred|was not performed)/i,
   ]) assert.doesNotMatch(combined, obsolete);
   assert.match(combined, /provider-attested/i);
   assert.match(combined, /not (?:a )?trustless cryptographic proof/i);
   assert.match(combined, /retained Solana RPC envelopes do not currently exist/i);
   assert.match(combined, /synthetic finalized RPC/i);
-  assert.match(combined, /live validation (?:has not occurred|was not performed|remains separately authorized)/i);
+  assert.match(combined, /one (?:separately authorized )?(?:bounded provider-attested|bounded, provider-attested|bounded provider-attested controlled live)/i);
+  assert.match(combined, /two pages/i);
+  assert.match(combined, /76 canonical signatures/i);
+  assert.match(combined, /five in-window/i);
+  assert.match(combined, /five Enhanced/i);
+  assert.match(combined, /one supported, one ambiguous, (?:and )?three unrelated/i);
+  assert.match(combined, /zero candidates(?: and|\/selectable candidates|, and) zero selectable candidates/i);
+  assert.match(combined, /zero candidates was valid/i);
+  assert.match(combined, /no live candidate resolution or Slice 7 invocation occurred/i);
+  assert.match(combined, /predates (?:the )?(?:final )?exhaustive `?accountData`? reconciliation hardening/i);
+  assert.match(combined, /fresh controlled validation (?:is|required|remains required)[^\n]*before tagging/i);
+  assert.match(combined, /v1\.14 has not been tagged/i);
+  assert.doesNotMatch(combined, /v1\.14 (?:has been|is already) tagged/i);
   for (const name of ['jup_buy','jup_sell','ray_buy','ray_sell','jupiter_close_account_swap']) assert.match(combined, new RegExp(`\\b${name}\\b`));
   assert.match(documents['engine/docs/v1.14-operations.md'], /node engine\/src\/run-v114-regression\.mjs/);
 });

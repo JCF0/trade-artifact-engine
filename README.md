@@ -2,7 +2,7 @@
 
 Cryptographically verifiable, non-transferable trade receipt NFTs on Solana.
 
-Turn your wallet's trade history into permanent, tamper-proof PnL receipts that anyone can independently verify - without trusting you, the issuer, or any third party.
+Artifact reduces reliance on unverifiable claims through deterministic reconstruction and explicit provider-attested evidence boundaries.
 
 ## Demo
 
@@ -138,7 +138,9 @@ V1.14 adds **Wallet-Wide Bounded Acquisition v1**, a read-only deterministic bou
 - exact retained Helius bodies replay through acquisition, evidence, candidate construction, digest-only selection, and the existing Slice 7 package dry run; and
 - `node engine/src/run-v114-regression.mjs` runs the safety-adapted v1.13 baseline, every wallet-acquisition test, syntax checks, and runner/documentation safety checks with direct Node execution only.
 
-The retained-provider and acquisition-to-candidate integration gates preserve the pinned JUP and RAY receipt, package, and five-member identities. Retained Solana RPC envelopes do not currently exist; finalized RPC pages are synthetic, and other provider-shaped negative/coverage fixtures are labeled synthetic. This is provider-attested completeness, not a trustless proof against malicious or jointly inconsistent providers. V1.14 remains mainnet-beta, fixed-lookback, raw-quote, one-supported-event-per-transaction, and fail-closed on safe-budget exhaustion. It adds no hosted beta, API, UI, jobs, persistence, publication, package-store commit, upload, signing, minting, deployment, live marks, or fund custody/control. Controlled live validation was not performed in this closeout and remains separately authorized. See `engine/docs/v1.14-release-notes.md`, `engine/docs/v1.14-wallet-wide-acquisition.md`, `engine/docs/v1.14-operations.md`, and `engine/docs/v1.14-limitations.md`.
+The retained-provider and acquisition-to-candidate integration gates preserve the pinned JUP and RAY receipt, package, and five-member identities. Retained Solana RPC envelopes do not currently exist; finalized RPC pages are synthetic, and other provider-shaped negative/coverage fixtures are labeled synthetic. This is provider-attested completeness, not a trustless proof against malicious or jointly inconsistent providers. V1.14 remains mainnet-beta, fixed-lookback, raw-quote, one-supported-event-per-transaction, and fail-closed on safe-budget exhaustion. It adds no hosted beta, API, UI, jobs, persistence, publication, package-store commit, upload, signing, minting, deployment, live marks, or fund custody/control.
+
+One bounded provider-attested controlled live validation was completed against one mainnet-beta wallet with `lookback_7d_v1`. It passed under the then-current implementation: two pages, 76 canonical signatures, five in-window transactions, five Enhanced reconciliations, dispositions of one supported, one ambiguous, and three unrelated, and zero candidates/selectable candidates. Zero candidates was valid, Slice 7 was not invoked, and there was no cap, timeout, truncation, partial state, provider uncertainty, package write, publication, signing, upload, mint, or deployment. That first live run predates the final exhaustive `accountData` reconciliation hardening; a fresh controlled validation is required after this patch before tagging. V1.14 has not been tagged. See `engine/docs/v1.14-release-notes.md`, `engine/docs/v1.14-wallet-wide-acquisition.md`, `engine/docs/v1.14-operations.md`, and `engine/docs/v1.14-limitations.md`.
 
 ## Legacy/full-pipeline capabilities
 

@@ -4,9 +4,19 @@ import test from 'node:test';
 
 import { projectHeliusEnhancedTransactionV1 } from './helius-enhanced-projector.mjs';
 import { buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-evidence.mjs';
-import { enhanced, JUP, PROGRAMS, providerSignature, RAY, USDC, WALLET } from './fixtures/slice4-fixtures.mjs';
+import { classifyWalletSourceTransactionV1 } from './transaction-classifier.mjs';
+import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
+import { enhanced, JUP, PROGRAMS, providerPublicKey, providerSignature, RAY, USDC, WALLET } from './fixtures/slice4-fixtures.mjs';
 
 function expectMalformed(value) { assert.throws(() => projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: value }), error => error?.code === 'malformed_provider_response'); }
+
+function classify(transaction) {
+  const evidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction });
+  return classifyWalletSourceTransactionV1({
+    sourceTransaction: buildWalletSourceTransactionFromSpotEvidenceV1(evidence),
+    normalizeSupportedSpotOperation: () => normalizeWalletWideSolanaSpotEvidenceV1({ evidence, provisional_raw_index: 0 }),
+  });
+}
 
 test('projects Helius structured swaps, transfer corroboration, recognized programs, and source evidence', () => {
   const raw = enhanced('jup-buy');
@@ -45,7 +55,7 @@ test('projects Raydium/Orca evidence, native transfers, failures, and unresolved
     { userAccount: WALLET, mint: JUP, rawTokenAmount: { tokenAmount: '100000000', decimals: 6 } },
   ] }];
   const fallbackEvidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: fallback });
-  assert.deepEqual(fallbackEvidence.token_transfer_legs.map(leg => leg.raw_amount), ['25000000', '100000000']);
+  assert.deepEqual(fallbackEvidence.token_transfer_legs.map(leg => leg.raw_amount).sort(), ['100000000', '25000000']);
   assert.equal(fallbackEvidence.unresolved_wallet_effects.filter(effect => effect.effect_id.startsWith('token-unresolved-')).length, 0);
   assert.equal(fallbackEvidence.account_closures.length, 0);
   assert.deepEqual(fallbackEvidence.unresolved_wallet_effects.filter(effect => effect.effect_id.startsWith('unbound-account-close-')).map(effect => effect.mint), [USDC, JUP]);
@@ -96,4 +106,134 @@ test('does not use arbitrary mint mentions and fails malformed ownership/amount/
     expectMalformed(badMint);
   }
   expectMalformed(new Proxy({}, { ownKeys() { throw new Error('secret'); } }));
+});
+
+test('attractive swap plus an unmatched wallet-owned nonquote accountData change cannot remain supported', () => {
+  const transaction = enhanced('secondary-account-change');
+  const secondaryMint = providerPublicKey('secondary-position-mint');
+  const tokenAccount = providerPublicKey('secondary-token-account');
+  transaction.accountData = [{
+    account: tokenAccount,
+    nativeBalanceChange: 0,
+    tokenBalanceChanges: [{
+      userAccount: WALLET,
+      tokenAccount,
+      mint: secondaryMint,
+      rawTokenAmount: { tokenAmount: '7', decimals: 0 },
+    }],
+  }];
+  const result = classify(transaction);
+  assert.notEqual(result.disposition.disposition_type, 'supported_normalized_event');
+  assert.ok(result.disposition.affected_token_mints.includes(secondaryMint));
+});
+
+test('wallet token balance changes exactly corroborating structured and transfer legs count once', () => {
+  const transaction = enhanced('corroborated-account-changes');
+  transaction.accountData = [
+    { account: providerPublicKey('corroborated-input-account'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: USDC, rawTokenAmount: { tokenAmount: '-25000000', decimals: 6 } }] },
+    { account: providerPublicKey('corroborated-output-account'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: JUP, rawTokenAmount: { tokenAmount: '100000000', decimals: 6 } }] },
+  ];
+  const evidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction });
+  assert.deepEqual(evidence.unresolved_wallet_effects, []);
+  assert.equal(classify(transaction).disposition.disposition_type, 'supported_normalized_event');
+});
+
+test('unmatched quote-token, conflicting, and unknown-mint account changes fail conservatively', () => {
+  const quote = enhanced('unmatched-quote-change');
+  quote.accountData = [{ account: providerPublicKey('quote-account'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: USDC, rawTokenAmount: { tokenAmount: '-1', decimals: 6 } }] }];
+  assert.notEqual(classify(quote).disposition.disposition_type, 'supported_normalized_event');
+
+  const conflict = enhanced('conflicting-account-change');
+  conflict.accountData = [{ account: providerPublicKey('conflict-account'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: JUP, rawTokenAmount: { tokenAmount: '99999999', decimals: 6 } }] }];
+  assert.notEqual(classify(conflict).disposition.disposition_type, 'supported_normalized_event');
+
+  const unknown = enhanced('unknown-mint-account-change');
+  unknown.accountData = [{ account: providerPublicKey('unknown-account'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: 'unknown', rawTokenAmount: { tokenAmount: '1', decimals: 0 } }] }];
+  const unknownResult = classify(unknown);
+  assert.equal(unknownResult.disposition.disposition_type, 'ambiguous_activity');
+  assert.deepEqual(unknownResult.disposition.affected_token_mints, []);
+  assert.equal(unknownResult.activity_findings[0].impact_scope, 'wallet_wide');
+});
+
+test('unexplained native change blocks support while exact native swap transfer plus fee is corroboration', () => {
+  const unexplained = enhanced('unexplained-native');
+  unexplained.accountData = [{ account: WALLET, nativeBalanceChange: 1, tokenBalanceChanges: [] }];
+  assert.notEqual(classify(unexplained).disposition.disposition_type, 'supported_normalized_event');
+
+  const unknownOwner = enhanced('unknown-owner-native');
+  unknownOwner.accountData = [{ nativeBalanceChange: 1, tokenBalanceChanges: [] }];
+  assert.notEqual(classify(unknownOwner).disposition.disposition_type, 'supported_normalized_event');
+
+  const ownedTokenAccount = enhanced('owned-token-account-native');
+  const ownedAccount = providerPublicKey('owned-native-token-account');
+  ownedTokenAccount.accountData = [{ account: ownedAccount, nativeBalanceChange: 1, tokenBalanceChanges: [{ userAccount: WALLET, tokenAccount: ownedAccount, mint: JUP, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] }];
+  assert.notEqual(classify(ownedTokenAccount).disposition.disposition_type, 'supported_normalized_event');
+
+  const uncertainOwner = enhanced('uncertain-owner-native');
+  const uncertainAccount = providerPublicKey('uncertain-native-token-account');
+  uncertainOwner.accountData = [{ account: uncertainAccount, nativeBalanceChange: 1, tokenBalanceChanges: [{ userAccount: 'invalid-owner', tokenAccount: uncertainAccount, mint: JUP, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] }];
+  assert.notEqual(classify(uncertainOwner).disposition.disposition_type, 'supported_normalized_event');
+
+  const conflictingAccount = enhanced('conflicting-zero-account');
+  conflictingAccount.accountData = [{ account: providerPublicKey('zero-account-a'), nativeBalanceChange: 1, tokenBalanceChanges: [{ userAccount: WALLET, tokenAccount: providerPublicKey('zero-account-b'), mint: JUP, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] }];
+  expectMalformed(conflictingAccount);
+
+  const explained = enhanced('explained-native', { transfers: false });
+  explained.fee = 5;
+  explained.events.swap.tokenInputs = [];
+  explained.events.swap.nativeInput = { account: WALLET, amount: 10_000_000 };
+  explained.tokenTransfers = [{ fromUserAccount: providerPublicKey('native-pool-token'), toUserAccount: WALLET, mint: JUP, rawTokenAmount: { tokenAmount: '100000000', decimals: 6 } }];
+  explained.nativeTransfers = [{ fromUserAccount: WALLET, toUserAccount: providerPublicKey('native-pool'), amount: 10_000_000 }];
+  explained.accountData = [{ account: WALLET, nativeBalanceChange: -10_000_005, tokenBalanceChanges: [] }];
+  assert.deepEqual(projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: explained }).unresolved_wallet_effects, []);
+  assert.equal(classify(explained).disposition.disposition_type, 'supported_normalized_event');
+});
+
+test('instruction-bound closures are populated, unbound provider closure evidence is unresolved, and rent is not swap proceeds', () => {
+  const tokenProgram = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const closedAccount = providerPublicKey('closed-token-account');
+  const bound = enhanced('bound-close', { transfers: false, type: 'CLOSE_ACCOUNT', program: null });
+  bound.events = {};
+  bound.accountData = [{ account: closedAccount, nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, tokenAccount: closedAccount, mint: JUP, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] }];
+  bound.instructions = [{ programId: tokenProgram, data: 'A', accounts: [closedAccount, WALLET, WALLET], innerInstructions: [] }];
+  const boundEvidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: bound });
+  assert.deepEqual(boundEvidence.account_closures, [{ closure_id: 'account-close-0', owner: WALLET, mint: JUP }]);
+  assert.deepEqual(boundEvidence.unresolved_wallet_effects, []);
+
+  const externalDestination = structuredClone(bound);
+  externalDestination.signature = providerSignature('bound-close-external-destination');
+  externalDestination.instructions[0].accounts[1] = providerPublicKey('external-close-destination');
+  assert.deepEqual(
+    projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: externalDestination }).account_closures,
+    [{ closure_id: 'account-close-0', owner: WALLET, mint: JUP }],
+  );
+
+  const unbound = structuredClone(bound);
+  unbound.signature = providerSignature('unbound-close');
+  unbound.instructions = [];
+  const unboundEvidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: unbound });
+  assert.deepEqual(unboundEvidence.account_closures, []);
+  assert.ok(unboundEvidence.unresolved_wallet_effects.some(effect => effect.mint === JUP));
+
+  const rent = enhanced('closure-rent-swap');
+  rent.fee = 5;
+  rent.nativeTransfers = [{ fromUserAccount: providerPublicKey('closed-rent-source'), toUserAccount: WALLET, amount: 2_039_280 }];
+  rent.accountData = [
+    { account: WALLET, nativeBalanceChange: 2_039_275, tokenBalanceChanges: [] },
+    { account: closedAccount, nativeBalanceChange: -2_039_280, tokenBalanceChanges: [{ userAccount: WALLET, tokenAccount: closedAccount, mint: JUP, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] },
+  ];
+  rent.instructions.push({ programId: tokenProgram, data: 'A', accounts: [closedAccount, WALLET, WALLET], innerInstructions: [] });
+  assert.notEqual(classify(rent).disposition.disposition_type, 'supported_normalized_event');
+});
+
+test('token transfer and accountData order permutations preserve whole-transaction classification', () => {
+  const transaction = enhanced('account-permutation');
+  transaction.accountData = [
+    { account: providerPublicKey('permutation-input'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: USDC, rawTokenAmount: { tokenAmount: '-25000000', decimals: 6 } }] },
+    { account: providerPublicKey('permutation-output'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: JUP, rawTokenAmount: { tokenAmount: '100000000', decimals: 6 } }] },
+  ];
+  const permuted = structuredClone(transaction);
+  permuted.tokenTransfers.reverse();
+  permuted.accountData.reverse();
+  assert.deepEqual(classify(permuted), classify(transaction));
 });
