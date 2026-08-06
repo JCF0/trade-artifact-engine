@@ -105,14 +105,17 @@ async function execute(capabilities, logicalRequest, context = beginOperation(ca
   const { deadline, apiKey } = context;
   const baseRequest = { ...logicalRequest, query: { ...(logicalRequest.query ?? {}), 'api-key': apiKey } };
   for (let attempt = 1; attempt <= context.max_attempts_per_operation; attempt += 1) {
-    const remaining = deadline - now(capabilities.clock);
+    const attemptStarted = now(capabilities.clock);
+    const remaining = deadline - attemptStarted;
     if (remaining <= 0) fail('acquisition_deadline_exceeded');
     const timeout = Math.min(context.request_timeout_ms, remaining);
+    const attemptDeadline = attemptStarted + timeout;
     const timeoutCode = remaining <= context.request_timeout_ms ? 'acquisition_deadline_exceeded' : 'provider_timeout';
     const controller = new AbortController();
     const request = { ...baseRequest, timeout_ms: timeout, signal: controller.signal };
     let deadlineExpired = false;
     let transportSettled = false;
+    let transportSettledAt = null;
     let timeoutAccounted = false;
     const markTimeout = () => {
       if (timeoutAccounted) return;
@@ -121,18 +124,25 @@ async function execute(capabilities, logicalRequest, context = beginOperation(ca
     };
     const abortTimer = setTimeout(() => { deadlineExpired = true; controller.abort(); }, Math.max(1, Math.ceil(timeout)));
     let response = null; let retryable = false;
+    let lateSuccessfulSettlement = false;
     try {
       if (attempt > 1) capabilities.telemetry.onRetryAttemptV1();
       let pending;
       try { pending = capabilities.request(request); }
       catch (error) { transportSettled = true; throw error; }
       const observed = Promise.resolve(pending).then(
-        value => { transportSettled = true; return value; },
+        value => { transportSettled = true; transportSettledAt = now(capabilities.clock); return value; },
         error => { transportSettled = true; throw error; },
       );
-      response = envelope(await boundedAwait(observed, timeout, timeoutCode));
+      const value = await boundedAwait(observed, timeout, timeoutCode);
+      if (deadlineExpired || controller.signal.aborted || transportSettledAt === null || transportSettledAt >= attemptDeadline) {
+        lateSuccessfulSettlement = true;
+        fail(timeoutCode);
+      }
+      response = envelope(value);
     }
     catch (error) {
+      if (lateSuccessfulSettlement) fail(timeoutCode);
       const code = thrownCode(error);
       if (code === 'invalid_json') fail('malformed_provider_response');
       const timeoutCodeThrown = code === 'request_timeout' || code === 'provider_timeout' || code === 'ETIMEDOUT';

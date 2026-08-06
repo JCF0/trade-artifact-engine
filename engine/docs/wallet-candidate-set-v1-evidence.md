@@ -19,7 +19,7 @@ The acquisition result contains exactly:
 
 Every validated `wallet_wide_acquisition_result_v1` already requires normalized events in canonical wallet-wide order with exact dense `raw_index` values `0..N-1`; the exported constructor and validator enforce this independently of the acquisition orchestrator. `buildCandidateEvidenceBundleV1()` then validates accounting, canonicalizes the downstream collections it owns, builds canonical integrity indexes, and validates the completed envelope before issuance.
 
-The contract requires detached plain data without provider response bodies, credentials, URLs, local paths, storage handles or publication state. Exact object shapes and identifier-code fields enforce part of this boundary, but several identity strings (including wallet, transaction hash, blockhash and mint fields) are currently validated only as nonempty strings. A trusted acquisition boundary must therefore prevent sensitive-looking values from entering those fields until lexical validation is hardened.
+The contract requires detached plain data without provider response bodies, credentials, URLs, local paths, storage handles or publication state. At every authoritative acquisition-result, evidence-bundle, and candidate-set construction or validation boundary, transaction signatures and `tx_hash` values must be valid Base58 decoding to exactly 64 bytes. Wallets, mints, token accounts, ordinary accounts, program IDs, fee payers, and blockhashes must be valid Base58 decoding to exactly 32 bytes. These native Solana grammar and byte-width checks do not prove provider provenance, account ownership, semantic correctness, or trustless historical completeness; wallet-history completeness remains provider-attested.
 
 ## Latest-state fixed lookback
 

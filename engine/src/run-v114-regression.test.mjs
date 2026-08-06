@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { discoverWalletAcquisitionTestsV1, parseTopLevelTapV1, validateTrackedLiveReportPathsV1, validateWalletTestExecutionSetV1 } from './run-v114-regression.mjs';
+import { discoverWalletAcquisitionTestsV1, parseGitLsFilesZV1, parseTopLevelTapV1, validateCanonicalTestExecutionSetWithinRootV1, validateTrackedLiveReportPathsV1, validateWalletTestExecutionSetV1 } from './run-v114-regression.mjs';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const RUNNER_PATH = resolve(REPOSITORY_ROOT, 'engine/src/run-v114-regression.mjs');
@@ -19,9 +20,15 @@ const DOCUMENTATION_PATHS = [
   'engine/docs/wallet-candidate-set-v1.md',
   'engine/docs/wallet-candidate-set-v1-evidence.md',
   'engine/docs/wallet-candidate-set-v1-limitations.md',
+  'engine/docs/wallet-candidate-set-v1-privacy.md',
   'engine/docs/wallet-candidate-set-v1-selection.md',
   'engine/docs/verifier_flow.md',
 ];
+const STALE_IDENTITY_VALIDATION_PATTERNS = Object.freeze([
+  /(?:wallet|transaction hash|blockhash|mint)[^\n]*(?:only required to be|only validated as|validated only as) non-?empty(?: strings?)?/i,
+  /until (?:those fields receive equivalent )?lexical (?:validation is hardened|hardening)/i,
+  /lexical and sensitive-value validation still depends partly on the trusted provider projection/i,
+]);
 
 function read(relativePath) {
   return readFileSync(resolve(REPOSITORY_ROOT, relativePath), 'utf8');
@@ -104,37 +111,68 @@ test('wallet-acquisition discovery rejects alternate roots and returns every cur
   assert.throws(() => validateWalletTestExecutionSetV1(discovered, [...discovered.slice(0, -1), resolve(WALLET_ACQUISITION_ROOT, '../unexpected.test.mjs')]));
 });
 
-test('wallet-acquisition execution confinement rejects traversal, sibling-prefix, and symlink escapes canonically', t => {
-  const traversal = `${WALLET_ACQUISITION_ROOT}/../outside.test.mjs`;
-  assert.throws(() => validateWalletTestExecutionSetV1([traversal], [traversal]));
-  const sibling = `${WALLET_ACQUISITION_ROOT}-evil/escape.test.mjs`;
-  assert.throws(() => validateWalletTestExecutionSetV1([sibling], [sibling]));
+test('wallet-acquisition execution confinement accepts valid edge basenames and rejects every canonical escape', t => {
+  const container = mkdtempSync(join(tmpdir(), 'artifact-v114-test-root-'));
+  const root = resolve(container, 'wallet-acquisition');
+  mkdirSync(root);
+  t.after(() => rmSync(container, { recursive: true, force: true }));
+  const ordinary = resolve(root, 'ordinary.test.mjs');
+  const twoDots = resolve(root, '..edge.test.mjs');
+  const threeDots = resolve(root, '...test.mjs');
+  const outside = resolve(container, 'outside.test.mjs');
+  for (const file of [ordinary, twoDots, threeDots, outside]) writeFileSync(file, 'export {};\n', { flag: 'wx' });
+  const valid = [ordinary, twoDots, threeDots].sort();
+  assert.equal(validateCanonicalTestExecutionSetWithinRootV1(valid, valid, root), true);
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1([resolve(root, '..')], [resolve(root, '..')], root));
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1([resolve(root, '../outside.test.mjs')], [resolve(root, '../outside.test.mjs')], root));
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1([outside], [outside], root));
 
-  const outside = resolve(REPOSITORY_ROOT, 'engine/src/run-v114-symlink-escape.test.mjs');
-  const link = resolve(WALLET_ACQUISITION_ROOT, 'run-v114-symlink-escape.test.mjs');
-  writeFileSync(outside, 'export {};\n', { flag: 'wx' });
-  t.after(() => { rmSync(link, { force: true }); rmSync(outside, { force: true }); });
+  const sibling = `${root}-evil`;
+  mkdirSync(sibling);
+  const siblingFile = resolve(sibling, 'escape.test.mjs');
+  writeFileSync(siblingFile, 'export {};\n', { flag: 'wx' });
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1([siblingFile], [siblingFile], root));
+
+  const link = resolve(root, 'link.test.mjs');
   try {
     symlinkSync(outside, link);
-    assert.throws(() => validateWalletTestExecutionSetV1([link], [link]));
+    assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1([link], [link], root));
   } catch (error) {
     if (!['EPERM','EACCES','ENOTSUP'].includes(error?.code)) throw error;
   }
-
-  const discovered = discoverWalletAcquisitionTestsV1();
-  assert.equal(validateWalletTestExecutionSetV1(discovered, [...discovered].reverse()), true);
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1(valid, [ordinary, twoDots], root));
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1(valid, [...valid, ordinary], root));
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1(valid, [...valid.slice(0, -1), outside], root));
+  assert.throws(() => validateCanonicalTestExecutionSetWithinRootV1(valid, [...valid].reverse(), root));
 });
 
-test('tracked live-derived report paths are rejected and current tracked files satisfy the policy', () => {
+test('complete NUL-delimited Git index paths are parsed and validated without worktree filtering', () => {
   for (const path of [
     'engine/docs/validation_report.md',
     'engine/docs/validation_report_batch2.md',
     'engine/docs/artifact-v114-live-validation-report.json',
   ]) assert.throws(() => validateTrackedLiveReportPathsV1([path]));
+  assert.deepEqual(parseGitLsFilesZV1('allowed.txt\0missing-but-tracked.txt\0'), ['allowed.txt','missing-but-tracked.txt']);
+  assert.equal(validateTrackedLiveReportPathsV1(parseGitLsFilesZV1('allowed.txt\0missing-but-tracked.txt\0')), true);
+  assert.throws(() => validateTrackedLiveReportPathsV1(parseGitLsFilesZV1('engine/docs/validation_report.md\0')));
+  assert.throws(() => validateTrackedLiveReportPathsV1(parseGitLsFilesZV1('engine/docs/artifact-v114-live-validation-report.json\0')));
+  for (const malformed of ['unterminated', 'one\0\0two\0', '/absolute\0', '../outside\0', 'back\\slash\0']) {
+    assert.throws(() => parseGitLsFilesZV1(malformed));
+  }
   const tracked = spawnSync('git', ['ls-files', '-z'], { cwd: REPOSITORY_ROOT, encoding: 'utf8' });
   assert.equal(tracked.status, 0);
-  const materializedTrackedPaths = tracked.stdout.split('\0').filter(path => path && existsSync(resolve(REPOSITORY_ROOT, path)));
-  assert.equal(validateTrackedLiveReportPathsV1(materializedTrackedPaths), true);
+  const indexedPaths = parseGitLsFilesZV1(tracked.stdout);
+  assert.equal(indexedPaths.length > 0, true);
+  assert.equal(validateTrackedLiveReportPathsV1(indexedPaths), true);
+});
+
+test('documentation stale-identity checks cover prior nonempty-string and trusted-projection wording', () => {
+  for (const stale of [
+    'wallet and transaction hash fields are currently validated only as nonempty strings',
+    'wallet and mint fields are currently only required to be nonempty',
+    'until those fields receive equivalent lexical hardening',
+    'Lexical and sensitive-value validation still depends partly on the trusted provider projection',
+  ]) assert.equal(STALE_IDENTITY_VALIDATION_PATTERNS.some(pattern => pattern.test(stale)), true);
 });
 
 test('v1.14 documentation records the completed final post-patch-3 live release gate', () => {
@@ -148,8 +186,12 @@ test('v1.14 documentation records the completed final post-patch-3 live release 
     /one final controlled live validation is required after (?:this )?patch(?: 3)? before tagging/i,
     /one final post-patch-3 controlled live validation is required/i,
     /do not satisfy this post-patch rerun requirement/i,
+    ...STALE_IDENTITY_VALIDATION_PATTERNS,
   ]) assert.doesNotMatch(combined, obsolete);
   assert.match(combined, /provider-attested/i);
+  assert.match(combined, /transaction signatures and `?tx_hash`? values[^\n]*Base58[^\n]*exactly 64 bytes/i);
+  assert.match(combined, /wallets, mints, token accounts, ordinary accounts, program IDs, fee payers, and blockhashes[^\n]*Base58[^\n]*exactly 32 bytes/i);
+  assert.match(combined, /do not prove provider provenance, account ownership, semantic correctness, or trustless historical completeness/i);
   assert.match(combined, /not (?:a )?trustless cryptographic proof/i);
   assert.match(combined, /no exact retained finalized RPC transcript exists/i);
   assert.match(combined, /synthetic finalized RPC/i);

@@ -141,6 +141,69 @@ test('abort-ignoring transport fails closed without timeout accounting and disca
   assert.deepEqual(counts, { retry: 0, timeout: 0 });
 });
 
+test('transport success delivered from the effective-timeout abort callback fails closed without timeout accounting', async () => {
+  const counts = { retry: 0, timeout: 0 };
+  let aborted = false;
+  const port = createHeliusWalletHistoryPortV1({
+    httpClient: { request(input) {
+      return new Promise(resolve => input.signal.addEventListener('abort', () => {
+        aborted = true;
+        resolve({ status: 200, data: rpc(999) });
+      }, { once: true }));
+    } },
+    apiKeyProvider: () => 'super-secret-key', sleep: async () => {}, clock: () => Date.now(), random: () => 0,
+    telemetry: { onRetryAttemptV1() { counts.retry += 1; }, onTimeoutAttemptV1() { counts.timeout += 1; } },
+  });
+  beginWalletHistoryAcquisitionV1(port, { ...request().budgets, max_attempts_per_operation: 1, request_timeout_ms: 10, overall_timeout_ms: 100 });
+  await code(port.getFinalizedSlotV1(), 'provider_timeout');
+  assert.equal(aborted, true);
+  assert.deepEqual(counts, { retry: 0, timeout: 0 });
+});
+
+test('synchronous success after the request or remaining overall deadline fails closed', async () => {
+  const requestLate = createHeliusWalletHistoryPortV1({
+    httpClient: { request() {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      return { status: 200, data: rpc(777) };
+    } },
+    apiKeyProvider: () => 'super-secret-key', sleep: async () => {}, clock: () => performance.now(), random: () => 0,
+  });
+  beginWalletHistoryAcquisitionV1(requestLate, { ...request().budgets, max_attempts_per_operation: 1, request_timeout_ms: 5, overall_timeout_ms: 100 });
+  await code(requestLate.getFinalizedSlotV1(), 'provider_timeout');
+
+  let now = 0;
+  let overallCalls = 0;
+  const overallLate = createHeliusWalletHistoryPortV1({
+    httpClient: { request() { overallCalls += 1; now += 6; return { status: 200, data: rpc(888) }; } },
+    apiKeyProvider: () => { now = 15; return 'super-secret-key'; }, sleep: async () => {}, clock: () => now, random: () => 0,
+  });
+  beginWalletHistoryAcquisitionV1(overallLate, { ...request().budgets, max_attempts_per_operation: 2, request_timeout_ms: 10, overall_timeout_ms: 20 });
+  await code(overallLate.getFinalizedSlotV1(), 'acquisition_deadline_exceeded');
+  assert.equal(overallCalls, 1);
+});
+
+test('monotonic settlement check accepts pre-deadline success and rejects post-deadline success before timers run', async () => {
+  async function scenario(settledAt) {
+    let now = 0;
+    const counts = { retry: 0, timeout: 0 };
+    const port = createHeliusWalletHistoryPortV1({
+      httpClient: { request() { now = settledAt; return { status: 200, data: rpc(settledAt) }; } },
+      apiKeyProvider: () => 'super-secret-key', sleep: async () => {}, clock: () => now, random: () => 0,
+      telemetry: { onRetryAttemptV1() { counts.retry += 1; }, onTimeoutAttemptV1() { counts.timeout += 1; } },
+    });
+    beginWalletHistoryAcquisitionV1(port, { ...request().budgets, max_attempts_per_operation: 1, request_timeout_ms: 10, overall_timeout_ms: 100 });
+    return { port, counts };
+  }
+  const before = await scenario(9);
+  assert.equal(await before.port.getFinalizedSlotV1(), 9);
+  assert.deepEqual(before.counts, { retry: 0, timeout: 0 });
+  const after = await scenario(11);
+  await code(after.port.getFinalizedSlotV1(), 'provider_timeout');
+  assert.deepEqual(after.counts, { retry: 0, timeout: 0 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(after.counts, { retry: 0, timeout: 0 });
+});
+
 test('timer expiry, abort rejection, and attempted late settlement cannot double-count one timeout', async () => {
   const counts = { retry: 0, timeout: 0 };
   let attemptLateResolve = () => {};
@@ -200,36 +263,40 @@ test('retry exhaustion, deadline, key failures, and hostile errors are sanitized
   let keyCalls = 0;
   const first = Array.from({ length: 100 }, (_, i) => enhanced(`deadline-${i}`, { slot: 2000 - i, timestamp: 2000 - i, type: 'TRANSFER', program: null, transfers: false }));
   const acrossPages = harness([
-    ({ advance }) => { advance(299_999); return { status: 200, data: first }; },
-    ({ advance }) => { advance(2); return { status: 200, data: [] }; },
+    ({ advance }) => { advance(16); return { status: 200, data: first }; },
+    ({ advance }) => { advance(5); return { status: 200, data: [] }; },
   ], { apiKeyProvider: () => { keyCalls += 1; return 'super-secret-key'; } });
+  beginWalletHistoryAcquisitionV1(acrossPages.port, { ...request().budgets, request_timeout_ms: 17, overall_timeout_ms: 20 });
   await code(acrossPages.port.getEnhancedTransactionsBySignatureV1({ wallet: WALLET, signatures: [providerSignature('missing')] }), 'acquisition_deadline_exceeded');
   assert.equal(keyCalls, 1);
 
   keyCalls = 0;
   const acrossMethods = harness([
-    ({ advance }) => { advance(299_999); return { status: 200, data: rpc(SOLANA_MAINNET_GENESIS_HASH) }; },
-    ({ advance }) => { advance(2); return { status: 200, data: rpc(1000) }; },
+    ({ advance }) => { advance(16); return { status: 200, data: rpc(SOLANA_MAINNET_GENESIS_HASH) }; },
+    ({ advance }) => { advance(5); return { status: 200, data: rpc(1000) }; },
   ], { apiKeyProvider: () => { keyCalls += 1; return 'super-secret-key'; } });
+  beginWalletHistoryAcquisitionV1(acrossMethods.port, { ...request().budgets, request_timeout_ms: 17, overall_timeout_ms: 20 });
   await acrossMethods.port.getNetworkIdentityV1();
   await code(acrossMethods.port.getFinalizedSlotV1(), 'acquisition_deadline_exceeded');
   assert.equal(keyCalls, 1);
 
   const hangingRequest = harness([
-    ({ advance }) => { advance(299_999); return { status: 200, data: rpc(SOLANA_MAINNET_GENESIS_HASH) }; },
+    ({ advance }) => { advance(16); return { status: 200, data: rpc(SOLANA_MAINNET_GENESIS_HASH) }; },
     () => new Promise(() => {}),
   ]);
+  beginWalletHistoryAcquisitionV1(hangingRequest.port, { ...request().budgets, request_timeout_ms: 17, overall_timeout_ms: 20 });
   await hangingRequest.port.getNetworkIdentityV1();
   await code(hangingRequest.port.getFinalizedSlotV1(), 'acquisition_deadline_exceeded');
 
   let sleepAborted = false;
   const hangingSleep = harness([({ advance }) => {
-    advance(299_899);
+    advance(15);
     return { status: 429, data: null };
   }], { sleep: (_milliseconds, signal) => new Promise(() => {
     assert.ok(signal instanceof AbortSignal);
     signal.addEventListener('abort', () => { sleepAborted = true; }, { once: true });
   }) });
+  beginWalletHistoryAcquisitionV1(hangingSleep.port, { ...request().budgets, request_timeout_ms: 110, overall_timeout_ms: 120 });
   await code(hangingSleep.port.getFinalizedSlotV1(), 'acquisition_deadline_exceeded');
   assert.equal(sleepAborted, true);
 });
@@ -256,7 +323,7 @@ test('effective transport timeout is the smaller request or acquisition-wide rem
       return { status: 200, data: rpc(2) };
     },
   ]);
-  beginWalletHistoryAcquisitionV1(overallBound.port, { ...request().budgets, request_timeout_ms: 10, overall_timeout_ms: 20 });
+  beginWalletHistoryAcquisitionV1(overallBound.port, { ...request().budgets, request_timeout_ms: 17, overall_timeout_ms: 20 });
   await overallBound.port.getNetworkIdentityV1();
   assert.equal(await overallBound.port.getFinalizedSlotV1(), 2);
 });
@@ -271,7 +338,7 @@ test('wall-clock rollback and forward jumps cannot alter monotonic acquisition d
         ({ advance }) => { wallNow += jump; advance(16); return { status: 200, data: rpc(SOLANA_MAINNET_GENESIS_HASH) }; },
         ({ input, advance }) => { assert.equal(input.timeout_ms, 4); advance(4); return { status: 200, data: rpc(2) }; },
       ]);
-      beginWalletHistoryAcquisitionV1(h.port, { ...request().budgets, request_timeout_ms: 10, overall_timeout_ms: 20 });
+      beginWalletHistoryAcquisitionV1(h.port, { ...request().budgets, request_timeout_ms: 17, overall_timeout_ms: 20 });
       await h.port.getNetworkIdentityV1();
       await code(h.port.getFinalizedSlotV1(), 'acquisition_deadline_exceeded');
       assert.equal(h.calls(), 2);

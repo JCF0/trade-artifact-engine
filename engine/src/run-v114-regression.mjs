@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync } from 'node:fs';
-import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -47,22 +47,41 @@ export function discoverWalletAcquisitionTestsV1(root = WALLET_ACQUISITION_ROOT)
   return Object.freeze(names.map(name => realpathSync(resolve(canonicalRoot, name))));
 }
 
-export function validateWalletTestExecutionSetV1(discovered, executed) {
+export function validateCanonicalTestExecutionSetWithinRootV1(discovered, executed, root) {
   if (!Array.isArray(discovered) || !Array.isArray(executed)) throw new Error('wallet-acquisition execution set is malformed');
-  const canonicalRoot = realpathSync(WALLET_ACQUISITION_ROOT);
+  let canonicalRoot;
+  try { canonicalRoot = realpathSync(root); } catch { throw new Error('wallet-acquisition execution root is not allowed'); }
   const canonicalize = file => {
     if (typeof file !== 'string' || !file.endsWith('.test.mjs')) throw new Error('wallet-acquisition execution set contains an unexpected file');
     let canonical;
     try { canonical = realpathSync(file); } catch { throw new Error('wallet-acquisition execution set contains an unexpected file'); }
     const suffix = relative(canonicalRoot, canonical);
-    if (suffix === '' || suffix.startsWith('..') || isAbsolute(suffix)) throw new Error('wallet-acquisition execution set contains an unexpected file');
+    if (suffix === '' || suffix === '..' || suffix.startsWith(`..${sep}`) || isAbsolute(suffix)) throw new Error('wallet-acquisition execution set contains an unexpected file');
     return canonical;
   };
   const canonicalDiscovered = discovered.map(canonicalize).sort();
-  const canonicalExecuted = executed.map(canonicalize).sort();
+  const canonicalExecuted = executed.map(canonicalize);
   if (new Set(canonicalDiscovered).size !== canonicalDiscovered.length || new Set(canonicalExecuted).size !== canonicalExecuted.length) throw new Error('wallet-acquisition file executed twice');
   if (canonicalDiscovered.length !== canonicalExecuted.length || canonicalDiscovered.some((file, index) => file !== canonicalExecuted[index])) throw new Error('wallet-acquisition execution set mismatch');
   return true;
+}
+
+export function validateWalletTestExecutionSetV1(discovered, executed) {
+  return validateCanonicalTestExecutionSetWithinRootV1(discovered, executed, WALLET_ACQUISITION_ROOT);
+}
+
+export function parseGitLsFilesZV1(output) {
+  if (typeof output !== 'string') throw new Error('tracked path output is malformed');
+  if (output === '') return Object.freeze([]);
+  if (!output.endsWith('\0')) throw new Error('tracked path output is malformed');
+  const paths = output.slice(0, -1).split('\0');
+  if (paths.some(path => path.length === 0 || path.includes('\\') || isAbsolute(path))) throw new Error('tracked path output is malformed');
+  for (const path of paths) {
+    const segments = path.split('/');
+    if (segments.some(segment => segment === '' || segment === '.' || segment === '..')) throw new Error('tracked path output is malformed');
+  }
+  if (new Set(paths).size !== paths.length) throw new Error('tracked path output is malformed');
+  return Object.freeze(paths);
 }
 
 export function validateTrackedLiveReportPathsV1(trackedPaths) {
