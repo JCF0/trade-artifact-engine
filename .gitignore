@@ -10,6 +10,9 @@ engine/data/
 engine/.env
 engine/.env.*
 engine/*.log
+engine/docs/validation_report.md
+engine/docs/validation_report_batch2.md
+artifact-v114-live-validation-report.json
 
 # Keep generated JSON ignored by default
 *.json

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readdirSync, realpathSync } from 'node:fs';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -13,6 +13,11 @@ const REQUIRED_WALLET_TESTS = Object.freeze([
   'retained-provider-acceptance.test.mjs',
   'run-controlled-live-validation.test.mjs',
 ]);
+const FORBIDDEN_TRACKED_LIVE_REPORT_PATHS = new Set([
+  'engine/docs/validation_report.md',
+  'engine/docs/validation_report_batch2.md',
+]);
+const SANCTIONED_LIVE_REPORT_BASENAMES = new Set(['artifact-v114-live-validation-report.json']);
 const CHILD_ENV = Object.freeze({
   TRADE_ARTIFACT_TEST: '1', HOME: '/nonexistent/trade-artifact-v114-regression-home',
   USERPROFILE: '/nonexistent/trade-artifact-v114-regression-home', TZ: 'UTC', LANG: 'C', LC_ALL: 'C',
@@ -29,25 +34,45 @@ function collectModules(root) {
 }
 
 export function discoverWalletAcquisitionTestsV1(root = WALLET_ACQUISITION_ROOT) {
-  if (resolve(root) !== WALLET_ACQUISITION_ROOT) throw new Error('wallet-acquisition discovery root is not allowed');
-  const names = readdirSync(root, { withFileTypes: true })
+  let canonicalRoot;
+  try { canonicalRoot = realpathSync(root); } catch { throw new Error('wallet-acquisition discovery root is not allowed'); }
+  if (canonicalRoot !== realpathSync(WALLET_ACQUISITION_ROOT)) throw new Error('wallet-acquisition discovery root is not allowed');
+  const names = readdirSync(canonicalRoot, { withFileTypes: true })
     .filter(entry => entry.isFile() && entry.name.endsWith('.test.mjs'))
     .map(entry => entry.name).sort();
   if (new Set(names).size !== names.length) throw new Error('wallet-acquisition discovery contains duplicates');
   for (const required of REQUIRED_WALLET_TESTS) {
     if (!names.includes(required)) throw new Error(`wallet-acquisition discovery omitted ${required}`);
   }
-  return Object.freeze(names.map(name => resolve(root, name)));
+  return Object.freeze(names.map(name => realpathSync(resolve(canonicalRoot, name))));
 }
 
 export function validateWalletTestExecutionSetV1(discovered, executed) {
   if (!Array.isArray(discovered) || !Array.isArray(executed)) throw new Error('wallet-acquisition execution set is malformed');
-  const assertAllowed = file => typeof file === 'string'
-    && file.startsWith(`${WALLET_ACQUISITION_ROOT}/`)
-    && file.endsWith('.test.mjs');
-  if (!discovered.every(assertAllowed) || !executed.every(assertAllowed)) throw new Error('wallet-acquisition execution set contains an unexpected file');
-  if (new Set(discovered).size !== discovered.length || new Set(executed).size !== executed.length) throw new Error('wallet-acquisition file executed twice');
-  if (discovered.length !== executed.length || discovered.some((file, index) => file !== executed[index])) throw new Error('wallet-acquisition execution set mismatch');
+  const canonicalRoot = realpathSync(WALLET_ACQUISITION_ROOT);
+  const canonicalize = file => {
+    if (typeof file !== 'string' || !file.endsWith('.test.mjs')) throw new Error('wallet-acquisition execution set contains an unexpected file');
+    let canonical;
+    try { canonical = realpathSync(file); } catch { throw new Error('wallet-acquisition execution set contains an unexpected file'); }
+    const suffix = relative(canonicalRoot, canonical);
+    if (suffix === '' || suffix.startsWith('..') || isAbsolute(suffix)) throw new Error('wallet-acquisition execution set contains an unexpected file');
+    return canonical;
+  };
+  const canonicalDiscovered = discovered.map(canonicalize).sort();
+  const canonicalExecuted = executed.map(canonicalize).sort();
+  if (new Set(canonicalDiscovered).size !== canonicalDiscovered.length || new Set(canonicalExecuted).size !== canonicalExecuted.length) throw new Error('wallet-acquisition file executed twice');
+  if (canonicalDiscovered.length !== canonicalExecuted.length || canonicalDiscovered.some((file, index) => file !== canonicalExecuted[index])) throw new Error('wallet-acquisition execution set mismatch');
+  return true;
+}
+
+export function validateTrackedLiveReportPathsV1(trackedPaths) {
+  if (!Array.isArray(trackedPaths)) throw new Error('tracked path set is malformed');
+  for (const path of trackedPaths) {
+    if (typeof path !== 'string' || FORBIDDEN_TRACKED_LIVE_REPORT_PATHS.has(path)
+        || SANCTIONED_LIVE_REPORT_BASENAMES.has(basename(path))) {
+      throw new Error('tracked live-derived report path is forbidden');
+    }
+  }
   return true;
 }
 

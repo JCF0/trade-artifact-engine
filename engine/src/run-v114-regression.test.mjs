@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { discoverWalletAcquisitionTestsV1, parseTopLevelTapV1, validateWalletTestExecutionSetV1 } from './run-v114-regression.mjs';
+import { discoverWalletAcquisitionTestsV1, parseTopLevelTapV1, validateTrackedLiveReportPathsV1, validateWalletTestExecutionSetV1 } from './run-v114-regression.mjs';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const RUNNER_PATH = resolve(REPOSITORY_ROOT, 'engine/src/run-v114-regression.mjs');
@@ -101,6 +102,39 @@ test('wallet-acquisition discovery rejects alternate roots and returns every cur
   assert.throws(() => validateWalletTestExecutionSetV1(discovered, discovered.slice(1)));
   assert.throws(() => validateWalletTestExecutionSetV1(discovered, [...discovered, discovered[0]]));
   assert.throws(() => validateWalletTestExecutionSetV1(discovered, [...discovered.slice(0, -1), resolve(WALLET_ACQUISITION_ROOT, '../unexpected.test.mjs')]));
+});
+
+test('wallet-acquisition execution confinement rejects traversal, sibling-prefix, and symlink escapes canonically', t => {
+  const traversal = `${WALLET_ACQUISITION_ROOT}/../outside.test.mjs`;
+  assert.throws(() => validateWalletTestExecutionSetV1([traversal], [traversal]));
+  const sibling = `${WALLET_ACQUISITION_ROOT}-evil/escape.test.mjs`;
+  assert.throws(() => validateWalletTestExecutionSetV1([sibling], [sibling]));
+
+  const outside = resolve(REPOSITORY_ROOT, 'engine/src/run-v114-symlink-escape.test.mjs');
+  const link = resolve(WALLET_ACQUISITION_ROOT, 'run-v114-symlink-escape.test.mjs');
+  writeFileSync(outside, 'export {};\n', { flag: 'wx' });
+  t.after(() => { rmSync(link, { force: true }); rmSync(outside, { force: true }); });
+  try {
+    symlinkSync(outside, link);
+    assert.throws(() => validateWalletTestExecutionSetV1([link], [link]));
+  } catch (error) {
+    if (!['EPERM','EACCES','ENOTSUP'].includes(error?.code)) throw error;
+  }
+
+  const discovered = discoverWalletAcquisitionTestsV1();
+  assert.equal(validateWalletTestExecutionSetV1(discovered, [...discovered].reverse()), true);
+});
+
+test('tracked live-derived report paths are rejected and current tracked files satisfy the policy', () => {
+  for (const path of [
+    'engine/docs/validation_report.md',
+    'engine/docs/validation_report_batch2.md',
+    'engine/docs/artifact-v114-live-validation-report.json',
+  ]) assert.throws(() => validateTrackedLiveReportPathsV1([path]));
+  const tracked = spawnSync('git', ['ls-files', '-z'], { cwd: REPOSITORY_ROOT, encoding: 'utf8' });
+  assert.equal(tracked.status, 0);
+  const materializedTrackedPaths = tracked.stdout.split('\0').filter(path => path && existsSync(resolve(REPOSITORY_ROOT, path)));
+  assert.equal(validateTrackedLiveReportPathsV1(materializedTrackedPaths), true);
 });
 
 test('v1.14 documentation records the completed final post-patch-3 live release gate', () => {

@@ -109,6 +109,58 @@ test('retry and timeout telemetry counts only attempts actually begun and actual
   assert.deepEqual(value.counts, { retry: 1, timeout: 1 });
 });
 
+test('abort-respecting transport increments timeout telemetry exactly once', async () => {
+  const counts = { retry: 0, timeout: 0 };
+  const port = createHeliusWalletHistoryPortV1({
+    httpClient: { request(input) {
+      return new Promise((resolve, reject) => input.signal.addEventListener('abort', () => {
+        reject(Object.freeze({ code: 'request_timeout' }));
+      }, { once: true }));
+    } },
+    apiKeyProvider: () => 'super-secret-key', sleep: async () => {}, clock: () => Date.now(), random: () => 0,
+    telemetry: { onRetryAttemptV1() { counts.retry += 1; }, onTimeoutAttemptV1() { counts.timeout += 1; } },
+  });
+  beginWalletHistoryAcquisitionV1(port, { ...request().budgets, max_attempts_per_operation: 1, request_timeout_ms: 10, overall_timeout_ms: 100 });
+  await code(port.getFinalizedSlotV1(), 'provider_retry_exhausted');
+  assert.deepEqual(counts, { retry: 0, timeout: 1 });
+});
+
+test('abort-ignoring transport fails closed without timeout accounting and discards late success', async () => {
+  const counts = { retry: 0, timeout: 0 };
+  let resolveTransport;
+  const port = createHeliusWalletHistoryPortV1({
+    httpClient: { request() { return new Promise(resolve => { resolveTransport = resolve; }); } },
+    apiKeyProvider: () => 'super-secret-key', sleep: async () => {}, clock: () => Date.now(), random: () => 0,
+    telemetry: { onRetryAttemptV1() { counts.retry += 1; }, onTimeoutAttemptV1() { counts.timeout += 1; } },
+  });
+  beginWalletHistoryAcquisitionV1(port, { ...request().budgets, max_attempts_per_operation: 1, request_timeout_ms: 10, overall_timeout_ms: 100 });
+  await code(port.getFinalizedSlotV1(), 'provider_retry_exhausted');
+  assert.deepEqual(counts, { retry: 0, timeout: 0 });
+  resolveTransport({ status: 200, data: rpc(999) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(counts, { retry: 0, timeout: 0 });
+});
+
+test('timer expiry, abort rejection, and attempted late settlement cannot double-count one timeout', async () => {
+  const counts = { retry: 0, timeout: 0 };
+  let attemptLateResolve = () => {};
+  const port = createHeliusWalletHistoryPortV1({
+    httpClient: { request(input) {
+      return new Promise((resolve, reject) => {
+        attemptLateResolve = () => resolve({ status: 200, data: rpc(999) });
+        input.signal.addEventListener('abort', () => reject(Object.freeze({ code: 'request_timeout' })), { once: true });
+      });
+    } },
+    apiKeyProvider: () => 'super-secret-key', sleep: async () => {}, clock: () => Date.now(), random: () => 0,
+    telemetry: { onRetryAttemptV1() { counts.retry += 1; }, onTimeoutAttemptV1() { counts.timeout += 1; } },
+  });
+  beginWalletHistoryAcquisitionV1(port, { ...request().budgets, max_attempts_per_operation: 1, request_timeout_ms: 10, overall_timeout_ms: 100 });
+  await code(port.getFinalizedSlotV1(), 'provider_retry_exhausted');
+  attemptLateResolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(counts, { retry: 0, timeout: 1 });
+});
+
 test('retry sleep exhaustion does not fabricate a retry attempt', async () => {
   const counts = { retry: 0, timeout: 0 };
   const h = harness([{ status: 429, data: null }], {

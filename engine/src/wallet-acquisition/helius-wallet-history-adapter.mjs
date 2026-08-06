@@ -111,23 +111,34 @@ async function execute(capabilities, logicalRequest, context = beginOperation(ca
     const timeoutCode = remaining <= context.request_timeout_ms ? 'acquisition_deadline_exceeded' : 'provider_timeout';
     const controller = new AbortController();
     const request = { ...baseRequest, timeout_ms: timeout, signal: controller.signal };
-    let timeoutTerminated = false;
+    let deadlineExpired = false;
+    let transportSettled = false;
+    let timeoutAccounted = false;
     const markTimeout = () => {
-      if (timeoutTerminated) return;
-      timeoutTerminated = true;
+      if (timeoutAccounted) return;
+      timeoutAccounted = true;
       capabilities.telemetry.onTimeoutAttemptV1();
     };
-    const abortTimer = setTimeout(() => { markTimeout(); controller.abort(); }, Math.max(1, Math.ceil(timeout)));
+    const abortTimer = setTimeout(() => { deadlineExpired = true; controller.abort(); }, Math.max(1, Math.ceil(timeout)));
     let response = null; let retryable = false;
     try {
       if (attempt > 1) capabilities.telemetry.onRetryAttemptV1();
-      const pending = capabilities.request(request);
-      response = envelope(await boundedAwait(pending, timeout, timeoutCode, markTimeout));
+      let pending;
+      try { pending = capabilities.request(request); }
+      catch (error) { transportSettled = true; throw error; }
+      const observed = Promise.resolve(pending).then(
+        value => { transportSettled = true; return value; },
+        error => { transportSettled = true; throw error; },
+      );
+      response = envelope(await boundedAwait(observed, timeout, timeoutCode));
     }
     catch (error) {
       const code = thrownCode(error);
       if (code === 'invalid_json') fail('malformed_provider_response');
-      if (code === 'request_timeout' || code === 'provider_timeout' || code === 'ETIMEDOUT') { markTimeout(); retryable = true; }
+      const timeoutCodeThrown = code === 'request_timeout' || code === 'provider_timeout' || code === 'ETIMEDOUT';
+      const terminatedByEffectiveTimeout = transportSettled && (timeoutCodeThrown || (deadlineExpired && controller.signal.aborted));
+      if (terminatedByEffectiveTimeout) { markTimeout(); retryable = true; }
+      else if (timeoutCodeThrown) retryable = true;
       else if (code === 'transient_transport') retryable = true;
       else if (code !== null) fail(code);
       else fail('provider_transient_failure');
