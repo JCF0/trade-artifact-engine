@@ -50,7 +50,7 @@ test('v1.14 runner is direct-Node, safety-adapted, capability-minimal, and exclu
   assert.doesNotMatch(runner, /targeted-orchestrator\.test\.mjs|package-store|publication|upload|signing|minting|deployment/);
 });
 
-test('v1.14 documentation distinguishes historical live runs and requires a fresh post-remediation gate', () => {
+test('v1.14 documentation records the completed final post-remediation live gate', () => {
   const documents = Object.fromEntries(DOCUMENTATION_PATHS.map(path => [path, read(path)]));
   const combined = Object.values(documents).join('\n');
   for (const obsolete of [
@@ -58,8 +58,8 @@ test('v1.14 documentation distinguishes historical live runs and requires a fres
     /future live adapter must prove/i,
     /does not acquire live wallet history/i,
     /live validation (?:has not occurred|was not performed)/i,
-    /no further live (?:rerun|re-run) is required before tagging/i,
-    /post-hardening live release gate is complete/i,
+    /one fresh post-remediation controlled live validation is still required before tagging/i,
+    /fresh post-remediation controlled live validation is still required/i,
   ]) assert.doesNotMatch(combined, obsolete);
   assert.match(combined, /provider-attested/i);
   assert.match(combined, /not (?:a )?trustless cryptographic proof/i);
@@ -68,38 +68,50 @@ test('v1.14 documentation distinguishes historical live runs and requires a fres
   assert.match(combined, /first pre-hardening/i);
   assert.match(combined, /distinct later post-hardening/i);
   assert.match(combined, /post-hardening[^\n]*PASS/i);
+  assert.match(combined, /final post-remediation controlled live validation[^\n]*PASS/i);
   assert.match(combined, /one approved public Solana mainnet-beta wallet/i);
   assert.match(combined, /lookback_7d_v1/);
+  assert.match(combined, /finalized anchor slot[^\n]*437570354/i);
+  assert.match(combined, /finalized anchor block time[^\n]*1786013791/i);
   assert.match(combined, /two pages/i);
-  assert.match(combined, /historical bound reached/i);
+  assert.match(combined, /historical_bound_reached|historical bound reached/i);
   assert.match(combined, /76 canonical signatures/i);
+  assert.match(combined, /zero post-anchor signatures (?:were )?excluded/i);
   assert.match(combined, /five in-window/i);
   assert.match(combined, /five Enhanced/i);
   assert.match(combined, /1 supported, 0 unsupported, 1 ambiguous, 3 unrelated, (?:and )?0 failed/i);
   assert.match(combined, /one normalized event/i);
+  assert.match(combined, /one finding/i);
   assert.match(combined, /one localized finding/i);
   assert.match(combined, /one blocked summary/i);
   assert.match(combined, /zero candidates(?: and|\/selectable candidates|, and) zero selectable candidates/i);
   assert.match(combined, /zero retries and zero timeouts/i);
   assert.match(combined, /acquisition, normalization, classification, pagination, historical-bound, and chain-boundary gates (?:were )?proven/i);
-  assert.match(combined, /no cap, truncation, partial result, or provider uncertainty/i);
-  assert.match(combined, /no (?:live candidate resolution or )?Slice 7 invocation occurred because there was no selectable candidate/i);
-  assert.match(combined, /API key and raw provider bodies were absent from the sanitized report/i);
-  assert.match(combined, /classification totals matched the first pre-hardening run/i);
+  assert.match(combined, /capped, truncated, partial, and provider_uncertain (?:were )?all false/i);
+  assert.match(combined, /live candidate resolution and Slice 7 were not exercised/i);
+  assert.match(combined, /Slice 7 (?:was )?not invoked because there was no selectable candidate/i);
+  assert.match(combined, /no package-store (?:write|operation), publication, upload, signing, minting, or deployment/i);
+  assert.match(combined, /API key, URLs, headers, provider prose, and raw provider bodies (?:were )?absent/i);
+  assert.match(combined, /final hardening changed no aggregate classifications relative to the previous run/i);
   assert.match(combined, /zero candidates was a valid result, not a validation failure/i);
-  assert.match(combined, /deterministic remediation is complete/i);
-  assert.match(combined, /one fresh post-remediation controlled live validation is still required before tagging/i);
+  assert.match(combined, /live release gate is complete/i);
+  assert.match(combined, /no further live (?:rerun|re-run) is required before tagging v1\.14\.0/i);
   assert.match(combined, /v1\.14\.0 is not yet tagged/i);
   assert.match(combined, /tracked tree intentionally contains (?:exactly )?(?:the )?five exact retained Helius fixture bodies|tracked tree intentionally contains exactly five retained Helius fixture bodies/i);
   assert.match(combined, /controlled-live raw responses are not retained/i);
   assert.match(combined, /Artifact deterministically reconstructs supported trades from provider-attested on-chain evidence and exposes the evidence boundaries and limitations required to reproduce its result\./i);
   assert.doesNotMatch(documents['README.md'], /fully verifiable trade|Anyone can independently|Anyone can verify a trade receipt independently|full re-derivation from raw transactions/i);
   assert.doesNotMatch(documents['engine/docs/verifier_flow.md'], /No proprietary tools, API keys, or trust relationships required|Full Re-Derivation \(Highest Assurance\)|Trades actually happened as claimed|strongest possible verification/i);
-  assert.match(combined, /5f6b167ba07671e60ea3b9b09c5f65a5d8b98cf9e87bf810b5efa69bd42e1b76/);
+  for (const digest of [
+    'f2566c45d0971dfacf195521b4938eaf7ce5bd685f3ac7c07d101a42bd52921f',
+    '2e5af4531c0e42a12cfb611e476d5fd8f0d9237d2e6476a23554be04066689b6',
+    'df4f97aa7030006695f4fe42845277c59cc815f15125b0bfe743d7038608965a',
+    '5beff3e59820576b5e8d8c76943ce65c89ca0e62f0423be5a2b15c7c133d61a1',
+  ]) assert.match(combined, new RegExp(digest));
   assert.match(combined, /1,951 bytes/);
-  assert.match(combined, /(?:mode )?`?0600`?/i);
+  assert.match(combined, /(?:mode|permissions) (?:were )?`?0600`?/i);
   assert.doesNotMatch(combined, /BJsHXqhTWD4ECKXmhRNEnaZjd5ymDiZMyjFJzYuzCzGy/);
-  assert.doesNotMatch(combined, /(?<!No )live candidate resolution (?:occurred|was performed)|(?<!No live candidate resolution or )Slice 7 invocation occurred|Slice 7 (?:was invoked|was performed)/i);
+  assert.doesNotMatch(combined, /live candidate resolution (?:occurred|was performed)|Slice 7 (?:was invoked|was performed)/i);
   assert.doesNotMatch(combined, /v1\.14 (?:has been|is already) tagged/i);
   for (const name of ['jup_buy','jup_sell','ray_buy','ray_sell','jupiter_close_account_swap']) assert.match(combined, new RegExp(`\\b${name}\\b`));
   assert.match(documents['engine/docs/v1.14-operations.md'], /node engine\/src\/run-v114-regression\.mjs/);
