@@ -182,10 +182,15 @@ test('same timestamp ordering is timestamp, signature code units, source slot, t
   assert.equal(canonicalJson(first.evidenceBundle), canonicalJson(permuted.evidenceBundle));
   assert.equal(canonicalJson(first.candidateSet), canonicalJson(permuted.candidateSet));
 
-  const independentlyPermutedAcquisition = buildWalletAcquisitionResultV1({
+  assert.throws(() => buildWalletAcquisitionResultV1({
     ...first.acquisitionResult,
     transaction_dispositions: [...first.acquisitionResult.transaction_dispositions].reverse(),
     normalized_event_records: [...first.acquisitionResult.normalized_event_records].reverse(),
+    activity_findings: [...first.acquisitionResult.activity_findings].reverse(),
+  }), error => error.code === 'event_index_mismatch' || error.code === 'order_invalid');
+  const independentlyPermutedAcquisition = buildWalletAcquisitionResultV1({
+    ...first.acquisitionResult,
+    transaction_dispositions: [...first.acquisitionResult.transaction_dispositions].reverse(),
     activity_findings: [...first.acquisitionResult.activity_findings].reverse(),
   });
   assert.notEqual(canonicalJson(independentlyPermutedAcquisition), canonicalJson(first.acquisitionResult));

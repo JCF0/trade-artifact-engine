@@ -18,6 +18,7 @@ const DOCUMENTATION_PATHS = [
   'engine/docs/wallet-candidate-set-v1-evidence.md',
   'engine/docs/wallet-candidate-set-v1-limitations.md',
   'engine/docs/wallet-candidate-set-v1-selection.md',
+  'engine/docs/verifier_flow.md',
 ];
 
 function read(relativePath) {
@@ -49,7 +50,7 @@ test('v1.14 runner is direct-Node, safety-adapted, capability-minimal, and exclu
   assert.doesNotMatch(runner, /targeted-orchestrator\.test\.mjs|package-store|publication|upload|signing|minting|deployment/);
 });
 
-test('v1.14 documentation records the passed post-hardening controlled-live release gate without overclaiming', () => {
+test('v1.14 documentation distinguishes historical live runs and requires a fresh post-remediation gate', () => {
   const documents = Object.fromEntries(DOCUMENTATION_PATHS.map(path => [path, read(path)]));
   const combined = Object.values(documents).join('\n');
   for (const obsolete of [
@@ -57,13 +58,15 @@ test('v1.14 documentation records the passed post-hardening controlled-live rele
     /future live adapter must prove/i,
     /does not acquire live wallet history/i,
     /live validation (?:has not occurred|was not performed)/i,
-    /(?:fresh|further|another|additional) (?:controlled |live )?validation (?:is|required|remains required|must occur|must be run)[^\n]*before tagging/i,
-    /(?<!no further live )(?:rerun|re-run) (?:is|required|remains required|must occur|must be run)/i,
+    /no further live (?:rerun|re-run) is required before tagging/i,
+    /post-hardening live release gate is complete/i,
   ]) assert.doesNotMatch(combined, obsolete);
   assert.match(combined, /provider-attested/i);
   assert.match(combined, /not (?:a )?trustless cryptographic proof/i);
-  assert.match(combined, /retained Solana RPC envelopes do not currently exist/i);
+  assert.match(combined, /no exact retained finalized RPC transcript exists/i);
   assert.match(combined, /synthetic finalized RPC/i);
+  assert.match(combined, /first pre-hardening/i);
+  assert.match(combined, /distinct later post-hardening/i);
   assert.match(combined, /post-hardening[^\n]*PASS/i);
   assert.match(combined, /one approved public Solana mainnet-beta wallet/i);
   assert.match(combined, /lookback_7d_v1/);
@@ -82,11 +85,16 @@ test('v1.14 documentation records the passed post-hardening controlled-live rele
   assert.match(combined, /no cap, truncation, partial result, or provider uncertainty/i);
   assert.match(combined, /no (?:live candidate resolution or )?Slice 7 invocation occurred because there was no selectable candidate/i);
   assert.match(combined, /API key and raw provider bodies were absent from the sanitized report/i);
-  assert.match(combined, /classification totals matched the earlier run/i);
-  assert.match(combined, /no unmatched token, native, or closure effect changed the aggregate classification/i);
+  assert.match(combined, /classification totals matched the first pre-hardening run/i);
   assert.match(combined, /zero candidates was a valid result, not a validation failure/i);
-  assert.match(combined, /post-hardening live release gate is complete/i);
-  assert.match(combined, /no further live rerun is required before tagging v1\.14\.0/i);
+  assert.match(combined, /deterministic remediation is complete/i);
+  assert.match(combined, /one fresh post-remediation controlled live validation is still required before tagging/i);
+  assert.match(combined, /v1\.14\.0 is not yet tagged/i);
+  assert.match(combined, /tracked tree intentionally contains (?:exactly )?(?:the )?five exact retained Helius fixture bodies|tracked tree intentionally contains exactly five retained Helius fixture bodies/i);
+  assert.match(combined, /controlled-live raw responses are not retained/i);
+  assert.match(combined, /Artifact deterministically reconstructs supported trades from provider-attested on-chain evidence and exposes the evidence boundaries and limitations required to reproduce its result\./i);
+  assert.doesNotMatch(documents['README.md'], /fully verifiable trade|Anyone can independently|Anyone can verify a trade receipt independently|full re-derivation from raw transactions/i);
+  assert.doesNotMatch(documents['engine/docs/verifier_flow.md'], /No proprietary tools, API keys, or trust relationships required|Full Re-Derivation \(Highest Assurance\)|Trades actually happened as claimed|strongest possible verification/i);
   assert.match(combined, /5f6b167ba07671e60ea3b9b09c5f65a5d8b98cf9e87bf810b5efa69bd42e1b76/);
   assert.match(combined, /1,951 bytes/);
   assert.match(combined, /(?:mode )?`?0600`?/i);

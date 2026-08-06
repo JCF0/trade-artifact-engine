@@ -111,7 +111,7 @@ function rawFromAccountChanges(transaction, transfer, direction, wallet, consume
   return { raw_amount: candidates[0].raw_amount, decimals: candidates[0].decimals };
 }
 
-function transferEvidence(transaction, wallet, groups) {
+function transferEvidence(transaction, wallet, groups, closure) {
   const group = groups.length === 1 ? groups[0].group_id : 'fallback-0';
   const token = []; const tokenMatches = []; const native = []; const unresolved = []; const consumedChanges = new Set();
   for (const [index, transfer] of array(transaction.tokenTransfers).entries()) {
@@ -142,6 +142,7 @@ function transferEvidence(transaction, wallet, groups) {
     if (transfer === null || typeof transfer !== 'object' || Array.isArray(transfer)) malformed();
     const touchesFrom = transfer.fromUserAccount === wallet; const touchesTo = transfer.toUserAccount === wallet;
     if (!touchesFrom && !touchesTo) continue;
+    if (closure.rent_transfer_indexes.has(index)) continue;
     if (touchesFrom && touchesTo) { unresolved.push({ effect_id: `native-self-${index}`, mint: null }); continue; }
     if (!safeInteger(transfer.amount) || transfer.amount === 0) malformed();
     native.push({ economic_group: group, direction: touchesFrom ? 'debit' : 'credit', owner: wallet, amount_lamports: transfer.amount });
@@ -231,12 +232,12 @@ function accountTokenEffects(transaction, wallet, groups, transfers) {
 
 function nativeBalanceEffects(transaction, wallet, groups, transfers, closure) {
   const unresolved = [];
-  let walletChange = null;
+  const walletChanges = [];
   for (const account of array(transaction.accountData)) {
     if (account === null || typeof account !== 'object' || Array.isArray(account)) malformed();
     if (!Object.hasOwn(account, 'nativeBalanceChange')) continue;
     if (!Number.isSafeInteger(account.nativeBalanceChange)) malformed();
-    if (account.account === wallet) walletChange = (walletChange ?? 0n) + BigInt(account.nativeBalanceChange);
+    if (account.account === wallet) walletChanges.push(BigInt(account.nativeBalanceChange));
     else if (!isSolanaPublicKeyV1(account.account) && account.nativeBalanceChange !== 0) {
       unresolved.push({ effect_id: `account-native-owner-unresolved-${unresolved.length}`, mint: null });
     } else if (account.nativeBalanceChange !== 0) {
@@ -265,7 +266,20 @@ function nativeBalanceEffects(transaction, wallet, groups, transfers, closure) {
       }
     }
   }
-  if (walletChange === null) return unresolved;
+  if (transaction.transactionError !== null) return unresolved;
+  if (walletChanges.length !== 1) {
+    unresolved.push({ effect_id: 'account-native-wallet-evidence-missing-0', mint: null });
+    return unresolved;
+  }
+  let fee = 0n;
+  if (transaction.feePayer === wallet) {
+    if (!Object.hasOwn(transaction, 'fee')) {
+      unresolved.push({ effect_id: 'wallet-fee-evidence-missing-0', mint: null });
+      return unresolved;
+    }
+    if (!safeInteger(transaction.fee)) malformed();
+    fee = BigInt(transaction.fee);
+  } else if (Object.hasOwn(transaction, 'fee') && !safeInteger(transaction.fee)) malformed();
   const transferDebits = transfers.native.filter(leg => leg.direction === 'debit').reduce((sum, leg) => sum + BigInt(leg.amount_lamports), 0n);
   const transferCredits = transfers.native.filter(leg => leg.direction === 'credit').reduce((sum, leg) => sum + BigInt(leg.amount_lamports), 0n);
   const structuredDebits = groups.flatMap(group => group.native_inputs).reduce((sum, leg) => sum + BigInt(leg.amount_lamports), 0n);
@@ -274,15 +288,13 @@ function nativeBalanceEffects(transaction, wallet, groups, transfers, closure) {
   const hasStructured = structuredDebits !== 0n || structuredCredits !== 0n;
   const representationsAgree = !hasTransfers || !hasStructured
     || (transferDebits === structuredDebits && transferCredits === structuredCredits);
-  const fee = Object.hasOwn(transaction, 'fee')
-    ? safeInteger(transaction.fee) ? BigInt(transaction.fee) : malformed()
-    : 0n;
   const representedDebits = hasTransfers ? transferDebits : structuredDebits;
   const representedCredits = hasTransfers ? transferCredits : structuredCredits;
-  const expected = representedCredits - representedDebits - (transaction.feePayer === wallet ? fee : 0n);
-  if ((!representationsAgree && closure.closures.length === 0) || walletChange !== expected) {
-    unresolved.push({ effect_id: 'account-native-unresolved-0', mint: null });
-  }
+  const closureCredits = closure.details
+    .filter(item => item.destination === wallet && item.rent_lamports !== null)
+    .reduce((sum, item) => sum + item.rent_lamports, 0n);
+  const expected = representedCredits - representedDebits - fee + closureCredits;
+  if (!representationsAgree || walletChanges[0] !== expected) unresolved.push({ effect_id: 'account-native-unresolved-0', mint: null });
   return unresolved;
 }
 
@@ -299,22 +311,30 @@ function closureEvidence(transaction, wallet) {
       if (instruction === null || typeof instruction !== 'object' || Array.isArray(instruction)) malformed();
       if (TOKEN_PROGRAMS.has(instruction.programId)) {
         let closedAccount = null; let owner = null; let destination = null;
-        if (instruction.data === 'A' && Array.isArray(instruction.accounts) && instruction.accounts.length === 3) {
-          [closedAccount, destination, owner] = instruction.accounts;
+        let closeInstruction = false;
+        if (instruction.data === 'A') {
+          closeInstruction = true;
+          if (Array.isArray(instruction.accounts) && instruction.accounts.length === 3) [closedAccount, destination, owner] = instruction.accounts;
         } else if (instruction.parsed?.type === 'closeAccount') {
+          closeInstruction = true;
           const info = instruction.parsed.info;
           if (info !== null && typeof info === 'object' && !Array.isArray(info)) {
             closedAccount = info.account; destination = info.destination; owner = info.owner ?? info.authority;
           }
         }
-        if (owner === wallet && isSolanaPublicKeyV1(destination) && isSolanaPublicKeyV1(closedAccount)) candidates.push(closedAccount);
+        if (closeInstruction && owner === wallet && isSolanaPublicKeyV1(closedAccount)) {
+          candidates.push({ closedAccount, destination: isSolanaPublicKeyV1(destination) ? destination : null });
+        } else if (closeInstruction && (owner === wallet || owner === null)) unresolved.push({ mint: null });
       }
       if (Object.hasOwn(instruction, 'innerInstructions')) visit(instruction.innerInstructions);
     }
   };
   visit(transaction.instructions);
   const closures = [];
-  for (const closedAccount of [...new Set(candidates)].sort()) {
+  const details = [];
+  const rentTransferIndexes = new Set();
+  const candidateAccounts = [...new Set(candidates.map(candidate => candidate.closedAccount))].sort();
+  for (const closedAccount of candidateAccounts) {
     const mints = new Set();
     for (const transfer of array(transaction.tokenTransfers)) {
       if (transfer === null || typeof transfer !== 'object' || Array.isArray(transfer)) malformed();
@@ -330,8 +350,33 @@ function closureEvidence(transaction, wallet) {
             && change.userAccount === wallet && isSolanaPublicKeyV1(change.mint)) mints.add(change.mint);
       }
     }
-    if (mints.size === 1) closures.push({ owner: wallet, mint: [...mints][0], account: closedAccount });
-    else unresolved.push({ mint: null });
+    const destinations = new Set(candidates.filter(candidate => candidate.closedAccount === closedAccount).map(candidate => candidate.destination));
+    const mint = mints.size === 1 ? [...mints][0] : null;
+    if (destinations.size !== 1 || destinations.has(null)) {
+      unresolved.push({ mint });
+      continue;
+    }
+    const destination = [...destinations][0];
+    const nativeRows = array(transaction.accountData).filter(account => account.account === closedAccount && Object.hasOwn(account, 'nativeBalanceChange'));
+    if (nativeRows.some(account => !Number.isSafeInteger(account.nativeBalanceChange))) malformed();
+    const rentLamports = nativeRows.length === 1 && nativeRows[0].nativeBalanceChange <= 0
+      ? -BigInt(nativeRows[0].nativeBalanceChange) : null;
+    const sourceTransfers = [];
+    for (const [index, transfer] of array(transaction.nativeTransfers).entries()) {
+      if (transfer !== null && typeof transfer === 'object' && !Array.isArray(transfer)
+          && transfer.fromUserAccount === closedAccount) sourceTransfers.push({ index, destination: transfer.toUserAccount, amount: transfer.amount });
+    }
+    const transferConflict = sourceTransfers.some(transfer => transfer.destination !== destination || !safeInteger(transfer.amount))
+      || sourceTransfers.length > 1
+      || (sourceTransfers.length === 1 && (rentLamports === null || BigInt(sourceTransfers[0].amount) !== rentLamports));
+    if (transferConflict) {
+      unresolved.push({ mint });
+      continue;
+    }
+    if (sourceTransfers.length === 1) rentTransferIndexes.add(sourceTransfers[0].index);
+    if (mint !== null) closures.push({ owner: wallet, mint, account: closedAccount });
+    if (mint === null || rentLamports === null || destination !== wallet) unresolved.push({ mint });
+    details.push({ account: closedAccount, destination, mint, rent_lamports: rentLamports });
   }
   if (transaction.type === 'CLOSE_ACCOUNT' && closures.length === 0 && candidates.length === 0) {
     const mints = [];
@@ -348,7 +393,9 @@ function closureEvidence(transaction, wallet) {
       .map((closure, index) => ({ closure_id: `account-close-${index}`, owner: closure.owner, mint: closure.mint })),
     unresolved: unresolved.sort((left, right) => (left.mint ?? '').localeCompare(right.mint ?? ''))
       .map((effect, index) => ({ effect_id: `unbound-account-close-${index}`, mint: effect.mint })),
-    bound_accounts: closures.map(closure => closure.account).sort(),
+    bound_accounts: candidateAccounts,
+    details,
+    rent_transfer_indexes: rentTransferIndexes,
   };
 }
 
@@ -364,9 +411,9 @@ export function projectHeliusEnhancedTransactionV1(input) {
     if (!isSolanaSignatureV1(transaction.signature) || !safeInteger(transaction.slot) || !safeInteger(transaction.timestamp)
         || !isSolanaPublicKeyV1(transaction.feePayer) || typeof transaction.type !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(transaction.type)) malformed();
     const groups = structuredGroups(transaction, input.wallet);
-    const transfers = transferEvidence(transaction, input.wallet, groups);
-    const accountTokenUnresolved = accountTokenEffects(transaction, input.wallet, groups, transfers);
     const closure = closureEvidence(transaction, input.wallet);
+    const transfers = transferEvidence(transaction, input.wallet, groups, closure);
+    const accountTokenUnresolved = accountTokenEffects(transaction, input.wallet, groups, transfers);
     const nativeUnresolved = nativeBalanceEffects(transaction, input.wallet, groups, transfers, closure);
     return buildSolanaSpotEvidenceV1({
       spot_evidence_version: 'solana_spot_evidence_v1',

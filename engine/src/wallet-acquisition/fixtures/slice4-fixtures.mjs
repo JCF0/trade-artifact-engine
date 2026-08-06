@@ -61,7 +61,8 @@ export function enhanced(signature, {
       { fromUserAccount: WALLET, toUserAccount: 'Other11111111111111111111111111111111111', mint: inputMint, rawTokenAmount: raw(inputRaw) },
       { fromUserAccount: 'Other11111111111111111111111111111111111', toUserAccount: WALLET, mint: outputMint, rawTokenAmount: raw(outputRaw) },
     ] : [],
-    nativeTransfers: [], accountData: [], instructions: program === null ? [] : [{ programId: program, innerInstructions: [] }],
+    fee: 0,
+    nativeTransfers: [], accountData: [{ account: WALLET, nativeBalanceChange: 0, tokenBalanceChanges: [] }], instructions: program === null ? [] : [{ programId: program, innerInstructions: [] }],
   };
   if (unresolved) body.tokenTransfers = [{ fromUserAccount: WALLET, toUserAccount: WALLET, mint: outputMint, rawTokenAmount: raw(outputRaw) }];
   return body;

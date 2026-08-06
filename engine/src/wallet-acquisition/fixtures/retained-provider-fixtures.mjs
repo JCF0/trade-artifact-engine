@@ -54,7 +54,7 @@ export function syntheticEnhancedBodyV1({
     timestamp,
     tokenTransfers: [],
     nativeTransfers: [],
-    accountData: [],
+    accountData: [{ account: wallet, nativeBalanceChange: -5000, tokenBalanceChanges: [] }],
     transactionError: failed ? { InstructionError: [1, 'SyntheticFailure'] } : null,
     instructions: recognizedProgram ? [{ programId: JUPITER_PROGRAM_V1, innerInstructions: [] }] : [],
     events: type === 'SWAP' ? {

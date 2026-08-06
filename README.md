@@ -1,8 +1,8 @@
 # Trade Artifact
 
-Cryptographically verifiable, non-transferable trade receipt NFTs on Solana.
+Deterministic, non-transferable trade receipt NFTs on Solana.
 
-Artifact reduces reliance on unverifiable claims through deterministic reconstruction and explicit provider-attested evidence boundaries.
+Artifact deterministically reconstructs supported trades from provider-attested on-chain evidence and exposes the evidence boundaries and limitations required to reproduce its result. Canonical receipt/package bytes remain deterministic, but wallet-history completeness is provider-attested rather than trustless.
 
 ## Demo
 
@@ -127,7 +127,7 @@ V1.13 Slice 1 adds pure, private-by-default wallet candidate evidence, candidate
 - `engine/docs/wallet-candidate-set-v1-selection.md`
 - `node engine/src/run-v113-regression.mjs`
 
-The v1.13 evidence taxonomy has exactly two disposition-backed finding types: `unsupported_activity` and `ambiguous_activity`. `buildCandidateEvidenceBundleV1()` is the sole exported production constructor for `candidate_evidence_bundle_v1`, and wallet-wide uncertainty prevents issuance through every supported construction path. Token findings distinguish affected position tokens from disjoint contextual quote mints; common quotes such as USDC do not suppress unrelated candidates. Partial history, unobserved inventory and external-transfer uncertainty are candidate evidence limitations expressed through ledger status, flags, limitations, reason codes and disclosures; balance-boundary mismatch remains future work; mark limitations are valuation states. Limited partial-history candidates remain visible-only with `economics_status: unavailable_partial_history`, null economics/snapshot values and unavailable valuation rather than numeric-zero placeholders. The identity-bound `direct_quote_mark_v1` profile commits to `mark_max_age_seconds: 300`; ages 0 through 300 seconds are usable when all slot, timestamp, mint, quote and positive-price checks pass, while age 301 and all future/mismatched/unavailable states produce null unrealized valuation. Acquisition collections may arrive noncanonically and are canonicalized by evidence construction; an initially null acquisition mark profile may be enriched, after which completed evidence commits to the mark profile and 300-second policy. Structural candidate-set validation is distinct from authoritative evidence-bound reconstruction. The pure lookback schema proves its configured lower boundary but does not yet enforce exact duration subtraction.
+The v1.13 evidence taxonomy has exactly two disposition-backed finding types: `unsupported_activity` and `ambiguous_activity`. `buildCandidateEvidenceBundleV1()` is the sole exported production constructor for `candidate_evidence_bundle_v1`, and wallet-wide uncertainty prevents issuance through every supported construction path. Token findings distinguish affected position tokens from disjoint contextual quote mints; common quotes such as USDC do not suppress unrelated candidates. Partial history, unobserved inventory and external-transfer uncertainty are candidate evidence limitations expressed through ledger status, flags, limitations, reason codes and disclosures; balance-boundary mismatch remains future work; mark limitations are valuation states. Limited partial-history candidates remain visible-only with `economics_status: unavailable_partial_history`, null economics/snapshot values and unavailable valuation rather than numeric-zero placeholders. The identity-bound `direct_quote_mark_v1` profile commits to `mark_max_age_seconds: 300`; ages 0 through 300 seconds are usable when all slot, timestamp, mint, quote and positive-price checks pass, while age 301 and all future/mismatched/unavailable states produce null unrealized valuation. Every validated v1.14 acquisition result requires canonical normalized-event order and exact dense wallet-wide `raw_index` values, while downstream evidence construction canonicalizes the collections it owns; an initially null acquisition mark profile may be enriched, after which completed evidence commits to the mark profile and 300-second policy. Structural candidate-set validation is distinct from authoritative evidence-bound reconstruction. The pure lookback schema proves its configured lower boundary but does not yet enforce exact duration subtraction.
 
 The v1.13 runner uses direct deterministic Node commands and a safe v1.12 compatibility gate; it does not invoke npm, the old commit-bearing v1.12 wrapper, live providers, package-store commits, production publication, upload, signing, minting, or deployment. Its targeted Slice 7 gate uses an anchored, code-unit-escaped alternation of exactly three complete test names, parses TAP fail-closed, and requires all three selected tests to pass with none selected as skipped. Some maintained compatibility tests exercise local APIs and temporary non-package fixture/write roots only.
 
@@ -138,9 +138,9 @@ V1.14 adds **Wallet-Wide Bounded Acquisition v1**, a read-only deterministic bou
 - exact retained Helius bodies replay through acquisition, evidence, candidate construction, digest-only selection, and the existing Slice 7 package dry run; and
 - `node engine/src/run-v114-regression.mjs` runs the safety-adapted v1.13 baseline, every wallet-acquisition test, syntax checks, and runner/documentation safety checks with direct Node execution only.
 
-The retained-provider and acquisition-to-candidate integration gates preserve the pinned JUP and RAY receipt, package, and five-member identities. Retained Solana RPC envelopes do not currently exist; finalized RPC pages are synthetic, and other provider-shaped negative/coverage fixtures are labeled synthetic. This is provider-attested completeness, not a trustless proof against malicious or jointly inconsistent providers. V1.14 remains mainnet-beta, fixed-lookback, raw-quote, one-supported-event-per-transaction, and fail-closed on safe-budget exhaustion. It adds no hosted beta, API, UI, jobs, persistence, publication, package-store commit, upload, signing, minting, deployment, live marks, or fund custody/control.
+The retained-provider and acquisition-to-candidate integration gates preserve the pinned JUP and RAY receipt, package, and five-member identities. The tracked tree intentionally contains the five exact retained Helius fixture bodies used for deterministic replay. Controlled-live raw responses are not retained, and no exact retained finalized RPC transcript exists; finalized RPC pages are synthetic, and other provider-shaped negative/coverage fixtures are labeled synthetic. This is provider-attested completeness, not a trustless proof against malicious or jointly inconsistent providers. V1.14 remains mainnet-beta, fixed-lookback, raw-quote, one-supported-event-per-transaction, and fail-closed on safe-budget exhaustion. It adds no hosted beta, API, UI, jobs, persistence, publication, package-store commit, upload, signing, minting, deployment, live marks, or fund custody/control.
 
-The required post-hardening bounded provider-attested controlled live validation is **PASS** for one approved public Solana mainnet-beta wallet with `lookback_7d_v1`. It examined two pages and reached the historical bound, observing 76 canonical signatures, five in-window transactions, and five Enhanced reconciliations. The exact disposition partition was 1 supported, 0 unsupported, 1 ambiguous, 3 unrelated, and 0 failed; the result contained one normalized event, one localized finding, one blocked summary, zero candidates and zero selectable candidates, with zero retries and zero timeouts. Acquisition, normalization, classification, pagination, historical-bound, and chain-boundary gates were proven, with no cap, truncation, partial result, or provider uncertainty. No live candidate resolution or Slice 7 invocation occurred because there was no selectable candidate. Zero candidates was a valid result, not a validation failure. No package-store operation, publication, upload, signing, minting, or deployment occurred, and the API key and raw provider bodies were absent from the sanitized report. The post-hardening classification totals matched the earlier run; no unmatched token, native, or closure effect changed the aggregate classification. The required post-hardening live release gate is complete, and no further live rerun is required before tagging v1.14.0. This records release readiness, not a claim that v1.14.0 has already been tagged. See `engine/docs/v1.14-release-notes.md`, `engine/docs/v1.14-wallet-wide-acquisition.md`, `engine/docs/v1.14-operations.md`, and `engine/docs/v1.14-limitations.md`.
+Two historical controlled validations are distinct: the first pre-hardening run passed the then-current implementation, and the later post-hardening run also passed with the recorded 1 supported, 0 unsupported, 1 ambiguous, 3 unrelated, and 0 failed partition. This remediation changes fee/native, closure-rent, canonical-index, and deadline enforcement after that later run. Deterministic remediation is complete, but one fresh post-remediation controlled live validation is still required before tagging. v1.14.0 is not yet tagged. See `engine/docs/v1.14-release-notes.md`, `engine/docs/v1.14-wallet-wide-acquisition.md`, `engine/docs/v1.14-operations.md`, and `engine/docs/v1.14-limitations.md`.
 
 ## Legacy/full-pipeline capabilities
 
@@ -154,7 +154,7 @@ The following describes the repository's pre-existing full pipeline, not the v1.
 6. Uploads receipts + visual cards to **Arweave** (permanent storage via Irys)
 7. Mints a **soul-bound NFT** on Solana (Token-2022, non-transferable)
 
-The on-chain PDA stores the verification hash, metadata hash, claim signature, and wallet binding. Anyone can verify the receipt at 5 levels of assurance - from instant offline hash checks to full re-derivation from on-chain transactions.
+The on-chain PDA stores the verification hash, metadata hash, claim signature, and wallet binding. Verification levels range from offline hash checks to provider-attested reconstruction from on-chain transaction evidence; the latter depends on provider completeness.
 
 ## Architecture
 
@@ -277,11 +277,11 @@ node src/mint-one.mjs <wallet> --keypair <keypair.json> --pick 1
 - TX: https://explorer.solana.com/tx/2m4dUV7MYuLb6YqTWAurjgMYtvAEYWX21ZZ2Wn2erPQta2XKrBhv2x8cCnM6ZNceShuPn8NTMwbbBAdFR7TJdR6Q?cluster=devnet
 - NFT Mint: Abpyva23vfmpRVvLtY3QontNqhHWKCigi1srbPrgsskT
 
-This NFT represents a fully verifiable trade. Anyone can independently:
+This NFT represents a deterministic receipt over provider-attested trade evidence. A verifier can:
 - recompute the verification hash
 - validate the claim signature
 - confirm on-chain state
-- re-derive the trade from raw transactions
+- reproduce the supported trade result from the same provider-attested raw transactions
 
 ### Full Pipeline (Phases 1-8, Batch)
 
@@ -406,7 +406,7 @@ The engine loads `.env` from `%USERPROFILE%\.openclaw\.env` automatically. You c
 
 ## Verification Levels
 
-Anyone can verify a trade receipt independently:
+The following checks provide increasing assurance, with L5 remaining provider-attested rather than trustless:
 
 | Level | What | Requires |
 |---|---|---|
@@ -414,7 +414,7 @@ Anyone can verify a trade receipt independently:
 | **L2** | On-chain PDA exists, fields match, NFT supply=1 | Solana RPC |
 | **L3** | Ed25519 claim signature valid | On-chain PDA data |
 | **L4** | Metadata content matches on-chain hash | Arweave gateway |
-| **L5** | Full re-derivation from raw transactions | Helius API (re-run pipeline) |
+| **L5** | Reproduce from provider-attested raw transactions | Helius API (re-run pipeline) |
 
 See [docs/verifier_flow.md](engine/docs/verifier_flow.md) for detailed steps.
 

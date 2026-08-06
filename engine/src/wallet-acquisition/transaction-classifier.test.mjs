@@ -141,6 +141,20 @@ test('emits localized or wallet-wide ambiguity without losing determinable token
   assert.deepEqual(walletWide.disposition.affected_token_mints, []);
 });
 
+test('quote-mint closure with unresolved rent destination remains wallet-wide material', () => {
+  const source = structuredClone(F.closeAccountNoMovement);
+  source.token_operations[0].mint = USDC;
+  const unresolvedRent = structuredClone(F.walletWideUnknownMint.token_operations[0]);
+  unresolvedRent.operation_id = 'external-closure-rent';
+  unresolvedRent.mint = USDC;
+  source.token_operations.push(unresolvedRent);
+
+  const result = classify(source);
+  assertOutcome(result, 'ambiguous_activity', 0, 1);
+  assert.equal(result.activity_findings[0].impact_scope, 'wallet_wide');
+  assert.deepEqual(result.disposition.affected_token_mints, []);
+});
+
 test('does not trust provider classification and accepts UNKNOWN with complete source evidence', () => {
   const result = classify(F.unknownProvider, supportedNormalizer(SUPPORTED_EVENTS.unknownProvider));
   assertOutcome(result, 'supported_normalized_event', 1, 0);

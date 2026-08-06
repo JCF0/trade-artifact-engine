@@ -18,6 +18,13 @@ function classify(transaction) {
   });
 }
 
+function withWalletNativeEvidence(transaction, { fee = 5, walletChange = -fee } = {}) {
+  transaction.fee = fee;
+  transaction.accountData = transaction.accountData.filter(account => account.account !== WALLET);
+  transaction.accountData.push({ account: WALLET, nativeBalanceChange: walletChange, tokenBalanceChanges: [] });
+  return transaction;
+}
+
 test('projects Helius structured swaps, transfer corroboration, recognized programs, and source evidence', () => {
   const raw = enhanced('jup-buy');
   raw.description = 'non-authoritative prose MintSecret';
@@ -121,7 +128,7 @@ test('attractive swap plus an unmatched wallet-owned nonquote accountData change
       mint: secondaryMint,
       rawTokenAmount: { tokenAmount: '7', decimals: 0 },
     }],
-  }];
+  }, { account: WALLET, nativeBalanceChange: 0, tokenBalanceChanges: [] }];
   const result = classify(transaction);
   assert.notEqual(result.disposition.disposition_type, 'supported_normalized_event');
   assert.ok(result.disposition.affected_token_mints.includes(secondaryMint));
@@ -132,6 +139,7 @@ test('wallet token balance changes exactly corroborating structured and transfer
   transaction.accountData = [
     { account: providerPublicKey('corroborated-input-account'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: USDC, rawTokenAmount: { tokenAmount: '-25000000', decimals: 6 } }] },
     { account: providerPublicKey('corroborated-output-account'), nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, mint: JUP, rawTokenAmount: { tokenAmount: '100000000', decimals: 6 } }] },
+    { account: WALLET, nativeBalanceChange: 0, tokenBalanceChanges: [] },
   ];
   const evidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction });
   assert.deepEqual(evidence.unresolved_wallet_effects, []);
@@ -194,7 +202,10 @@ test('instruction-bound closures are populated, unbound provider closure evidenc
   const closedAccount = providerPublicKey('closed-token-account');
   const bound = enhanced('bound-close', { transfers: false, type: 'CLOSE_ACCOUNT', program: null });
   bound.events = {};
-  bound.accountData = [{ account: closedAccount, nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, tokenAccount: closedAccount, mint: JUP, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] }];
+  bound.accountData = [
+    { account: closedAccount, nativeBalanceChange: 0, tokenBalanceChanges: [{ userAccount: WALLET, tokenAccount: closedAccount, mint: JUP, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] },
+    { account: WALLET, nativeBalanceChange: 0, tokenBalanceChanges: [] },
+  ];
   bound.instructions = [{ programId: tokenProgram, data: 'A', accounts: [closedAccount, WALLET, WALLET], innerInstructions: [] }];
   const boundEvidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: bound });
   assert.deepEqual(boundEvidence.account_closures, [{ closure_id: 'account-close-0', owner: WALLET, mint: JUP }]);
@@ -236,4 +247,91 @@ test('token transfer and accountData order permutations preserve whole-transacti
   permuted.tokenTransfers.reverse();
   permuted.accountData.reverse();
   assert.deepEqual(classify(permuted), classify(transaction));
+});
+
+test('successful wallet-paid swaps require explicit valid fee and wallet native-balance evidence', () => {
+  const exact = withWalletNativeEvidence(enhanced('complete-native-evidence'));
+  assert.equal(classify(exact).disposition.disposition_type, 'supported_normalized_event');
+
+  const missingWalletRow = structuredClone(exact);
+  missingWalletRow.signature = providerSignature('missing-wallet-native-row');
+  missingWalletRow.accountData = missingWalletRow.accountData.filter(account => account.account !== WALLET);
+  assert.notEqual(classify(missingWalletRow).disposition.disposition_type, 'supported_normalized_event');
+
+  const missingFee = structuredClone(exact);
+  missingFee.signature = providerSignature('missing-fee');
+  delete missingFee.fee;
+  assert.notEqual(classify(missingFee).disposition.disposition_type, 'supported_normalized_event');
+
+  const malformedFee = structuredClone(exact);
+  malformedFee.signature = providerSignature('malformed-fee');
+  malformedFee.fee = '0';
+  expectMalformed(malformedFee);
+
+  const mismatch = structuredClone(exact);
+  mismatch.signature = providerSignature('native-reconciliation-mismatch');
+  mismatch.accountData.find(account => account.account === WALLET).nativeBalanceChange = -4;
+  assert.notEqual(classify(mismatch).disposition.disposition_type, 'supported_normalized_event');
+
+  const zeroFee = withWalletNativeEvidence(enhanced('explicit-zero-fee'), { fee: 0, walletChange: 0 });
+  assert.equal(classify(zeroFee).disposition.disposition_type, 'supported_normalized_event');
+
+  const omittedCannotMeanZero = structuredClone(zeroFee);
+  omittedCannotMeanZero.signature = providerSignature('omitted-fee-is-not-zero');
+  delete omittedCannotMeanZero.fee;
+  assert.notEqual(classify(omittedCannotMeanZero).disposition.disposition_type, 'supported_normalized_event');
+});
+
+test('instruction-bound closure rent is reconciled for the wallet and external destinations stay material', () => {
+  const tokenProgram = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const closedAccount = providerPublicKey('rent-closed-token-account');
+  const external = providerPublicKey('rent-external-destination');
+  const rent = 2_039_280;
+  const closureSwap = (label, destination, mint = JUP) => {
+    const transaction = enhanced(label);
+    transaction.fee = 5;
+    transaction.instructions.push({ programId: tokenProgram, data: 'A', accounts: [closedAccount, destination, WALLET], innerInstructions: [] });
+    transaction.nativeTransfers = [{ fromUserAccount: closedAccount, toUserAccount: destination, amount: rent }];
+    transaction.accountData = [
+      { account: WALLET, nativeBalanceChange: destination === WALLET ? rent - 5 : -5, tokenBalanceChanges: [] },
+      { account: closedAccount, nativeBalanceChange: -rent, tokenBalanceChanges: mint === null ? [] : [{ userAccount: WALLET, tokenAccount: closedAccount, mint, rawTokenAmount: { tokenAmount: '0', decimals: 6 } }] },
+    ];
+    return transaction;
+  };
+
+  const returned = closureSwap('closure-rent-returned', WALLET);
+  assert.equal(classify(returned).disposition.disposition_type, 'supported_normalized_event');
+
+  const externalKnown = closureSwap('closure-rent-external-known', external);
+  const knownResult = classify(externalKnown);
+  assert.notEqual(knownResult.disposition.disposition_type, 'supported_normalized_event');
+  assert.ok(knownResult.disposition.affected_token_mints.includes(JUP));
+
+  const externalQuote = closureSwap('closure-rent-external-quote', external, USDC);
+  const quoteResult = classify(externalQuote);
+  assert.equal(quoteResult.disposition.disposition_type, 'ambiguous_activity');
+  assert.equal(quoteResult.activity_findings[0].impact_scope, 'wallet_wide');
+  assert.deepEqual(quoteResult.disposition.affected_token_mints, []);
+
+  const externalUnknown = closureSwap('closure-rent-external-unknown', external, null);
+  const unknownResult = classify(externalUnknown);
+  assert.equal(unknownResult.disposition.disposition_type, 'ambiguous_activity');
+  assert.equal(unknownResult.activity_findings[0].impact_scope, 'wallet_wide');
+
+  const conflict = closureSwap('closure-rent-conflicting-destination', WALLET);
+  conflict.instructions.push({ programId: tokenProgram, data: 'A', accounts: [closedAccount, external, WALLET], innerInstructions: [] });
+  assert.notEqual(classify(conflict).disposition.disposition_type, 'supported_normalized_event');
+
+  const providerConflict = closureSwap('closure-rent-provider-destination-conflict', WALLET);
+  providerConflict.nativeTransfers[0].toUserAccount = external;
+  assert.notEqual(classify(providerConflict).disposition.disposition_type, 'supported_normalized_event');
+
+  const malformedDestination = closureSwap('closure-rent-malformed-destination', WALLET);
+  malformedDestination.instructions.at(-1).accounts[1] = 'not-a-public-key';
+  assert.notEqual(classify(malformedDestination).disposition.disposition_type, 'supported_normalized_event');
+
+  const metadataOnly = closureSwap('closure-metadata-only', WALLET);
+  metadataOnly.instructions = metadataOnly.instructions.filter(instruction => instruction.programId !== tokenProgram);
+  metadataOnly.type = 'CLOSE_ACCOUNT';
+  assert.notEqual(classify(metadataOnly).disposition.disposition_type, 'supported_normalized_event');
 });

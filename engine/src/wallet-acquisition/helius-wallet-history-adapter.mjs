@@ -93,15 +93,19 @@ function beginOperation(capabilities, requestedBudgets) {
 
 async function execute(capabilities, logicalRequest, context = beginOperation(capabilities)) {
   const { deadline, apiKey } = context;
-  const request = { ...logicalRequest, query: { ...(logicalRequest.query ?? {}), 'api-key': apiKey }, timeout_ms: context.request_timeout_ms };
+  const baseRequest = { ...logicalRequest, query: { ...(logicalRequest.query ?? {}), 'api-key': apiKey } };
   for (let attempt = 1; attempt <= context.max_attempts_per_operation; attempt += 1) {
-    if (now(capabilities.clock) >= deadline) fail('acquisition_deadline_exceeded');
+    const remaining = deadline - now(capabilities.clock);
+    if (remaining <= 0) fail('acquisition_deadline_exceeded');
+    const timeout = Math.min(context.request_timeout_ms, remaining);
+    const timeoutCode = remaining <= context.request_timeout_ms ? 'acquisition_deadline_exceeded' : 'provider_timeout';
+    const controller = new AbortController();
+    const request = { ...baseRequest, timeout_ms: timeout, signal: controller.signal };
+    const abortTimer = setTimeout(() => controller.abort(), Math.max(1, Math.ceil(timeout)));
     let response = null; let retryable = false;
     try {
       const pending = capabilities.request(request);
-      const remaining = deadline - now(capabilities.clock);
-      const timeout = Math.min(context.request_timeout_ms, remaining);
-      response = envelope(await boundedAwait(pending, timeout, remaining <= context.request_timeout_ms ? 'acquisition_deadline_exceeded' : 'provider_timeout'));
+      response = envelope(await boundedAwait(pending, timeout, timeoutCode));
     }
     catch (error) {
       const code = thrownCode(error);
@@ -109,6 +113,8 @@ async function execute(capabilities, logicalRequest, context = beginOperation(ca
       if (code === 'request_timeout' || code === 'provider_timeout' || code === 'ETIMEDOUT' || code === 'transient_transport') retryable = true;
       else if (code !== null) fail(code);
       else fail('provider_transient_failure');
+    } finally {
+      clearTimeout(abortTimer);
     }
     if (now(capabilities.clock) >= deadline) fail('acquisition_deadline_exceeded');
     if (response !== null) {
@@ -122,9 +128,15 @@ async function execute(capabilities, logicalRequest, context = beginOperation(ca
     if (attempt === context.max_attempts_per_operation) fail('provider_retry_exhausted');
     const delay = delayFor(attempt, capabilities.random);
     if (now(capabilities.clock) + delay >= deadline) fail('acquisition_deadline_exceeded');
-    try { await boundedAwait(capabilities.sleep(delay), deadline - now(capabilities.clock), 'acquisition_deadline_exceeded'); } catch (error) {
+    const sleepRemaining = deadline - now(capabilities.clock);
+    const sleepController = new AbortController();
+    const sleepTimer = setTimeout(() => sleepController.abort(), Math.max(1, Math.ceil(sleepRemaining)));
+    try { await boundedAwait(capabilities.sleep(delay, sleepController.signal), sleepRemaining, 'acquisition_deadline_exceeded'); } catch (error) {
+      if (sleepController.signal.aborted || now(capabilities.clock) >= deadline) fail('acquisition_deadline_exceeded');
       if (thrownCode(error) === 'acquisition_deadline_exceeded') throw error;
       fail('provider_transient_failure');
+    } finally {
+      clearTimeout(sleepTimer);
     }
     if (now(capabilities.clock) >= deadline) fail('acquisition_deadline_exceeded');
   }

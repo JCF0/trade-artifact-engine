@@ -167,11 +167,28 @@ function productionApiKeyPresent() {
     && process.env.HELIUS_API_KEY.length > 0;
 }
 function productionApiKeyProvider() { return process.env.HELIUS_API_KEY; }
+function productionSleep(milliseconds, signal) {
+  return new Promise(resolveSleep => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolveSleep();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    signal.addEventListener('abort', finish, { once: true });
+  });
+}
 function createHttpClient(telemetry) {
   return Object.freeze({
     async request(request) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), request.timeout_ms);
+      let timeoutObserved = false;
+      const observeAbort = () => {
+        if (timeoutObserved) return;
+        timeoutObserved = true;
+        telemetry.retry_count += 1;
+        telemetry.timeout_count += 1;
+      };
+      request.signal.addEventListener('abort', observeAbort, { once: true });
       try {
         const url = new URL(request.url);
         for (const [key, value] of Object.entries(request.query)) url.searchParams.set(key, String(value));
@@ -179,24 +196,25 @@ function createHttpClient(telemetry) {
           method: request.method,
           headers: request.headers,
           body: request.body === undefined ? undefined : JSON.stringify(request.body),
-          signal: controller.signal,
+          signal: request.signal,
         });
-        if (response.status === 429 || response.status >= 500) telemetry.retry_count += 1;
+        if (request.signal.aborted) throw Object.freeze({ code: 'request_timeout' });
         const text = await response.text();
+        if (request.signal.aborted) throw Object.freeze({ code: 'request_timeout' });
         let data;
         try { data = JSON.parse(text); } catch { throw Object.freeze({ code: 'invalid_json' }); }
+        if (response.status === 429 || response.status >= 500) telemetry.retry_count += 1;
         return { status: response.status, data };
       } catch (error) {
-        if (error?.name === 'AbortError') {
-          telemetry.retry_count += 1;
-          telemetry.timeout_count += 1;
+        if (error?.name === 'AbortError' || ownSafeCode(error) === 'request_timeout') {
+          observeAbort();
           throw Object.freeze({ code: 'request_timeout' });
         }
         const code = ownSafeCode(error);
         if (code === 'provider_uncertain') throw Object.freeze({ code: 'transient_transport' });
         throw Object.freeze({ code });
       } finally {
-        clearTimeout(timer);
+        request.signal.removeEventListener('abort', observeAbort);
       }
     },
   });
@@ -329,7 +347,7 @@ export async function runControlledLiveValidationV1(optionInput, dependencyInput
     const rawPort = dependencies.walletHistoryPort ?? createHeliusWalletHistoryPortV1({
       httpClient: dependencies.httpClient ?? createHttpClient(telemetry),
       apiKeyProvider,
-      sleep: dependencies.sleep ?? (milliseconds => new Promise(resolveSleep => setTimeout(resolveSleep, milliseconds))),
+      sleep: dependencies.sleep ?? productionSleep,
       clock: dependencies.clock ?? (() => Date.now()),
       random: dependencies.random ?? Math.random,
     });

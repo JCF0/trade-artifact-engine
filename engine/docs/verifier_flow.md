@@ -6,7 +6,7 @@
 
 ## Overview
 
-Any third party can independently verify a Trade Artifact receipt given the receipt JSON, the on-chain mint, and access to Solana RPC + Arweave/Irys gateway. No proprietary tools, API keys, or trust relationships required.
+A third party can verify the deterministic receipt and package identities given the receipt JSON, the on-chain mint, and access to Solana RPC plus an Arweave/Irys gateway. Reconstructing the trade economics additionally depends on provider-attested wallet-history evidence and its documented completeness and consistency boundaries. Artifact deterministically reconstructs supported trades from provider-attested on-chain evidence and exposes the evidence boundaries and limitations required to reproduce its result.
 
 ---
 
@@ -189,9 +189,9 @@ Any third party can independently verify a Trade Artifact receipt given the rece
 
 ---
 
-### Level 5: Full Re-Derivation (Highest Assurance)
+### Level 5: Provider-Attested Reconstruction
 
-**Question:** Did these trades actually happen exactly as the receipt claims?
+**Question:** Does provider-attested on-chain evidence reconstruct the same supported trades and deterministic receipt?
 
 **Steps:**
 
@@ -211,11 +211,11 @@ Any third party can independently verify a Trade Artifact receipt given the rece
 
 4. **Re-derive verification hash:**
    - Use the re-computed raw values (not the receipt's `_hash_inputs`)
-   - If the hash matches → the receipt is faithfully derived from on-chain data
+   - If the hash matches, the receipt is deterministically consistent with the acquired provider-attested evidence
 
 5. **Optional: Verify transaction signatures** on the raw RPC data to confirm the wallet actually signed these transactions.
 
-**Result:** Proves the receipt is an accurate representation of real on-chain trades. This is the strongest possible verification — equivalent to re-running the engine.
+**Result:** Reproduces the deterministic receipt from the acquired evidence. It does not independently prove that the wallet-history provider returned every relevant transaction; wallet-history completeness remains provider-attested rather than trustless.
 
 ---
 
@@ -227,7 +227,7 @@ Any third party can independently verify a Trade Artifact receipt given the rece
 | 2 — On-Chain Anchor | Solana consensus | Receipt was minted by the program |
 | 3 — Claim Signature | Ed25519 cryptography | Trader wallet authorized the mint |
 | 4 — Metadata Content | Arweave immutability | Off-chain data matches on-chain commitment |
-| 5 — Full Re-Derivation | Solana transaction history | Trades actually happened as claimed |
+| 5 — Provider-Attested Reconstruction | Solana consensus plus provider/RPC history completeness and consistency | Acquired evidence reconstructs the same supported trades and deterministic receipt |
 
 Levels 1–4 can be performed in seconds. Level 5 requires fetching transactions (may take 30–60 seconds depending on trade count and RPC speed).
 
@@ -242,7 +242,7 @@ Levels 1–4 can be performed in seconds. Level 5 requires fetching transactions
 | PDA fields don't match (L2) | Receipt JSON doesn't correspond to what was minted |
 | Signature invalid (L3) | Claim was not authorized by the trader wallet |
 | Metadata hash mismatch (L4) | Off-chain metadata was modified after minting |
-| Re-derived hash differs (L5) | Receipt does not match actual on-chain transactions |
+| Re-derived hash differs (L5) | Receipt does not match the acquired provider-attested transaction evidence |
 
 ---
 
@@ -253,4 +253,4 @@ The engine provides a verification command:
 node src/mint/verify-mints.mjs <mintResultsPath> [--network devnet|mainnet]
 ```
 
-This performs Levels 2–3 automatically. For Level 5, the full pipeline can be re-run on the same wallet and the output compared.
+This performs Levels 2–3 automatically. For Level 5, the full pipeline can be re-run on the same wallet and the output compared, subject to the same provider-attested wallet-history completeness boundary.

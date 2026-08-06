@@ -124,6 +124,14 @@ function localizedMints(operations) {
   };
 }
 
+function hasUnresolvedQuoteClosure(source, operations) {
+  const closedQuoteMints = new Set(source.token_operations
+    .filter(operation => operation.operation_kind === 'account_close' && QUOTE_MINTS_V1.includes(operation.mint))
+    .map(operation => operation.mint));
+  return operations.some(operation => operation.operation_kind === 'unknown'
+    && operation.direction === 'unknown' && closedQuoteMints.has(operation.mint));
+}
+
 function buildFindings(source, findingType, positionMints, quoteMints, { walletWide = false, reason } = {}) {
   const sourceDigest = computeSourceTransactionDigest(sourceReference(source));
   const common = {
@@ -354,6 +362,7 @@ export function classifyWalletSourceTransactionV1(input) {
   if (operations.length === 0) return buildFinalResult(source, 'unrelated_activity');
   const { positionMints, quoteMints, hasUnknownMint } = localizedMints(operations);
   if (hasUnknownMint) return ambiguous(source, [], [], true);
+  if (hasUnresolvedQuoteClosure(source, operations)) return ambiguous(source, [], [], true);
   if (positionMints.length === 0) return buildFinalResult(source, 'unrelated_activity');
   if (operations.some(operation => ['unknown','none'].includes(operation.direction))) {
     return ambiguous(source, positionMints, quoteMints);

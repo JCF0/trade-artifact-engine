@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildWalletAcquisitionResultV1, validateWalletAcquisitionResultV1 } from './acquisition-result.mjs';
 import { recomputeCoverageV1 } from './coverage.mjs';
 import { buildActivityFindingV1 } from './activity-findings.mjs';
-import { buildDispositionV1 } from './identity.mjs';
+import { buildDispositionV1, buildEventRecordV1 } from './identity.mjs';
 import { GENESIS_HASH } from './schema.mjs';
 import { sha256CanonicalJson } from './serialize.mjs';
 
@@ -171,4 +171,52 @@ assert.doesNotThrow(() => validateWalletAcquisitionResultV1(withFinding()));
 assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ sourceEventDigests: ['a'.repeat(64)] })), error => error.code === 'finding_disposition_mismatch');
 assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ timeRange: { first_observed_at: 99, last_observed_at: 100, first_observed_slot: 50, last_observed_slot: 50 } })), error => error.code === 'finding_disposition_mismatch');
 assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ findingType: 'ambiguous_activity', dispositionType: 'unsupported_activity' })), error => error.code === 'finding_disposition_mismatch');
+
+function withSupportedEvents(specs) {
+  const value = structuredClone(result);
+  value.normalized_event_records = specs.map(spec => buildEventRecordV1({
+    source_slot: spec.slot,
+    slice7_event: {
+      wallet: value.scope.wallet, timestamp: spec.timestamp, tx_hash: spec.txHash,
+      source: 'deterministic_fixture', token_in_mint: 'USDC', token_in_amount: 1,
+      token_in_decimals: 6, token_out_mint: `TOKEN-${spec.txHash}`, token_out_amount: 2,
+      token_out_decimals: 6, extraction_method: 'events_swap', raw_index: spec.rawIndex,
+    },
+  }));
+  value.transaction_dispositions = value.normalized_event_records.map(event => buildDispositionV1({
+    tx_hash: event.slice7_event.tx_hash, slot: event.source_slot, block_time: event.slice7_event.timestamp,
+    disposition_type: 'supported_normalized_event', affected_token_mints: [event.slice7_event.token_out_mint],
+    normalized_event_digests: [event.event_digest], finding_digests: [],
+  }));
+  value.coverage = recomputeCoverageV1({
+    transactionDispositions: value.transaction_dispositions,
+    normalizedEventRecords: value.normalized_event_records,
+    activityFindings: [], boundary: value.boundary, inputStatus: value.input_status,
+    paginationTerminalReason: 'historical_bound_reached',
+  });
+  return value;
+}
+
+assert.doesNotThrow(() => validateWalletAcquisitionResultV1(withSupportedEvents([
+  { txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 0 },
+])));
+assert.throws(() => buildWalletAcquisitionResultV1(withSupportedEvents([
+  { txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 7 },
+])), error => error.code === 'event_index_mismatch');
+for (const invalid of [
+  [{ txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 7 }],
+  [{ txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 0 }, { txHash: 'event-b', slot: 51, timestamp: 101, rawIndex: 2 }],
+  [{ txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 1 }, { txHash: 'event-b', slot: 51, timestamp: 101, rawIndex: 0 }],
+  [{ txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 0 }, { txHash: 'event-b', slot: 51, timestamp: 101, rawIndex: 0 }],
+  [{ txHash: 'event-b', slot: 51, timestamp: 101, rawIndex: 0 }, { txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 1 }],
+]) assert.throws(() => validateWalletAcquisitionResultV1(withSupportedEvents(invalid)), error => ['event_index_mismatch','order_invalid'].includes(error.code));
+assert.doesNotThrow(() => validateWalletAcquisitionResultV1(withSupportedEvents([
+  { txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 0 },
+  { txHash: 'event-b', slot: 51, timestamp: 101, rawIndex: 1 },
+])));
+for (const rawIndex of [-1, Number.MAX_SAFE_INTEGER + 1]) {
+  const invalid = structuredClone(withSupportedEvents([{ txHash: 'event-a', slot: 50, timestamp: 100, rawIndex: 0 }]));
+  invalid.normalized_event_records[0].slice7_event.raw_index = rawIndex;
+  assert.throws(() => validateWalletAcquisitionResultV1(invalid));
+}
 console.log('candidate-set acquisition result: PASS');

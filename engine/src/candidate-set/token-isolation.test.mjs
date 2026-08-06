@@ -92,7 +92,7 @@ test('ambiguous precedence consolidates per position token only', () => {
   assert.equal(result.candidateSet.payload.blocked_summaries.length, 1);
 });
 
-test('authoritative evidence and candidates are invariant to valid acquisition collection permutations', () => {
+test('authoritative events reject permutations while other valid acquisition collections remain canonicalized downstream', () => {
   const spec = {
     name: 'permuted_isolation_evidence',
     wallet: 'isolation-wallet',
@@ -103,14 +103,19 @@ test('authoritative evidence and candidates are invariant to valid acquisition c
     ],
   };
   const canonical = buildDeterministicCandidateFixtureV1(spec);
-  const permutedAcquisition = buildWalletAcquisitionResultV1({
+  assert.throws(() => buildWalletAcquisitionResultV1({
     ...structuredClone(canonical.acquisitionResult),
     transaction_dispositions: [...canonical.acquisitionResult.transaction_dispositions].reverse(),
     normalized_event_records: [...canonical.acquisitionResult.normalized_event_records].reverse(),
     activity_findings: [...canonical.acquisitionResult.activity_findings].reverse(),
+  }), error => error.code === 'event_index_mismatch' || error.code === 'order_invalid');
+  const permutedAcquisition = buildWalletAcquisitionResultV1({
+    ...structuredClone(canonical.acquisitionResult),
+    transaction_dispositions: [...canonical.acquisitionResult.transaction_dispositions].reverse(),
+    activity_findings: [...canonical.acquisitionResult.activity_findings].reverse(),
   });
   assert.notDeepEqual(permutedAcquisition.transaction_dispositions, canonical.acquisitionResult.transaction_dispositions);
-  assert.notDeepEqual(permutedAcquisition.normalized_event_records, canonical.acquisitionResult.normalized_event_records);
+  assert.deepEqual(permutedAcquisition.normalized_event_records, canonical.acquisitionResult.normalized_event_records);
   assert.notDeepEqual(permutedAcquisition.activity_findings, canonical.acquisitionResult.activity_findings);
   const permutedEvidence = buildCandidateEvidenceBundleV1({
     acquisitionResult: permutedAcquisition,
