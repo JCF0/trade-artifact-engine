@@ -6,6 +6,12 @@ import { buildActivityFindingV1 } from './activity-findings.mjs';
 import { buildDispositionV1, buildEventRecordV1 } from './identity.mjs';
 import { GENESIS_HASH } from './schema.mjs';
 import { sha256CanonicalJson } from './serialize.mjs';
+import { providerPublicKey, providerSignature } from '../wallet-acquisition/fixtures/test-identities.mjs';
+
+const WALLET = providerPublicKey('wallet');
+const BLOCKHASH = providerPublicKey('blockhash');
+const POSITION_MINT = providerPublicKey('position-mint');
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 const coverageBody = {
   coverage_version: 'wallet_candidate_coverage_v1', coverage_status: 'complete', transactions_examined: 0,
@@ -18,15 +24,15 @@ const coverageBody = {
 const coverage = { ...coverageBody, coverage_digest: sha256CanonicalJson({ coverage_identity_version: 'wallet_candidate_coverage_identity_v1', coverage: coverageBody }) };
 const input = {
   acquisition_result_version: 'wallet_wide_acquisition_result_v1',
-  scope: { scope_version: 'wallet_candidate_scope_input_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, wallet: 'wallet', window: { window_version: 'fixed_lookback_latest_state_v1', lookback_profile: 'lookback_30d_v1', requested_lookback_seconds: 2592000, initial_before_signature: null, lower_bound: { oldest_allowed_timestamp: 1, completion_status: 'proven' } } },
+  scope: { scope_version: 'wallet_candidate_scope_input_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, wallet: WALLET, window: { window_version: 'fixed_lookback_latest_state_v1', lookback_profile: 'lookback_30d_v1', requested_lookback_seconds: 2592000, initial_before_signature: null, lower_bound: { oldest_allowed_timestamp: 1, completion_status: 'proven' } } },
   profiles: { wallet_acquisition_profile: 'wallet_wide_bounded_history_v1', wallet_normalization_profile: 'artifact_wallet_wide_solana_spot_normalization_v1', reconstruction_engine_version: 'artifact_position_ledger_receipt_v1', accounting_method_version: 'weighted_average_position_accounting_v1', mark_profile: null, mark_max_age_seconds: null },
-  boundary: { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 2592001, anchor_blockhash: 'blockhash', history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' },
+  boundary: { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 2592001, anchor_blockhash: BLOCKHASH, history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' },
   input_status: { coverage_status: 'complete', acquisition_complete: true, normalization_complete: true, classification_complete: true, pagination_complete: true, historical_bound_proven: true, chain_boundary_proven: true, truncated: false, capped: false, partial: false, provider_uncertain: false },
   coverage, transaction_dispositions: [], normalized_event_records: [], activity_findings: [],
 };
 const result = buildWalletAcquisitionResultV1(input);
 assert.deepEqual(result, input); assert.ok(Object.isFrozen(result) && Object.isFrozen(result.scope.window));
-input.scope.wallet = 'mutated'; assert.equal(result.scope.wallet, 'wallet');
+input.scope.wallet = 'mutated'; assert.equal(result.scope.wallet, WALLET);
 assert.doesNotThrow(() => validateWalletAcquisitionResultV1(result));
 for (const [lookback_profile, requested_lookback_seconds] of Object.entries({
   lookback_7d_v1: 604800,
@@ -84,7 +90,7 @@ assert.throws(() => validateWalletAcquisitionResultV1(invalidTerminal), error =>
 function withFailedSource({ slot, block_time }) {
   const value = structuredClone(result);
   value.transaction_dispositions = [buildDispositionV1({
-    tx_hash: `failed-${slot}-${String(block_time)}`,
+    tx_hash: providerSignature(`failed-${slot}-${String(block_time)}`),
     slot,
     block_time,
     disposition_type: 'failed_transaction',
@@ -110,14 +116,14 @@ function withFinding({
   timeRange = { first_observed_at: 100, last_observed_at: 100, first_observed_slot: 50, last_observed_slot: 50 },
 } = {}) {
   const value = structuredClone(result);
-  const sourceReference = { tx_hash: 'finding-source', slot: 50, block_time: 100 };
+  const sourceReference = { tx_hash: providerSignature('finding-source'), slot: 50, block_time: 100 };
   const sourceDigest = sha256CanonicalJson({ source_transaction_reference_version: 'source_transaction_reference_v1', source_transaction: sourceReference });
   const finding = buildActivityFindingV1({
     finding_type: findingType,
     severity: 'candidate_blocking',
     impact_scope: 'token_specific',
     time_range: timeRange,
-    affected_token_mints: ['Mint111111111111111111111111111111111111'],
+    affected_token_mints: [POSITION_MINT],
     affected_quote_mints: [],
     source_transaction_digests: [sourceDigest],
     source_event_digests: sourceEventDigests,
@@ -129,7 +135,7 @@ function withFinding({
   value.transaction_dispositions = [buildDispositionV1({
     ...sourceReference,
     disposition_type: dispositionType,
-    affected_token_mints: ['Mint111111111111111111111111111111111111'],
+    affected_token_mints: [POSITION_MINT],
     normalized_event_digests: [],
     finding_digests: [finding.finding_digest],
   })];
@@ -168,18 +174,18 @@ for (const [field, forgedValue] of [
   assert.throws(() => validateWalletAcquisitionResultV1(forged), error => error.code === 'coverage_count_mismatch');
 }
 assert.doesNotThrow(() => validateWalletAcquisitionResultV1(withFinding()));
-assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ sourceEventDigests: ['a'.repeat(64)] })), error => error.code === 'finding_disposition_mismatch');
-assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ timeRange: { first_observed_at: 99, last_observed_at: 100, first_observed_slot: 50, last_observed_slot: 50 } })), error => error.code === 'finding_disposition_mismatch');
-assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ findingType: 'ambiguous_activity', dispositionType: 'unsupported_activity' })), error => error.code === 'finding_disposition_mismatch');
+assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ sourceEventDigests: ['a'.repeat(64)] })), error => ['finding_disposition_mismatch','finding_source_mismatch'].includes(error.code));
+assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ timeRange: { first_observed_at: 99, last_observed_at: 100, first_observed_slot: 50, last_observed_slot: 50 } })), error => ['finding_disposition_mismatch','finding_source_mismatch'].includes(error.code));
+assert.throws(() => validateWalletAcquisitionResultV1(withFinding({ findingType: 'ambiguous_activity', dispositionType: 'unsupported_activity' })), error => ['finding_disposition_mismatch','finding_source_mismatch'].includes(error.code));
 
 function withSupportedEvents(specs) {
   const value = structuredClone(result);
   value.normalized_event_records = specs.map(spec => buildEventRecordV1({
     source_slot: spec.slot,
     slice7_event: {
-      wallet: value.scope.wallet, timestamp: spec.timestamp, tx_hash: spec.txHash,
-      source: 'deterministic_fixture', token_in_mint: 'USDC', token_in_amount: 1,
-      token_in_decimals: 6, token_out_mint: `TOKEN-${spec.txHash}`, token_out_amount: 2,
+      wallet: value.scope.wallet, timestamp: spec.timestamp, tx_hash: providerSignature(spec.txHash),
+      source: 'deterministic_fixture', token_in_mint: USDC, token_in_amount: 1,
+      token_in_decimals: 6, token_out_mint: providerPublicKey(`TOKEN-${spec.txHash}`), token_out_amount: 2,
       token_out_decimals: 6, extraction_method: 'events_swap', raw_index: spec.rawIndex,
     },
   }));

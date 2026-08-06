@@ -13,6 +13,7 @@ import {
   USDC_MINT,
   USDT_MINT,
 } from './fixtures/deterministic-fixtures.mjs';
+import { providerPublicKey } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
 const JUP_MINT = JUP_GOLDEN.tokenMint;
 const RAY_MINT = RAY_GOLDEN.tokenMint;
@@ -71,8 +72,8 @@ test('two candidates sharing USDC remain independent when one base token is bloc
     ...structuredClone(FIXTURE_MATRIX.multipleCleanClosed),
     findings: [blockingFinding({ token: 'TOKEN-A', signature: 'token-a-finding', slot: 30 })],
   });
-  assert.deepEqual(candidateMints(result), ['TOKEN-B']);
-  assert.ok(summaryFor(result, 'TOKEN-A'));
+  assert.deepEqual(candidateMints(result), [providerPublicKey('TOKEN-B')]);
+  assert.ok(summaryFor(result, providerPublicKey('TOKEN-A')));
 });
 
 test('ambiguous precedence consolidates per position token only', () => {
@@ -109,22 +110,11 @@ test('authoritative events reject permutations while other valid acquisition col
     normalized_event_records: [...canonical.acquisitionResult.normalized_event_records].reverse(),
     activity_findings: [...canonical.acquisitionResult.activity_findings].reverse(),
   }), error => error.code === 'event_index_mismatch' || error.code === 'order_invalid');
-  const permutedAcquisition = buildWalletAcquisitionResultV1({
+  assert.throws(() => buildWalletAcquisitionResultV1({
     ...structuredClone(canonical.acquisitionResult),
     transaction_dispositions: [...canonical.acquisitionResult.transaction_dispositions].reverse(),
     activity_findings: [...canonical.acquisitionResult.activity_findings].reverse(),
-  });
-  assert.notDeepEqual(permutedAcquisition.transaction_dispositions, canonical.acquisitionResult.transaction_dispositions);
-  assert.deepEqual(permutedAcquisition.normalized_event_records, canonical.acquisitionResult.normalized_event_records);
-  assert.notDeepEqual(permutedAcquisition.activity_findings, canonical.acquisitionResult.activity_findings);
-  const permutedEvidence = buildCandidateEvidenceBundleV1({
-    acquisitionResult: permutedAcquisition,
-    markObservations: [],
-    profiles: permutedAcquisition.profiles,
-  });
-  const permutedSet = buildWalletCandidateSetV1({ evidenceBundle: permutedEvidence });
-  assert.deepEqual(permutedEvidence, canonical.evidenceBundle);
-  assert.deepEqual(permutedSet, canonical.candidateSet);
+  }), error => error.code === 'order_invalid');
 });
 
 test('affected token and quote mint collections must be disjoint', () => {

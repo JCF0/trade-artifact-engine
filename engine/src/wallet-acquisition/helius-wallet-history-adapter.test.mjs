@@ -15,6 +15,7 @@ function harness(responses, options = {}) {
     httpClient: { async request(input) { seen.push(structuredClone(input)); const item = responses[Math.min(calls++, responses.length - 1)]; return typeof item === 'function' ? item({ input, advance: ms => { now += ms; } }) : item instanceof Error ? Promise.reject(item) : structuredClone(item); } },
     apiKeyProvider: options.apiKeyProvider ?? (() => 'super-secret-key'),
     sleep: options.sleep ?? (async ms => { now += ms; }), clock: () => now, random: () => 0,
+    ...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
   });
   return { port, seen, calls: () => calls };
 }
@@ -75,6 +76,49 @@ test('retries only timeout, transient transport, 429, and 5xx with identical met
   }
   const malformed = harness([{ status: 200, data: rpc('bad-slot') }]);
   await code(malformed.port.getFinalizedSlotV1(), 'malformed_provider_response'); assert.equal(malformed.calls(), 1);
+});
+
+test('retry and timeout telemetry counts only attempts actually begun and actually timed out', async () => {
+  const timeout = Object.assign(new Error('timeout'), { code: 'request_timeout' });
+  function scenario(responses, maxAttempts = responses.length) {
+    const counts = { retry: 0, timeout: 0 };
+    const h = harness(responses, { telemetry: {
+      onRetryAttemptV1() { counts.retry += 1; },
+      onTimeoutAttemptV1() { counts.timeout += 1; },
+    } });
+    beginWalletHistoryAcquisitionV1(h.port, { ...request().budgets, max_attempts_per_operation: maxAttempts });
+    return { h, counts };
+  }
+  let value = scenario([{ status: 200, data: rpc(1) }], 1);
+  assert.equal(await value.h.port.getFinalizedSlotV1(), 1);
+  assert.deepEqual(value.counts, { retry: 0, timeout: 0 });
+  value = scenario([{ status: 429, data: null }, { status: 200, data: rpc(2) }], 2);
+  assert.equal(await value.h.port.getFinalizedSlotV1(), 2);
+  assert.deepEqual(value.counts, { retry: 1, timeout: 0 });
+  value = scenario([{ status: 429, data: null }], 1);
+  await code(value.h.port.getFinalizedSlotV1(), 'provider_retry_exhausted');
+  assert.deepEqual(value.counts, { retry: 0, timeout: 0 });
+  value = scenario([{ status: 503, data: null }, { status: 502, data: null }, { status: 200, data: rpc(3) }], 3);
+  assert.equal(await value.h.port.getFinalizedSlotV1(), 3);
+  assert.deepEqual(value.counts, { retry: 2, timeout: 0 });
+  value = scenario([timeout], 1);
+  await code(value.h.port.getFinalizedSlotV1(), 'provider_retry_exhausted');
+  assert.deepEqual(value.counts, { retry: 0, timeout: 1 });
+  value = scenario([timeout, { status: 200, data: rpc(4) }], 2);
+  assert.equal(await value.h.port.getFinalizedSlotV1(), 4);
+  assert.deepEqual(value.counts, { retry: 1, timeout: 1 });
+});
+
+test('retry sleep exhaustion does not fabricate a retry attempt', async () => {
+  const counts = { retry: 0, timeout: 0 };
+  const h = harness([{ status: 429, data: null }], {
+    sleep: () => new Promise(() => {}),
+    telemetry: { onRetryAttemptV1() { counts.retry += 1; }, onTimeoutAttemptV1() { counts.timeout += 1; } },
+  });
+  beginWalletHistoryAcquisitionV1(h.port, { ...request().budgets, max_attempts_per_operation: 2, request_timeout_ms: 5, overall_timeout_ms: 20 });
+  await code(h.port.getFinalizedSlotV1(), 'acquisition_deadline_exceeded');
+  assert.deepEqual(counts, { retry: 0, timeout: 0 });
+  assert.equal(h.calls(), 1);
 });
 
 test('hidden acquisition controls enforce request-specific retry, request-timeout, and scan budgets', async () => {
@@ -163,6 +207,26 @@ test('effective transport timeout is the smaller request or acquisition-wide rem
   beginWalletHistoryAcquisitionV1(overallBound.port, { ...request().budgets, request_timeout_ms: 10, overall_timeout_ms: 20 });
   await overallBound.port.getNetworkIdentityV1();
   assert.equal(await overallBound.port.getFinalizedSlotV1(), 2);
+});
+
+test('wall-clock rollback and forward jumps cannot alter monotonic acquisition deadlines', async () => {
+  const originalDateNow = Date.now;
+  let wallNow = 1_000_000;
+  Date.now = () => wallNow;
+  try {
+    for (const jump of [-900_000, 9_000_000]) {
+      const h = harness([
+        ({ advance }) => { wallNow += jump; advance(16); return { status: 200, data: rpc(SOLANA_MAINNET_GENESIS_HASH) }; },
+        ({ input, advance }) => { assert.equal(input.timeout_ms, 4); advance(4); return { status: 200, data: rpc(2) }; },
+      ]);
+      beginWalletHistoryAcquisitionV1(h.port, { ...request().budgets, request_timeout_ms: 10, overall_timeout_ms: 20 });
+      await h.port.getNetworkIdentityV1();
+      await code(h.port.getFinalizedSlotV1(), 'acquisition_deadline_exceeded');
+      assert.equal(h.calls(), 2);
+    }
+  } finally {
+    Date.now = originalDateNow;
+  }
 });
 
 test('overall deadline aborts in-flight transport, discards late success, and starts no later attempt', async () => {

@@ -8,7 +8,7 @@ import {
 import { sha256CanonicalJson } from './serialize.mjs';
 import { validateRecomputedCoverageV1 } from './coverage.mjs';
 import { compareActivityFindingsV1, validateActivityFindingsV1 } from './activity-findings.mjs';
-import { compareNormalizedEventRecordsV1 } from './dispositions.mjs';
+import { validateDispositionAccountingV1 } from './dispositions.mjs';
 
 function computeSourceTransactionDigest(reference) { return sha256CanonicalJson({ source_transaction_reference_version: SOURCE_TRANSACTION_REFERENCE_VERSION, source_transaction: reference }); }
 
@@ -33,11 +33,13 @@ export function validateWalletAcquisitionResultV1(result) {
   unique(result.transaction_dispositions.map(item => item.disposition_digest), 'duplicate_transaction_disposition');
   unique(result.normalized_event_records.map(item => item.event_digest), 'duplicate_normalized_event');
   unique(result.activity_findings.map(item => item.finding_digest), 'duplicate_activity_finding');
-  for (let index = 0; index < result.normalized_event_records.length; index += 1) {
-    const event = result.normalized_event_records[index];
-    if (event.slice7_event.raw_index !== index) fail('event_index_mismatch', 'normalized event raw indexes must be dense in canonical order');
-    if (index > 0 && compareNormalizedEventRecordsV1(result.normalized_event_records[index - 1], event) >= 0) fail('order_invalid', 'normalized event records are not canonically ordered');
-  }
+  validateDispositionAccountingV1({
+    transactionDispositions: result.transaction_dispositions,
+    normalizedEventRecords: result.normalized_event_records,
+    activityFindings: result.activity_findings,
+    wallet: result.scope.wallet,
+    anchorSlot: result.boundary.anchor_slot,
+  });
   const eventByDigest = new Map(result.normalized_event_records.map(item => [item.event_digest, item]));
   const eventDigests = new Set(eventByDigest.keys());
   const sourceDigests = new Set(result.transaction_dispositions.map(item => computeSourceTransactionDigest({ tx_hash: item.tx_hash, slot: item.slot, block_time: item.block_time })));

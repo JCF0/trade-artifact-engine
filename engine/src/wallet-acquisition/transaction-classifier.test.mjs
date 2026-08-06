@@ -21,6 +21,7 @@ import {
   outcomeNormalizer,
   supportedNormalizer,
 } from './fixtures/classifier-fixtures.mjs';
+import { providerPublicKey } from './fixtures/test-identities.mjs';
 
 function classify(sourceTransaction, normalizer = outcomeNormalizer('no_supported_operation')) {
   return classifyWalletSourceTransactionV1({ sourceTransaction, normalizeSupportedSpotOperation: normalizer });
@@ -50,12 +51,12 @@ function assertOutcome(result, type, eventCount, findingCount) {
 test('builds a closed provider-neutral detached and canonically ordered source transaction', () => {
   const input = structuredClone(F.twoSwaps);
   input.token_operations.reverse();
-  input.recognized_programs.push({ program_id: 'token-program', program_role: 'token' });
+  input.recognized_programs.push({ program_id: providerPublicKey('token-program'), program_role: 'token' });
   input.recognized_programs.reverse();
   const built = buildWalletSourceTransactionV1(input);
   assert.equal(validateWalletSourceTransactionV1(built), true);
   assert.deepEqual(built.token_operations.map(item => item.operation_id), ['jup-in', 'ray-in', 'usdc-out', 'usdt-out']);
-  assert.deepEqual(built.recognized_programs.map(item => item.program_id), ['JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4', 'token-program']);
+  assert.deepEqual(built.recognized_programs.map(item => item.program_id), ['JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4', providerPublicKey('token-program')].sort());
   input.token_operations[0].mint = 'mutated';
   assert.notEqual(built.token_operations[0].mint, 'mutated');
   assertFrozenGraph(built);

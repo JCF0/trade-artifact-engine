@@ -2,13 +2,14 @@
 import assert from 'node:assert/strict';
 import { buildActivityFindingV1, canonicalizeActivityFindingsV1, validateActivityFindingsV1 } from './activity-findings.mjs';
 import { validateFindingV1 } from './schema.mjs';
+import { providerPublicKey } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
 const txA = 'a'.repeat(64);
 const txB = 'b'.repeat(64);
 const tokenFinding = buildActivityFindingV1({
   finding_type: 'unsupported_activity', severity: 'candidate_blocking', impact_scope: 'token_specific',
   time_range: { first_observed_at: 20, last_observed_at: 20, first_observed_slot: 2, last_observed_slot: 2 },
-  affected_token_mints: ['TOKEN'], affected_quote_mints: [], source_transaction_digests: [txB], source_event_digests: [],
+  affected_token_mints: [providerPublicKey('TOKEN')], affected_quote_mints: [], source_transaction_digests: [txB], source_event_digests: [],
   reason_codes: ['unsupported_swap_shape'], impact: { blocks_candidate_projection: true, blocks_receipt_publication: true },
   disclosure_codes: ['activity_not_reconstructable'],
 });

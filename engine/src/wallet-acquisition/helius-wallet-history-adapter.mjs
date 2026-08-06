@@ -28,12 +28,22 @@ function options(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length) fail('acquisition_capability_denied');
     const expected = ['httpClient','apiKeyProvider','sleep','clock','random'];
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Object.keys(descriptors).length !== expected.length || expected.some(name => !descriptors[name]?.enumerable || !Object.hasOwn(descriptors[name], 'value'))) fail('acquisition_capability_denied');
+    const optional = ['telemetry'];
+    if (Object.keys(descriptors).some(name => ![...expected, ...optional].includes(name)) || expected.some(name => !descriptors[name]?.enumerable || !Object.hasOwn(descriptors[name], 'value'))) fail('acquisition_capability_denied');
     const functions = Object.fromEntries(expected.slice(1).map(name => {
       if (typeof descriptors[name].value !== 'function') fail('acquisition_capability_denied');
       return [name, descriptors[name].value];
     }));
-    return { request: method(descriptors.httpClient.value, 'request'), ...functions };
+    let telemetry = Object.freeze({ onRetryAttemptV1() {}, onTimeoutAttemptV1() {} });
+    if (descriptors.telemetry !== undefined) {
+      const value = descriptors.telemetry.value;
+      if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail('acquisition_capability_denied');
+      const telemetryDescriptors = Object.getOwnPropertyDescriptors(value);
+      const names = ['onRetryAttemptV1','onTimeoutAttemptV1'];
+      if (Object.keys(telemetryDescriptors).length !== names.length || names.some(name => !telemetryDescriptors[name]?.enumerable || !Object.hasOwn(telemetryDescriptors[name], 'value') || typeof telemetryDescriptors[name].value !== 'function')) fail('acquisition_capability_denied');
+      telemetry = Object.freeze(Object.fromEntries(names.map(name => [name, telemetryDescriptors[name].value.bind(value)])));
+    }
+    return { request: method(descriptors.httpClient.value, 'request'), ...functions, telemetry };
   } catch { fail('acquisition_capability_denied'); }
 }
 function now(clock) { let value; try { value = clock(); } catch { fail('acquisition_capability_denied'); } if (!Number.isFinite(value) || value < 0) fail('acquisition_capability_denied'); return value; }
@@ -52,12 +62,12 @@ function envelope(value) {
 }
 function delayFor(attempt, random) { let value; try { value = random(); } catch { fail('acquisition_capability_denied'); } if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value >= 1) fail('acquisition_capability_denied'); return Math.min(5000, 100 * (2 ** (attempt - 1))) + Math.floor(value * 100); }
 const BOUNDED_TIMEOUT = Symbol('bounded-timeout');
-async function boundedAwait(value, timeoutMs, timeoutCode) {
+async function boundedAwait(value, timeoutMs, timeoutCode, onTimeout = () => {}) {
   let timer;
   const timeout = new Promise(resolve => { timer = setTimeout(resolve, Math.max(1, Math.ceil(timeoutMs)), BOUNDED_TIMEOUT); });
   try {
     const result = await Promise.race([Promise.resolve(value), timeout]);
-    if (result === BOUNDED_TIMEOUT) fail(timeoutCode);
+    if (result === BOUNDED_TIMEOUT) { onTimeout(); fail(timeoutCode); }
     return result;
   } finally {
     clearTimeout(timer);
@@ -101,16 +111,24 @@ async function execute(capabilities, logicalRequest, context = beginOperation(ca
     const timeoutCode = remaining <= context.request_timeout_ms ? 'acquisition_deadline_exceeded' : 'provider_timeout';
     const controller = new AbortController();
     const request = { ...baseRequest, timeout_ms: timeout, signal: controller.signal };
-    const abortTimer = setTimeout(() => controller.abort(), Math.max(1, Math.ceil(timeout)));
+    let timeoutTerminated = false;
+    const markTimeout = () => {
+      if (timeoutTerminated) return;
+      timeoutTerminated = true;
+      capabilities.telemetry.onTimeoutAttemptV1();
+    };
+    const abortTimer = setTimeout(() => { markTimeout(); controller.abort(); }, Math.max(1, Math.ceil(timeout)));
     let response = null; let retryable = false;
     try {
+      if (attempt > 1) capabilities.telemetry.onRetryAttemptV1();
       const pending = capabilities.request(request);
-      response = envelope(await boundedAwait(pending, timeout, timeoutCode));
+      response = envelope(await boundedAwait(pending, timeout, timeoutCode, markTimeout));
     }
     catch (error) {
       const code = thrownCode(error);
       if (code === 'invalid_json') fail('malformed_provider_response');
-      if (code === 'request_timeout' || code === 'provider_timeout' || code === 'ETIMEDOUT' || code === 'transient_transport') retryable = true;
+      if (code === 'request_timeout' || code === 'provider_timeout' || code === 'ETIMEDOUT') { markTimeout(); retryable = true; }
+      else if (code === 'transient_transport') retryable = true;
       else if (code !== null) fail(code);
       else fail('provider_transient_failure');
     } finally {

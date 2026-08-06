@@ -10,6 +10,7 @@ import {
   runControlledLiveValidationV1,
 } from './run-controlled-live-validation.mjs';
 import { fakePort, providerPublicKey } from './fixtures/slice4-fixtures.mjs';
+import { createWalletHistoryPortV1 } from './provider-port.mjs';
 import {
   JUP_WALLET_V1,
   USDC_MINT_V1,
@@ -31,7 +32,7 @@ const EXACT_ARGS = Object.freeze({
 function outputPath(root, name = 'report.json') { return join(root, name); }
 function dependencies(port, overrides = {}) {
   return {
-    walletHistoryPort: port,
+    walletHistoryPort: createWalletHistoryPortV1(port, { beginAcquisitionV1() {} }),
     hasHeliusApiKey: () => true,
     apiKeyProvider: () => KEY_CANARY,
     ...overrides,

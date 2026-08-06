@@ -14,6 +14,7 @@ import { buildMarkObservationV1 } from '../mark-observations.mjs';
 import { deepFreeze } from '../plain-data.mjs';
 import { compareCodeUnits } from '../order.mjs';
 import { GENESIS_HASH } from '../schema.mjs';
+import { providerPublicKey, providerSignature } from '../../wallet-acquisition/fixtures/test-identities.mjs';
 
 export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 export const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
@@ -42,7 +43,7 @@ export const COMPLETE_INPUT_STATUS = Object.freeze({
 });
 
 function eventSpec({ token, timestamp, signature, slot, buy, tokenAmount, quoteAmount, quoteMint = USDC_MINT, source = 'deterministic_fixture', extractionMethod = 'events_swap', sameMintInputAmounts = null }) {
-  return { token, timestamp, signature, slot, buy, tokenAmount, quoteAmount, quoteMint, source, extractionMethod, sameMintInputAmounts };
+  return { token: providerPublicKey(token), timestamp, signature: providerSignature(signature), slot, buy, tokenAmount, quoteAmount, quoteMint: providerPublicKey(quoteMint), source, extractionMethod, sameMintInputAmounts };
 }
 
 function compareEventSpecs(left, right) {
@@ -98,7 +99,9 @@ function buildSupportedDisposition(record) {
 }
 
 function buildFindingGroup(spec) {
-  const source = { tx_hash: spec.signature, slot: spec.slot, block_time: spec.timestamp };
+  const source = { tx_hash: providerSignature(spec.signature), slot: spec.slot, block_time: spec.timestamp };
+  const tokens = (spec.tokens ?? []).map(providerPublicKey);
+  const quotes = (spec.quotes ?? []).map(providerPublicKey);
   const finding = buildActivityFindingV1({
     finding_type: spec.type,
     severity: 'candidate_blocking',
@@ -109,8 +112,8 @@ function buildFindingGroup(spec) {
       first_observed_slot: spec.slot,
       last_observed_slot: spec.slot,
     },
-    affected_token_mints: [...(spec.tokens ?? [])].sort(compareCodeUnits),
-    affected_quote_mints: [...(spec.quotes ?? [])].sort(compareCodeUnits),
+    affected_token_mints: tokens.sort(compareCodeUnits),
+    affected_quote_mints: quotes.sort(compareCodeUnits),
     source_transaction_digests: [computeSourceTransactionDigest(source)],
     source_event_digests: [],
     reason_codes: [spec.reason],
@@ -120,7 +123,7 @@ function buildFindingGroup(spec) {
   const disposition = buildDispositionV1({
     ...source,
     disposition_type: spec.type,
-    affected_token_mints: [...(spec.tokens ?? [])].sort(compareCodeUnits),
+    affected_token_mints: [...tokens].sort(compareCodeUnits),
     normalized_event_digests: [],
     finding_digests: [finding.finding_digest],
   });
@@ -153,7 +156,7 @@ function makeBoundary(anchorSlot, anchorBlockTime) {
     commitment: 'finalized',
     anchor_slot: anchorSlot,
     anchor_block_time: anchorBlockTime,
-    anchor_blockhash: 'deterministic-finalized-blockhash',
+    anchor_blockhash: providerPublicKey('deterministic-finalized-blockhash'),
     history_complete_through_anchor: true,
     lower_bound_completion_proven: true,
     boundary_status: 'proven',
@@ -161,7 +164,8 @@ function makeBoundary(anchorSlot, anchorBlockTime) {
 }
 
 export function buildDeterministicCandidateFixtureV1(spec, { permuteInput = false } = {}) {
-  const wallet = spec.wallet ?? 'fixture-wallet';
+  spec = normalizeFixtureSpec(spec);
+  const wallet = providerPublicKey(spec.wallet ?? 'fixture-wallet');
   const records = buildEventRecords(wallet, spec.events ?? []);
   const findingGroups = (spec.findings ?? []).map(buildFindingGroup);
   const findings = canonicalizeActivityFindingsV1(findingGroups.map(item => item.finding));
@@ -215,13 +219,37 @@ export function buildDeterministicCandidateFixtureV1(spec, { permuteInput = fals
     acquisitionInput.activity_findings = canonicalizeActivityFindingsV1(acquisitionInput.activity_findings);
   }
   const acquisitionResult = buildWalletAcquisitionResultV1(acquisitionInput);
-  const marks = (spec.marks ?? []).map(mark => buildMarkObservationV1(mark));
+  const marks = (spec.marks ?? []).map(mark => buildMarkObservationV1({
+    ...mark,
+    token_mint: providerPublicKey(mark.token_mint),
+    quote_mint: providerPublicKey(mark.quote_mint),
+  }));
   const evidenceBundle = buildCandidateEvidenceBundleV1({ acquisitionResult, markObservations: permuteInput ? [...marks].reverse() : marks, profiles });
   const candidateSet = buildWalletCandidateSetV1({ evidenceBundle });
   return { acquisitionResult, evidenceBundle, candidateSet };
 }
 
-export const JUP_GOLDEN = deepFreeze({
+function normalizedIdentity(value, normalizer) { return value === undefined ? value : normalizer(value); }
+function normalizeFixtureSpec(spec) {
+  return {
+    ...spec,
+    ...(spec.wallet === undefined ? {} : { wallet: normalizedIdentity(spec.wallet, providerPublicKey) }),
+    ...(spec.tokenMint === undefined ? {} : { tokenMint: normalizedIdentity(spec.tokenMint, providerPublicKey) }),
+    ...(spec.quoteMint === undefined ? {} : { quoteMint: normalizedIdentity(spec.quoteMint, providerPublicKey) }),
+    ...(spec.events === undefined ? {} : { events: spec.events.map(event => ({ ...event, signature: providerSignature(event.signature), token: providerPublicKey(event.token), quoteMint: providerPublicKey(event.quoteMint) })) }),
+    ...(spec.findings === undefined ? {} : { findings: spec.findings.map(finding => ({ ...finding, signature: providerSignature(finding.signature), tokens: finding.tokens.map(providerPublicKey), quotes: finding.quotes.map(providerPublicKey) })) }),
+    ...(spec.marks === undefined ? {} : { marks: spec.marks.map(mark => ({
+      ...mark,
+      ...(mark.tokenMint === undefined ? {} : { tokenMint: providerPublicKey(mark.tokenMint) }),
+      ...(mark.quoteMint === undefined ? {} : { quoteMint: providerPublicKey(mark.quoteMint) }),
+      ...(mark.token_mint === undefined ? {} : { token_mint: providerPublicKey(mark.token_mint) }),
+      ...(mark.quote_mint === undefined ? {} : { quote_mint: providerPublicKey(mark.quote_mint) }),
+    })) }),
+  };
+}
+function normalizeFixtureMatrix(matrix) { return Object.fromEntries(Object.entries(matrix).map(([name, spec]) => [name, normalizeFixtureSpec(spec)])); }
+
+export const JUP_GOLDEN = deepFreeze(normalizeFixtureSpec({
   name: 'jup_golden_closed',
   wallet: '2ywe1NKkny7oUQM2yHRsnPYk2puQhWxWh3Gv98vhorni',
   tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
@@ -239,9 +267,9 @@ export const JUP_GOLDEN = deepFreeze({
     'manifest.json': '2ce234ccedcb52ac555f49129de7a3b6660506b04ed452c02503ec626646f1f6',
     'verification.json': '851c283e7e321bee61a939f1b39dbfb1f09ec038cdd078ceca50c8f7167c6ad0',
   }),
-});
+}));
 
-export const RAY_GOLDEN = deepFreeze({
+export const RAY_GOLDEN = deepFreeze(normalizeFixtureSpec({
   name: 'ray_same_mint_multi_input_closed',
   wallet: '5fK3484fbh8gnmhvTsPYxTC6un7Co5LVUSoubZPVL3YA',
   tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
@@ -259,9 +287,9 @@ export const RAY_GOLDEN = deepFreeze({
     'manifest.json': '9fffd0746b49b5e3b89dbf113675c76290c7ae10f99542a23b1c385e3c75b41e',
     'verification.json': '808c2d03cd54bb13ed418ea034075dc8b523cb01e6a9ce3359d2959498141e6d',
   }),
-});
+}));
 
-export const FIXTURE_MATRIX = deepFreeze({
+export const FIXTURE_MATRIX = deepFreeze(normalizeFixtureMatrix({
   multipleCleanClosed: Object.freeze({
     name: 'multiple_clean_closed_positions', wallet: 'matrix-wallet',
     events: [
@@ -322,7 +350,7 @@ export const FIXTURE_MATRIX = deepFreeze({
       eventSpec({ token: 'ORDER-C', timestamp: 100, signature: 'sig-c', slot: 20, buy: true, tokenAmount: 1, quoteAmount: 2 }),
     ],
   }),
-});
+}));
 
 export const REQUIRED_FIXTURE_CASES = deepFreeze({
   A: { fixture: 'multipleCleanClosed', proves: 'multiple clean closed positions' },

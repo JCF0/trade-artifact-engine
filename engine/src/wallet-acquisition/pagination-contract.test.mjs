@@ -13,8 +13,9 @@ import {
   startPaginationV1,
   validatePaginationStateV1,
 } from './pagination-contract.mjs';
+import { providerSignature } from './fixtures/test-identities.mjs';
 
-function source(signature, slot, block_time) { return { signature, slot, block_time }; }
+function source(signature, slot, block_time) { return { signature: providerSignature(signature), slot, block_time }; }
 function descendingPage(count, { startSlot = 1000, startTime = 2000, prefix = 'sig' } = {}) {
   return Array.from({ length: count }, (_, index) => source(`${prefix}-${index}`, startSlot - index, startTime - index));
 }
@@ -84,7 +85,7 @@ test('includes an exact-bound transaction and excludes the first older sentinel'
   state = accept(state, [source('new', 10, 100), source('at-bound', 9, 80), source('older', 8, 79), source('older-2', 7, 78)], null);
   assert.equal(state.phase, 'lower_bound_reached');
   assert.equal(state.pagination_terminal_reason, 'historical_bound_reached');
-  assert.deepEqual(state.in_window_sources.map(item => item.signature), ['new', 'at-bound']);
+  assert.deepEqual(state.in_window_sources.map(item => item.signature), [providerSignature('new'), providerSignature('at-bound')]);
   assert.deepEqual(state.lower_bound_sentinel, source('older', 8, 79));
   assert.equal(state.provider_entries_examined, 4);
   assert.equal(state.next_before_signature, null);
@@ -96,7 +97,7 @@ test('rejects invalid, echoed, repeated, and non-progressing cursors', () => {
   const first = descendingPage(100);
   state = accept(state, first, null);
   expectCode(() => accept(state, [], ''), 'pagination_cursor_invalid');
-  expectCode(() => accept(state, [], 'not-the-derived-cursor'), 'pagination_cursor_invalid');
+  expectCode(() => accept(state, [], providerSignature('not-the-derived-cursor')), 'pagination_cursor_invalid');
   expectCode(() => accept(state, [source(state.next_before_signature, 900, 1900)]), 'pagination_cursor_repeated');
   expectCode(() => accept(state, [first[50]]), 'pagination_cursor_repeated');
 });
@@ -117,7 +118,7 @@ test('rejects order increases, equal duplicates, conflicting duplicates, and pag
 test('fails closed on a null block time and malformed page or source fields', () => {
   let state = startPaginationV1(initial());
   expectCode(() => accept(state, [source('a', 1, null)], null), 'pagination_incomplete');
-  expectCode(() => accept(state, [source('', 1, 1)], null), 'pagination_incomplete');
+  expectCode(() => accept(state, [{ signature: '', slot: 1, block_time: 1 }], null), 'pagination_incomplete');
   expectCode(() => accept(state, [{ signature: 'a', slot: 1, block_time: 1, raw: true }], null), 'pagination_incomplete');
   expectCode(() => accept(state, new Array(2), null), 'pagination_incomplete');
   expectCode(() => accept(state, descendingPage(101), null), 'pagination_incomplete');

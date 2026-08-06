@@ -9,8 +9,9 @@ import {
   isRecognizedSpotProgramV1,
   validateSolanaSpotEvidenceV1,
 } from './solana-spot-evidence.mjs';
+import { providerPublicKey, providerSignature } from './fixtures/test-identities.mjs';
 
-const WALLET = '7YWHMfk9JZe0LMKx5fYJEE9HDSKPQpJiX5wV8QvB7vvV';
+const WALLET = '2ywe1NKkny7oUQM2yHRsnPYk2puQhWxWh3Gv98vhorni';
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const JUP = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN';
 const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
@@ -18,7 +19,7 @@ const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
 function fixture() {
   return {
     spot_evidence_version: SOLANA_SPOT_EVIDENCE_VERSION_V1,
-    signature: 'detached-signature',
+    signature: providerSignature('detached-signature'),
     slot: 42,
     block_time: 1_780_000_000,
     execution_state: 'succeeded',
@@ -98,7 +99,7 @@ test('rejects forbidden metadata, unknown nested fields, ownership mismatch, and
   nested.structured_swap_groups[0].token_inputs[0].provider_description = 'arbitrary mint mention';
   expectCode(() => buildSolanaSpotEvidenceV1(nested));
   const owner = fixture();
-  owner.structured_swap_groups[0].token_inputs[0].owner = 'other-wallet';
+  owner.structured_swap_groups[0].token_inputs[0].owner = providerPublicKey('other-wallet');
   expectCode(() => buildSolanaSpotEvidenceV1(owner), 'spot_evidence_mismatch');
   for (const rawAmount of ['0', '-1', '01', '1.5', 1]) {
     const malformed = fixture();

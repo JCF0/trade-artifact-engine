@@ -3,6 +3,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, realpathSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { performance } from 'node:perf_hooks';
 
 import { buildWalletCandidateSetV1 } from '../candidate-set/builder.mjs';
 import { buildCandidateEvidenceBundleV1 } from '../candidate-set/evidence-bundle.mjs';
@@ -181,14 +182,6 @@ function productionSleep(milliseconds, signal) {
 function createHttpClient(telemetry) {
   return Object.freeze({
     async request(request) {
-      let timeoutObserved = false;
-      const observeAbort = () => {
-        if (timeoutObserved) return;
-        timeoutObserved = true;
-        telemetry.retry_count += 1;
-        telemetry.timeout_count += 1;
-      };
-      request.signal.addEventListener('abort', observeAbort, { once: true });
       try {
         const url = new URL(request.url);
         for (const [key, value] of Object.entries(request.query)) url.searchParams.set(key, String(value));
@@ -203,18 +196,14 @@ function createHttpClient(telemetry) {
         if (request.signal.aborted) throw Object.freeze({ code: 'request_timeout' });
         let data;
         try { data = JSON.parse(text); } catch { throw Object.freeze({ code: 'invalid_json' }); }
-        if (response.status === 429 || response.status >= 500) telemetry.retry_count += 1;
         return { status: response.status, data };
       } catch (error) {
         if (error?.name === 'AbortError' || ownSafeCode(error) === 'request_timeout') {
-          observeAbort();
           throw Object.freeze({ code: 'request_timeout' });
         }
         const code = ownSafeCode(error);
         if (code === 'provider_uncertain') throw Object.freeze({ code: 'transient_transport' });
         throw Object.freeze({ code });
-      } finally {
-        request.signal.removeEventListener('abort', observeAbort);
       }
     },
   });
@@ -348,8 +337,12 @@ export async function runControlledLiveValidationV1(optionInput, dependencyInput
       httpClient: dependencies.httpClient ?? createHttpClient(telemetry),
       apiKeyProvider,
       sleep: dependencies.sleep ?? productionSleep,
-      clock: dependencies.clock ?? (() => Date.now()),
+      clock: dependencies.clock ?? (() => performance.now()),
       random: dependencies.random ?? Math.random,
+      telemetry: {
+        onRetryAttemptV1() { telemetry.retry_count += 1; },
+        onTimeoutAttemptV1() { telemetry.timeout_count += 1; },
+      },
     });
     const port = instrumentPort(rawPort, telemetry);
     const acquire = dependencies.acquireWalletHistory ?? acquireWalletHistoryV1;

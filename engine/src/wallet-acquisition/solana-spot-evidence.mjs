@@ -1,6 +1,7 @@
 import { types as utilTypes } from 'node:util';
 
 import { buildWalletSourceTransactionV1 } from './source-transaction.mjs';
+import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './solana-identities.mjs';
 
 export const SOLANA_SPOT_EVIDENCE_VERSION_V1 = 'solana_spot_evidence_v1';
 
@@ -120,14 +121,14 @@ function assertOwned(owner, wallet) {
 
 function validateTokenSwapLeg(leg, wallet) {
   exact(leg, TOKEN_SWAP_LEG_FIELDS);
-  if (!identifier(leg.leg_id) || !identifier(leg.owner) || !identifier(leg.mint)
+  if (!identifier(leg.leg_id) || !isSolanaPublicKeyV1(leg.owner) || !isSolanaPublicKeyV1(leg.mint)
       || !rawAmount(leg.raw_amount) || !decimals(leg.decimals)) failSpotEvidenceV1('invalid_spot_evidence');
   assertOwned(leg.owner, wallet);
 }
 
 function validateNativeSwapLeg(leg, wallet) {
   exact(leg, NATIVE_SWAP_LEG_FIELDS);
-  if (!identifier(leg.leg_id) || !identifier(leg.owner) || !safeInteger(leg.amount_lamports) || leg.amount_lamports === 0) {
+  if (!identifier(leg.leg_id) || !isSolanaPublicKeyV1(leg.owner) || !safeInteger(leg.amount_lamports) || leg.amount_lamports === 0) {
     failSpotEvidenceV1('invalid_spot_evidence');
   }
   assertOwned(leg.owner, wallet);
@@ -140,9 +141,9 @@ function validateTransferGroup(value) {
 function validateEvidence(evidence) {
   exact(evidence, TOP_FIELDS);
   if (evidence.spot_evidence_version !== SOLANA_SPOT_EVIDENCE_VERSION_V1
-      || !identifier(evidence.signature) || !safeInteger(evidence.slot) || !safeInteger(evidence.block_time)
-      || !['succeeded','failed'].includes(evidence.execution_state) || !identifier(evidence.wallet)
-      || !identifier(evidence.fee_payer) || (evidence.provider_transaction_type !== null
+      || !isSolanaSignatureV1(evidence.signature) || !safeInteger(evidence.slot) || !safeInteger(evidence.block_time)
+      || !['succeeded','failed'].includes(evidence.execution_state) || !isSolanaPublicKeyV1(evidence.wallet)
+      || !isSolanaPublicKeyV1(evidence.fee_payer) || (evidence.provider_transaction_type !== null
         && (typeof evidence.provider_transaction_type !== 'string' || !PROVIDER_TYPE.test(evidence.provider_transaction_type)))) {
     failSpotEvidenceV1('invalid_spot_evidence');
   }
@@ -161,25 +162,25 @@ function validateEvidence(evidence) {
   for (const leg of array(evidence.token_transfer_legs)) {
     exact(leg, TOKEN_TRANSFER_FIELDS);
     validateTransferGroup(leg.economic_group);
-    if (!identifier(leg.leg_id) || !['debit','credit'].includes(leg.direction) || !identifier(leg.owner)
-        || !identifier(leg.mint) || !rawAmount(leg.raw_amount) || !decimals(leg.decimals)) failSpotEvidenceV1('invalid_spot_evidence');
+    if (!identifier(leg.leg_id) || !['debit','credit'].includes(leg.direction) || !isSolanaPublicKeyV1(leg.owner)
+        || !isSolanaPublicKeyV1(leg.mint) || !rawAmount(leg.raw_amount) || !decimals(leg.decimals)) failSpotEvidenceV1('invalid_spot_evidence');
     assertOwned(leg.owner, evidence.wallet);
   }
   for (const leg of array(evidence.native_sol_transfer_legs)) {
     exact(leg, NATIVE_TRANSFER_FIELDS);
     validateTransferGroup(leg.economic_group);
-    if (!identifier(leg.leg_id) || !['debit','credit'].includes(leg.direction) || !identifier(leg.owner)
+    if (!identifier(leg.leg_id) || !['debit','credit'].includes(leg.direction) || !isSolanaPublicKeyV1(leg.owner)
         || !safeInteger(leg.amount_lamports) || leg.amount_lamports === 0) failSpotEvidenceV1('invalid_spot_evidence');
     assertOwned(leg.owner, evidence.wallet);
   }
   for (const closure of array(evidence.account_closures)) {
     exact(closure, CLOSURE_FIELDS);
-    if (!identifier(closure.closure_id) || !identifier(closure.owner) || !identifier(closure.mint)) failSpotEvidenceV1('invalid_spot_evidence');
+    if (!identifier(closure.closure_id) || !isSolanaPublicKeyV1(closure.owner) || !isSolanaPublicKeyV1(closure.mint)) failSpotEvidenceV1('invalid_spot_evidence');
     assertOwned(closure.owner, evidence.wallet);
   }
   for (const effect of array(evidence.unresolved_wallet_effects)) {
     exact(effect, UNRESOLVED_FIELDS);
-    if (!identifier(effect.effect_id) || (effect.mint !== null && !identifier(effect.mint))) failSpotEvidenceV1('invalid_spot_evidence');
+    if (!identifier(effect.effect_id) || (effect.mint !== null && !isSolanaPublicKeyV1(effect.mint))) failSpotEvidenceV1('invalid_spot_evidence');
   }
   const ids = [
     ...evidence.structured_swap_groups.flatMap(group => [...group.token_inputs, ...group.token_outputs, ...group.native_inputs, ...group.native_outputs].map(leg => leg.leg_id)),

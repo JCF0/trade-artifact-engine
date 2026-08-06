@@ -5,6 +5,7 @@ import {
   cloneAndFreezePlainDataV1,
   failWalletAcquisitionV1,
 } from './errors.mjs';
+import { isSolanaPublicKeyV1 } from './solana-identities.mjs';
 
 export const WALLET_ACQUISITION_REQUEST_VERSION_V1 = 'wallet_wide_acquisition_request_v1';
 export const SOLANA_MAINNET_GENESIS_HASH = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
@@ -22,33 +23,13 @@ export const MAX_REQUEST_TIMEOUT_MS_V1 = 60000;
 export const MAX_OVERALL_TIMEOUT_MS_V1 = 300000;
 export const PAGE_SIZE_V1 = 100;
 
-const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
 const REQUEST_FIELDS = ['request_version','chain','network','genesis_hash','wallet','window','finality','budgets','profiles'];
 const WINDOW_FIELDS = ['window_version','lookback_profile','requested_lookback_seconds','initial_before_signature'];
 const FINALITY_FIELDS = ['commitment','boundary_profile','max_anchor_search_slots'];
 const BUDGET_FIELDS = ['pagination_profile','page_size','max_pages','max_transactions','retry_profile','max_attempts_per_operation','timeout_profile','request_timeout_ms','overall_timeout_ms'];
 const PROFILE_FIELDS = ['wallet_acquisition_profile','wallet_normalization_profile'];
 
-function base58DecodedByteLength(value) {
-  const bytes = [0];
-  for (const character of value) {
-    let carry = BASE58_ALPHABET.indexOf(character);
-    for (let index = 0; index < bytes.length; index += 1) {
-      carry += bytes[index] * 58;
-      bytes[index] = carry & 0xff;
-      carry >>= 8;
-    }
-    while (carry > 0) {
-      bytes.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  let leadingZeroBytes = 0;
-  while (leadingZeroBytes < value.length && value[leadingZeroBytes] === '1') leadingZeroBytes += 1;
-  const nonzeroByteLength = bytes.length === 1 && bytes[0] === 0 ? 0 : bytes.length;
-  return leadingZeroBytes + nonzeroByteLength;
-}
 
 function validateRequestShape(request) {
   assertPlainDataV1(request, 'invalid_acquisition_request');
@@ -63,7 +44,7 @@ export function validateWalletAcquisitionRequestV1(request) {
   validateRequestShape(request);
   if (request.request_version !== WALLET_ACQUISITION_REQUEST_VERSION_V1) failWalletAcquisitionV1('invalid_acquisition_request');
   if (request.chain !== 'solana' || request.network !== 'mainnet-beta' || request.genesis_hash !== SOLANA_MAINNET_GENESIS_HASH) failWalletAcquisitionV1('chain_identity_mismatch');
-  if (typeof request.wallet !== 'string' || !SOLANA_ADDRESS_PATTERN.test(request.wallet) || base58DecodedByteLength(request.wallet) !== 32) failWalletAcquisitionV1('invalid_acquisition_request');
+  if (!isSolanaPublicKeyV1(request.wallet)) failWalletAcquisitionV1('invalid_acquisition_request');
 
   const window = request.window;
   if (window.window_version !== 'fixed_lookback_latest_state_v1' || window.initial_before_signature !== null) failWalletAcquisitionV1('invalid_acquisition_request');

@@ -9,6 +9,7 @@ import {
   MAX_ANCHOR_SEARCH_SLOTS_V1,
   SOLANA_MAINNET_GENESIS_HASH,
 } from './request-contract.mjs';
+import { isSolanaPublicKeyV1 } from './solana-identities.mjs';
 
 export const FINALIZED_BOUNDARY_VERSION_V1 = 'solana_finalized_acquisition_boundary_v1';
 export const FINALIZED_ANCHOR_SEARCH_STATE_VERSION_V1 = 'solana_finalized_anchor_search_state_v1';
@@ -17,7 +18,7 @@ const BOUNDARY_FIELDS = ['boundary_version','chain','network','genesis_hash','co
 const LOWER_BOUND_INPUT_FIELDS = ['anchor_block_time','requested_lookback_seconds'];
 const SEARCH_INPUT_FIELDS = ['initial_slot','max_anchor_search_slots'];
 const SEARCH_STATE_FIELDS = ['search_state_version','initial_slot','next_slot','slots_examined','max_anchor_search_slots','search_status','anchor_slot'];
-const BLOCKHASH_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
+
 
 export function deriveOldestAllowedTimestampV1(input) {
   assertExactFieldsV1(input, LOWER_BOUND_INPUT_FIELDS, 'lookback_boundary_mismatch');
@@ -34,7 +35,7 @@ export function validateFinalizedAcquisitionBoundaryV1(boundary) {
   if (boundary.boundary_version !== FINALIZED_BOUNDARY_VERSION_V1 || boundary.commitment !== 'finalized' || boundary.boundary_status !== 'proven') failWalletAcquisitionV1('finalized_boundary_incoherent');
   assertSafeNonnegativeIntegerV1(boundary.anchor_slot, 'finalized_boundary_incoherent');
   assertSafeNonnegativeIntegerV1(boundary.anchor_block_time, 'finalized_boundary_incoherent');
-  if (typeof boundary.anchor_blockhash !== 'string' || !BLOCKHASH_PATTERN.test(boundary.anchor_blockhash)) failWalletAcquisitionV1('finalized_boundary_incoherent');
+  if (!isSolanaPublicKeyV1(boundary.anchor_blockhash)) failWalletAcquisitionV1('finalized_boundary_incoherent');
   if (boundary.history_complete_through_anchor !== true) failWalletAcquisitionV1('latest_state_unproven');
   if (boundary.lower_bound_completion_proven !== true) failWalletAcquisitionV1('lower_bound_unproven');
   return true;

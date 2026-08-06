@@ -5,6 +5,7 @@ import {
   cloneAndFreezePlainDataV1,
   failWalletAcquisitionV1,
 } from './errors.mjs';
+import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './solana-identities.mjs';
 
 export const SOURCE_TRANSACTION_VERSION_V1 = 'wallet_source_transaction_v1';
 
@@ -48,7 +49,7 @@ function validateOperationCommon(operation) {
   if (!safeIdentifier(operation.operation_id)) invalid();
   if (operation.economic_group !== null && !safeIdentifier(operation.economic_group)) invalid();
   if (!OPERATION_KINDS.has(operation.operation_kind) || !DIRECTIONS.has(operation.direction)) invalid();
-  if (!safeIdentifier(operation.owner)) invalid();
+  if (!isSolanaPublicKeyV1(operation.owner)) invalid();
   if (['metadata','account_record'].includes(operation.operation_kind)
       && (operation.direction !== 'none' || operation.economic_group !== null)) invalid();
   if (operation.operation_kind === 'swap' && operation.economic_group === null) invalid();
@@ -58,7 +59,7 @@ function validateTokenOperation(operation, wallet) {
   assertExactFieldsV1(operation, TOKEN_OPERATION_FIELDS, 'invalid_source_transaction');
   validateOperationCommon(operation);
   if (operation.owner !== wallet) invalid();
-  if (operation.mint !== null && !safeIdentifier(operation.mint)) invalid();
+  if (operation.mint !== null && !isSolanaPublicKeyV1(operation.mint)) invalid();
   if (operation.operation_kind !== 'unknown' && operation.mint === null) invalid();
   assertNullablePositiveAmount(operation.amount);
   if (operation.decimals !== null) {
@@ -85,7 +86,7 @@ function validateNativeOperation(operation, wallet) {
 
 function validateProgram(program) {
   assertExactFieldsV1(program, PROGRAM_FIELDS, 'invalid_source_transaction');
-  if (!safeIdentifier(program.program_id) || !PROGRAM_ROLES.has(program.program_role)) invalid();
+  if (!isSolanaPublicKeyV1(program.program_id) || !PROGRAM_ROLES.has(program.program_role)) invalid();
 }
 
 function compareCodeUnits(left, right) {
@@ -99,7 +100,7 @@ function operationKey(operation) {
 export function validateWalletSourceTransactionV1(sourceTransaction) {
   assertExactFieldsV1(sourceTransaction, SOURCE_FIELDS, 'invalid_source_transaction');
   if (sourceTransaction.source_transaction_version !== SOURCE_TRANSACTION_VERSION_V1) invalid();
-  for (const field of ['signature','wallet','fee_payer']) if (!safeIdentifier(sourceTransaction[field])) invalid();
+  if (!isSolanaSignatureV1(sourceTransaction.signature) || !isSolanaPublicKeyV1(sourceTransaction.wallet) || !isSolanaPublicKeyV1(sourceTransaction.fee_payer)) invalid();
   assertSafeNonnegativeIntegerV1(sourceTransaction.slot, 'invalid_source_transaction');
   assertSafeNonnegativeIntegerV1(sourceTransaction.block_time, 'invalid_source_transaction');
   if (!['succeeded','failed'].includes(sourceTransaction.execution_state)) invalid();

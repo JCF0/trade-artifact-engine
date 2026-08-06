@@ -129,7 +129,7 @@ export function createWalletHistoryPortV1(capability, options) {
 
 export function beginWalletHistoryAcquisitionV1(port, budgets) {
   const starter = port !== null && typeof port === 'object' ? ACQUISITION_STARTERS.get(port) : null;
-  if (starter === null || starter === undefined) return false;
+  if (starter === null || starter === undefined) failWalletAcquisitionOperationV1('acquisition_capability_denied');
   try {
     const detached = detachProviderNeutralValueV1(budgets);
     starter(detached);

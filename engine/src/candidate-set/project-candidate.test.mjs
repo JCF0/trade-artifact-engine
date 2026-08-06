@@ -8,15 +8,18 @@ import { projectCandidateV1 } from './project-candidate.mjs';
 import { buildMarkObservationV1 } from './mark-observations.mjs';
 import { candidateDigestPreimage } from './identity.mjs';
 import { GENESIS_HASH } from './schema.mjs';
+import { providerPublicKey, providerSignature } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
-const WALLET = 'wallet';
+const WALLET = providerPublicKey('wallet');
 const QUOTE = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 1000, anchor_blockhash: 'blockhash', history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
+const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 1000, anchor_blockhash: providerPublicKey('blockhash'), history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
 function raw({ token, timestamp, tx, index, buy, base = 5, quote = 10 }) {
-  return { wallet: WALLET, timestamp, tx_hash: tx, source: 'swap', token_in_mint: buy ? QUOTE : token, token_in_amount: buy ? quote : base, token_in_decimals: 6, token_out_mint: buy ? token : QUOTE, token_out_amount: buy ? base : quote, token_out_decimals: 6, extraction_method: 'balance_delta', raw_index: index };
+  token = providerPublicKey(token);
+  return { wallet: WALLET, timestamp, tx_hash: providerSignature(tx), source: 'swap', token_in_mint: buy ? QUOTE : token, token_in_amount: buy ? quote : base, token_in_decimals: 6, token_out_mint: buy ? token : QUOTE, token_out_amount: buy ? base : quote, token_out_decimals: 6, extraction_method: 'balance_delta', raw_index: index };
 }
 function records(events) { return events.map((event, index) => buildEventRecordV1({ source_slot: 10 + index, slice7_event: event })); }
 function projectionFor(events, token, markObservation = null) {
+  token = providerPublicKey(token);
   const legacy = generateReceiptCandidates(buildPositionLedger(events), WALLET, { snapshotAt: boundary.anchor_block_time }).find(item => item.token_mint === token);
   const evidence = buildReceiptScopedEvidenceV1({ wallet: WALLET, tokenMint: token, normalizedEventRecords: records(events) });
   return projectCandidateV1({ ledgerCandidate: legacy, receiptScopedEvidence: evidence, boundary, markObservation, associatedFindings: [] });
@@ -47,14 +50,14 @@ const forgedClosed = structuredClone(generateReceiptCandidates(buildPositionLedg
 forgedClosed.total_bought_quote = 1;
 forgedClosed.realized_pnl_quote = 14;
 forgedClosed.candidate_hash = computeCandidateHash(forgedClosed);
-const closedEvidence = buildReceiptScopedEvidenceV1({ wallet: WALLET, tokenMint: 'CLOSED', normalizedEventRecords: records(closedEvents) });
+const closedEvidence = buildReceiptScopedEvidenceV1({ wallet: WALLET, tokenMint: providerPublicKey('CLOSED'), normalizedEventRecords: records(closedEvents) });
 assert.throws(() => projectCandidateV1({ ledgerCandidate: forgedClosed, receiptScopedEvidence: closedEvidence, boundary, markObservation: null, associatedFindings: [] }), error => error.code === 'ledger_candidate_reconstruction_mismatch');
 
 const partialEvents = [
   raw({ token: 'PARTIAL', timestamp: 300, tx: 'buy-partial', index: 0, buy: true, base: 10, quote: 20 }),
   raw({ token: 'PARTIAL', timestamp: 400, tx: 'sell-partial', index: 1, buy: false, base: 2, quote: 6 }),
 ];
-const mark = buildMarkObservationV1({ token_mint: 'PARTIAL', quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null });
+const mark = buildMarkObservationV1({ token_mint: providerPublicKey('PARTIAL'), quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null });
 const partial = projectionFor(partialEvents, 'PARTIAL', mark);
 assert.equal(partial.projection.candidate_type, 'realized_partial');
 assert.equal(partial.projection.position_status, 'open');
@@ -72,7 +75,7 @@ assert.equal(open.projection.economics.realized_pnl_to_date_quote, 0);
 assert.equal(open.projection.snapshot.unrealized_pnl, null);
 assert.equal(open.projection.valuation_status, 'mark_unavailable');
 
-const freshOpenMark = buildMarkObservationV1({ token_mint: 'OPEN', quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 1000, source_slot: 100, reason_code: null });
+const freshOpenMark = buildMarkObservationV1({ token_mint: providerPublicKey('OPEN'), quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 1000, source_slot: 100, reason_code: null });
 const markedOpen = projectionFor([raw({ token: 'OPEN', timestamp: 500, tx: 'buy-open', index: 0, buy: true, base: 4, quote: 8 })], 'OPEN', freshOpenMark);
 const forgedOldFreshProjection = structuredClone(markedOpen.projection);
 forgedOldFreshProjection.snapshot.mark.mark_observed_at = 699;
@@ -91,7 +94,7 @@ assert.throws(() => buildCandidateV1({
   projection: forgedMarkProfile,
 }), error => error.code === 'unsupported_profile');
 
-const limitedMark = buildMarkObservationV1({ token_mint: 'LIMITED', quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null });
+const limitedMark = buildMarkObservationV1({ token_mint: providerPublicKey('LIMITED'), quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null });
 const limited = projectionFor([raw({ token: 'LIMITED', timestamp: 600, tx: 'sell-limited', index: 0, buy: false, base: 3, quote: 9 })], 'LIMITED', limitedMark);
 assert.equal(limited.projection.ledger_evidence_status, 'limited_partial_history');
 assert.equal(limited.projection.selection_status, 'visible_only');
@@ -110,7 +113,7 @@ const partiallyObservedEvents = [
   raw({ token: 'PARTIALLY-OBSERVED', timestamp: 600, tx: 'partial-observed-buy', index: 0, buy: true, base: 1, quote: 2 }),
   raw({ token: 'PARTIALLY-OBSERVED', timestamp: 700, tx: 'partial-observed-sell', index: 1, buy: false, base: 3, quote: 9 }),
 ];
-const partiallyObservedMark = buildMarkObservationV1({ token_mint: 'PARTIALLY-OBSERVED', quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null });
+const partiallyObservedMark = buildMarkObservationV1({ token_mint: providerPublicKey('PARTIALLY-OBSERVED'), quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 4, observed_at: 990, source_slot: 99, reason_code: null });
 const partiallyObserved = projectionFor(partiallyObservedEvents, 'PARTIALLY-OBSERVED', partiallyObservedMark);
 assert.equal(partiallyObserved.projection.ledger_evidence_status, 'limited_partial_history');
 assert.equal(partiallyObserved.projection.economics_status, 'unavailable_partial_history');
@@ -118,8 +121,8 @@ assert.equal(partiallyObserved.projection.economics, null);
 assert.equal(partiallyObserved.projection.snapshot, null);
 assert.equal(partiallyObserved.projection.valuation_status, 'unavailable');
 
-const corruptLegacy = structuredClone(generateReceiptCandidates(buildPositionLedger(closedEvents), WALLET, { snapshotAt: 1000 }).find(item => item.token_mint === 'CLOSED'));
+const corruptLegacy = structuredClone(generateReceiptCandidates(buildPositionLedger(closedEvents), WALLET, { snapshotAt: 1000 }).find(item => item.token_mint === providerPublicKey('CLOSED')));
 corruptLegacy.candidate_hash = 'f'.repeat(64);
-const evidence = buildReceiptScopedEvidenceV1({ wallet: WALLET, tokenMint: 'CLOSED', normalizedEventRecords: records(closedEvents) });
+const evidence = buildReceiptScopedEvidenceV1({ wallet: WALLET, tokenMint: providerPublicKey('CLOSED'), normalizedEventRecords: records(closedEvents) });
 assert.throws(() => projectCandidateV1({ ledgerCandidate: corruptLegacy, receiptScopedEvidence: evidence, boundary, markObservation: null, associatedFindings: [] }), error => error.code === 'ledger_candidate_hash_mismatch');
 console.log('candidate-set candidate projections: PASS');

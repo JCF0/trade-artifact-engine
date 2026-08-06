@@ -128,6 +128,7 @@ test('complete transitive candidate-set production graph is capability-free', ()
       'ledger/receipt-candidates.mjs',
       'pipeline/constants.mjs',
       'receipt-package/profiles.mjs',
+  'wallet-acquisition/solana-identities.mjs',
     ],
   );
 });

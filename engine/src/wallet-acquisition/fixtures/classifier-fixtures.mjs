@@ -1,4 +1,6 @@
-export const WALLET = '7YWHMfk9JZe0LMKx5fYJEE9HDSKPQpJiX5wV8QvB7vvV';
+import { providerPublicKey, providerSignature } from './test-identities.mjs';
+
+export const WALLET = '2ywe1NKkny7oUQM2yHRsnPYk2puQhWxWh3Gv98vhorni';
 export const OTHER_WALLET = '9xQeWvG816bUx9EPfEZvT3XgG5QvQx8x6vW9pN5R3m2A';
 export const WSOL = 'So11111111111111111111111111111111111111112';
 export const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -25,7 +27,7 @@ function native(operation_id, economic_group, operation_kind, direction, amount_
 function source(name, overrides = {}) {
   return {
     source_transaction_version: 'wallet_source_transaction_v1',
-    signature: `signature-${name}`,
+    signature: providerSignature(name),
     slot: 1000,
     block_time: 1_780_000_000,
     execution_state: 'succeeded',
@@ -98,8 +100,8 @@ export const CLASSIFIER_FIXTURES = deepFreeze({
   swapPlusTransfer: source('swap-plus-transfer', { token_operations: [token('usdc-out', 'swap-1', 'swap', 'debit', USDC, 25), token('jup-in', 'swap-1', 'swap', 'credit', JUP, 100), token('jup-extra', 'transfer-2', 'transfer', 'debit', JUP, 1)] }),
   twoSwaps: source('two-swaps', { token_operations: [token('usdc-out', 'swap-1', 'swap', 'debit', USDC, 25), token('jup-in', 'swap-1', 'swap', 'credit', JUP, 100), token('usdt-out', 'swap-2', 'swap', 'debit', USDT, 30), token('ray-in', 'swap-2', 'swap', 'credit', RAY, 50)] }),
   severalOutputs: source('several-outputs', { token_operations: [token('usdc-out', 'swap-1', 'swap', 'debit', USDC, 25), token('jup-in', 'swap-1', 'swap', 'credit', JUP, 50), token('ray-in', 'swap-1', 'swap', 'credit', RAY, 10)] }),
-  metadataOnly: source('metadata-only', { provider_classification_code: 'NFT_METADATA', recognized_programs: [{ program_id: 'meta-program', program_role: 'metadata' }], token_operations: [token('metadata-jup', null, 'metadata', 'none', JUP, null, null)] }),
-  closeAccountNoMovement: source('close-account', { provider_classification_code: 'CLOSE_ACCOUNT', recognized_programs: [{ program_id: 'token-program', program_role: 'token' }], token_operations: [token('close-jup', null, 'account_close', 'none', JUP, null, 6)] }),
+  metadataOnly: source('metadata-only', { provider_classification_code: 'NFT_METADATA', recognized_programs: [{ program_id: providerPublicKey('meta-program'), program_role: 'metadata' }], token_operations: [token('metadata-jup', null, 'metadata', 'none', JUP, null, null)] }),
+  closeAccountNoMovement: source('close-account', { provider_classification_code: 'CLOSE_ACCOUNT', recognized_programs: [{ program_id: providerPublicKey('token-program'), program_role: 'token' }], token_operations: [token('close-jup', null, 'account_close', 'none', JUP, null, 6)] }),
   unknownProvider,
   wrongFeePayer: source('wrong-fee-payer', { fee_payer: OTHER_WALLET, token_operations: [token('usdc-out', 'swap-1', 'swap', 'debit', USDC, 25), token('jup-in', 'swap-1', 'swap', 'credit', JUP, 100)] }),
   commonQuoteContext: source('common-quote-jup', { provider_classification_code: 'TRANSFER', recognized_programs: [], token_operations: [token('usdc-context', 'transfer-1', 'transfer', 'credit', USDC, 25), token('jup-inventory', 'transfer-2', 'transfer', 'credit', JUP, 100)] }),

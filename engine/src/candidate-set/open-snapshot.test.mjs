@@ -3,19 +3,24 @@ import assert from 'node:assert/strict';
 import { buildMarkObservationV1 } from './mark-observations.mjs';
 import { GENESIS_HASH } from './schema.mjs';
 import { buildOpenPositionSnapshotV1 } from './open-snapshot.mjs';
+import { providerPublicKey } from '../wallet-acquisition/fixtures/test-identities.mjs';
+
+const TOKEN = providerPublicKey('TOKEN');
+const QUOTE = providerPublicKey('QUOTE');
+const OTHER_QUOTE = providerPublicKey('OTHER-QUOTE');
 
 const boundary = {
   boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta',
   genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 1000,
-  anchor_blockhash: 'blockhash', history_complete_through_anchor: true, lower_bound_completion_proven: true,
+  anchor_blockhash: providerPublicKey('blockhash'), history_complete_through_anchor: true, lower_bound_completion_proven: true,
   boundary_status: 'proven',
 };
 const position = {
-  candidate_type: 'realized_partial', token_mint: 'TOKEN', quote_mint: 'QUOTE', remaining_qty: 4,
+  candidate_type: 'realized_partial', token_mint: TOKEN, quote_mint: QUOTE, remaining_qty: 4,
   remaining_cost_basis_quote: 6, realized_pnl_quote: 2, realized_pnl_pct: 20,
 };
 const fresh = buildMarkObservationV1({
-  token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1',
+  token_mint: TOKEN, quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1',
   mark_price_raw_quote: 3, observed_at: 990, source_slot: 99, reason_code: null,
 });
 const snapshot = buildOpenPositionSnapshotV1({ position, boundary, markObservation: fresh });
@@ -37,7 +42,7 @@ for (const [age, expectedFreshness, expectValuation] of [
   [999, 'stale', false],
 ]) {
   const observation = buildMarkObservationV1({
-    token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1',
+    token_mint: TOKEN, quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1',
     mark_price_raw_quote: 3, observed_at: boundary.anchor_block_time - age, source_slot: 99, reason_code: null,
   });
   const aged = buildOpenPositionSnapshotV1({ position, boundary, markObservation: observation });
@@ -47,7 +52,7 @@ for (const [age, expectedFreshness, expectValuation] of [
 }
 
 const stale = buildMarkObservationV1({
-  token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'unavailable', source_profile: 'direct_quote_mark_v1',
+  token_mint: TOKEN, quote_mint: QUOTE, observation_status: 'unavailable', source_profile: 'direct_quote_mark_v1',
   mark_price_raw_quote: null, observed_at: null, source_slot: null, reason_code: 'mark_stale',
 });
 const staleSnapshot = buildOpenPositionSnapshotV1({ position, boundary, markObservation: stale });
@@ -56,7 +61,7 @@ assert.equal(staleSnapshot.mark.freshness_status, 'stale');
 assert.equal(staleSnapshot.unrealized_pnl, null);
 
 const mismatch = buildMarkObservationV1({
-  token_mint: 'TOKEN', quote_mint: 'OTHER-QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1',
+  token_mint: TOKEN, quote_mint: OTHER_QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1',
   mark_price_raw_quote: 3, observed_at: 990, source_slot: 99, reason_code: null,
 });
 const mismatchSnapshot = buildOpenPositionSnapshotV1({ position, boundary, markObservation: mismatch });
@@ -64,14 +69,14 @@ assert.equal(mismatchSnapshot.mark.reason_code, 'mark_quote_mismatch');
 assert.equal(mismatchSnapshot.unrealized_pnl, null);
 
 const future = buildMarkObservationV1({
-  token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1',
+  token_mint: TOKEN, quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1',
   mark_price_raw_quote: 3, observed_at: 1001, source_slot: 99, reason_code: null,
 });
 const futureSnapshot = buildOpenPositionSnapshotV1({ position, boundary, markObservation: future });
 assert.equal(futureSnapshot.mark.freshness_status, 'after_boundary');
 assert.equal(futureSnapshot.unrealized_pnl, null);
 const futureSlot = buildMarkObservationV1({
-  token_mint: 'TOKEN', quote_mint: 'QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1',
+  token_mint: TOKEN, quote_mint: QUOTE, observation_status: 'available', source_profile: 'direct_quote_mark_v1',
   mark_price_raw_quote: 3, observed_at: 1000, source_slot: 101, reason_code: null,
 });
 const futureSlotSnapshot = buildOpenPositionSnapshotV1({ position, boundary, markObservation: futureSlot });

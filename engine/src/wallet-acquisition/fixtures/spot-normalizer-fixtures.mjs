@@ -1,6 +1,7 @@
 import { SOLANA_SPOT_EVIDENCE_VERSION_V1 } from '../solana-spot-evidence.mjs';
+import { providerSignature } from './test-identities.mjs';
 
-export const WALLET = '7YWHMfk9JZe0LMKx5fYJEE9HDSKPQpJiX5wV8QvB7vvV';
+export const WALLET = '2ywe1NKkny7oUQM2yHRsnPYk2puQhWxWh3Gv98vhorni';
 export const OTHER_WALLET = '9xQeWvG816bUx9EPfEZvT3XgG5QvQx8x6vW9pN5R3m2A';
 export const WSOL = 'So11111111111111111111111111111111111111112';
 export const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -34,7 +35,7 @@ function nativeTransfer(leg_id, economic_group, direction, amount_lamports) {
 export function spotEvidence(name, overrides = {}) {
   return {
     spot_evidence_version: SOLANA_SPOT_EVIDENCE_VERSION_V1,
-    signature: `signature-${name}`,
+    signature: providerSignature(name),
     slot: 1000,
     block_time: 1_780_000_000,
     execution_state: 'succeeded',

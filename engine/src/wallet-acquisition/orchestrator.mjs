@@ -31,6 +31,7 @@ import { validateWalletAcquisitionRequestV1 } from './request-contract.mjs';
 import { buildSolanaSpotEvidenceV1, buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-evidence.mjs';
 import { classifyWalletSourceTransactionV1 } from './transaction-classifier.mjs';
 import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
+import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './solana-identities.mjs';
 
 function fail(code) { failWalletAcquisitionOperationV1(code); }
 function exactObject(value, fields, code) {
@@ -44,7 +45,7 @@ function sameSource(left, right) {
 }
 function validateCanonicalSource(source) {
   exactObject(source, ['signature','slot','block_time','execution_state'], 'pagination_incomplete');
-  if (typeof source.signature !== 'string' || source.signature.length === 0 || source.signature.length > 128
+  if (!isSolanaSignatureV1(source.signature)
       || !Number.isSafeInteger(source.slot) || source.slot < 0 || !Number.isSafeInteger(source.block_time) || source.block_time < 0
       || !['succeeded','failed'].includes(source.execution_state)) fail('pagination_incomplete');
 }
@@ -69,7 +70,7 @@ async function finalizedAnchor(port, request) {
     }
     exactObject(block, ['slot','block_time','blockhash','commitment'], 'finalized_boundary_incoherent');
     if (block.slot !== requestedSlot || !Number.isSafeInteger(block.block_time) || block.block_time < 0
-        || typeof block.blockhash !== 'string' || block.blockhash.length === 0 || block.commitment !== 'finalized') fail('finalized_boundary_incoherent');
+        || !isSolanaPublicKeyV1(block.blockhash) || block.commitment !== 'finalized') fail('finalized_boundary_incoherent');
     state = advanceFinalizedAnchorSearchStateV1(state, 'found');
     return { slot: block.slot, block_time: block.block_time, blockhash: block.blockhash };
   }

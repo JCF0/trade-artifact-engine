@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { WalletAcquisitionError, createWalletHistoryPortV1 } from './provider-port.mjs';
+import { WalletAcquisitionError, beginWalletHistoryAcquisitionV1, createWalletHistoryPortV1 } from './provider-port.mjs';
 
 const names = ['getNetworkIdentityV1','getFinalizedSlotV1','getFinalizedBlockV1','getFinalizedWalletSignaturePageV1','getEnhancedTransactionsBySignatureV1'];
 function capability(overrides = {}) {
@@ -35,4 +35,17 @@ test('allowlisted WalletAcquisitionError codes are laundered into fresh fixed er
   const port = createWalletHistoryPortV1(capability({ getFinalizedSlotV1: async () => { throw forged; } }));
   await assert.rejects(port.getFinalizedSlotV1(), error => error !== forged && error.code === 'provider_auth_failed'
     && error.details !== forged.details && JSON.stringify(error.details) === '{}');
+});
+
+test('acquisition starter is mandatory, receives detached immutable budgets, and survives rewrapping', () => {
+  const budgets = { overall_timeout_ms: 1000 };
+  let received = null;
+  const registered = createWalletHistoryPortV1(capability(), { beginAcquisitionV1(value) { received = value; } });
+  const rewrapped = createWalletHistoryPortV1(registered);
+  assert.equal(beginWalletHistoryAcquisitionV1(rewrapped, budgets), true);
+  assert.deepEqual(received, budgets);
+  assert.ok(Object.isFrozen(received));
+  budgets.overall_timeout_ms = 2000;
+  assert.equal(received.overall_timeout_ms, 1000);
+  assert.throws(() => beginWalletHistoryAcquisitionV1(createWalletHistoryPortV1(capability()), budgets), error => error.code === 'acquisition_capability_denied' && !JSON.stringify(error).includes('2000'));
 });

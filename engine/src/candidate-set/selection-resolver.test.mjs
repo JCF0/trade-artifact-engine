@@ -10,6 +10,7 @@ import { buildDispositionV1, buildEventRecordV1, computeCandidateDigest, compute
 import { resolveCandidateSelectionV1 } from './selection-resolver.mjs';
 import { GENESIS_HASH } from './schema.mjs';
 import { orchestrateTargetedReceiptPackageV1 } from '../receipt-package/targeted-orchestrator.mjs';
+import { providerPublicKey, providerSignature } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
 const QUOTE_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const profiles = { wallet_acquisition_profile: 'wallet_wide_bounded_history_v1', wallet_normalization_profile: 'artifact_wallet_wide_solana_spot_normalization_v1', reconstruction_engine_version: 'artifact_position_ledger_receipt_v1', accounting_method_version: 'weighted_average_position_accounting_v1', mark_profile: null, mark_max_age_seconds: null };
@@ -17,17 +18,18 @@ const inputStatus = { coverage_status: 'complete', acquisition_complete: true, n
 
 function event(fixture, { timestamp, txHash, buy, rawIndex, sourceSlot, tokenAmount, quoteAmount }) {
   return buildEventRecordV1({ source_slot: sourceSlot, slice7_event: {
-    wallet: fixture.wallet, timestamp, tx_hash: txHash, source: 'deterministic_fixture',
-    token_in_mint: buy ? fixture.quoteMint : fixture.tokenMint,
+    wallet: fixture.wallet, timestamp, tx_hash: providerSignature(txHash), source: 'deterministic_fixture',
+    token_in_mint: providerPublicKey(buy ? fixture.quoteMint : fixture.tokenMint),
     token_in_amount: buy ? quoteAmount : tokenAmount,
     token_in_decimals: 6,
-    token_out_mint: buy ? fixture.tokenMint : fixture.quoteMint,
+    token_out_mint: providerPublicKey(buy ? fixture.tokenMint : fixture.quoteMint),
     token_out_amount: buy ? tokenAmount : quoteAmount,
     token_out_decimals: 6, extraction_method: 'events_swap', raw_index: rawIndex,
   } });
 }
 
 function buildFixture(fixture, extraRecords = []) {
+  fixture = { ...fixture, wallet: providerPublicKey(fixture.wallet), tokenMint: providerPublicKey(fixture.tokenMint), quoteMint: providerPublicKey(fixture.quoteMint) };
   const records = [
     event(fixture, { timestamp: fixture.firstEventAt, txHash: fixture.buyTx, buy: true, rawIndex: 0, sourceSlot: 10, tokenAmount: fixture.boughtQty, quoteAmount: fixture.boughtQuote }),
     event(fixture, { timestamp: fixture.lastEventAt, txHash: fixture.sellTx, buy: false, rawIndex: 1, sourceSlot: 20, tokenAmount: fixture.soldQty, quoteAmount: fixture.soldQuote }),
@@ -38,7 +40,7 @@ function buildFixture(fixture, extraRecords = []) {
   const dispositions = records.map(record => buildDispositionV1({ tx_hash: record.slice7_event.tx_hash, slot: record.source_slot, block_time: record.slice7_event.timestamp, disposition_type: 'supported_normalized_event', affected_token_mints: [record.slice7_event.token_in_mint === fixture.quoteMint ? record.slice7_event.token_out_mint : record.slice7_event.token_in_mint], normalized_event_digests: [record.event_digest], finding_digests: [] })).sort((a, b) => a.slot - b.slot || (a.tx_hash < b.tx_hash ? -1 : 1));
   const anchorBlockTime = Math.max(2592000, fixture.lastEventAt + 1);
   const scope = { scope_version: 'wallet_candidate_scope_input_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, wallet: fixture.wallet, window: { window_version: 'fixed_lookback_latest_state_v1', lookback_profile: 'lookback_30d_v1', requested_lookback_seconds: 2592000, initial_before_signature: null, lower_bound: { oldest_allowed_timestamp: anchorBlockTime - 2592000, completion_status: 'proven' } } };
-  const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: anchorBlockTime, anchor_blockhash: 'blockhash', history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
+  const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: anchorBlockTime, anchor_blockhash: providerPublicKey('blockhash'), history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
   const coverage = recomputeCoverageV1({ transactionDispositions: dispositions, normalizedEventRecords: records, activityFindings: [], boundary, inputStatus, paginationTerminalReason: 'historical_bound_reached' });
   const acquisitionResult = buildWalletAcquisitionResultV1({ acquisition_result_version: 'wallet_wide_acquisition_result_v1', scope, profiles, boundary, input_status: inputStatus, coverage, transaction_dispositions: dispositions, normalized_event_records: records, activity_findings: [] });
   const evidenceBundle = buildCandidateEvidenceBundleV1({ acquisitionResult, markObservations: [], profiles });
@@ -47,7 +49,7 @@ function buildFixture(fixture, extraRecords = []) {
   return { candidateSet, evidenceBundle, candidate };
 }
 
-const SIMPLE = Object.freeze({ wallet: 'wallet', tokenMint: 'TOKEN', quoteMint: QUOTE_USDC, firstEventAt: 100, lastEventAt: 200, buyTx: 'buy', sellTx: 'sell', boughtQty: 5, boughtQuote: 10, soldQty: 5, soldQuote: 12 });
+const SIMPLE = Object.freeze({ wallet: providerPublicKey('wallet'), tokenMint: providerPublicKey('TOKEN'), quoteMint: QUOTE_USDC, firstEventAt: 100, lastEventAt: 200, buyTx: providerSignature('buy'), sellTx: providerSignature('sell'), boughtQty: 5, boughtQuote: 10, soldQty: 5, soldQuote: 12 });
 
 function resolveFixture(fixture = SIMPLE) {
   const built = buildFixture(fixture);
@@ -59,7 +61,7 @@ test('resolves only the two-digest handoff into the exact dry-run Slice 7 reques
   assert.equal(result.resolution_version, 'candidate_selection_resolution_v1');
   assert.deepEqual(Object.keys(result), ['resolution_version', 'slice7_request', 'audit']);
   assert.deepEqual(Object.keys(result.slice7_request), ['normalizedEvents', 'inputStatus', 'target', 'profiles', 'mode']);
-  assert.deepEqual(result.slice7_request.normalizedEvents.map(item => item.tx_hash), ['buy', 'sell']);
+  assert.deepEqual(result.slice7_request.normalizedEvents.map(item => item.tx_hash), [SIMPLE.buyTx, SIMPLE.sellTx]);
   assert.deepEqual(result.slice7_request.inputStatus, { acquisition_complete: true, normalization_complete: true, pagination_complete: true, truncated: false, capped: false, partial: false, provider_uncertain: false });
   assert.deepEqual(result.slice7_request.target, { wallet: SIMPLE.wallet, token_mint: SIMPLE.tokenMint, receipt_type: 'closed_position', segment_index: 0 });
   assert.deepEqual(result.slice7_request.profiles, { fetch_profile: 'receipt_scoped_transaction_selection_v1', normalization_profile: 'artifact_solana_spot_normalization_v1', reconstruction_engine_version: 'artifact_position_ledger_receipt_v1', accounting_method_version: 'weighted_average_position_accounting_v1' });
@@ -143,19 +145,19 @@ test('distinguishes candidate-set and evidence-bundle digest failures', () => {
   badSet.payload.counts.candidate_count += 1;
   expectCode({ ...resolverInput(built), candidateSet: badSet }, 'candidate_set_digest_mismatch');
   const badEvidence = structuredClone(built.evidenceBundle);
-  badEvidence.payload.boundary.anchor_blockhash = 'changed';
+  badEvidence.payload.boundary.anchor_blockhash = providerPublicKey('changed');
   expectCode({ ...resolverInput(built), evidenceBundle: badEvidence }, 'evidence_bundle_digest_mismatch');
 
   const rehashedEvidence = structuredClone(built.evidenceBundle);
-  rehashedEvidence.payload.boundary.anchor_blockhash = 'changed';
+  rehashedEvidence.payload.boundary.anchor_blockhash = providerPublicKey('changed');
   rehashedEvidence.evidence_bundle_digest = computeEvidenceBundleDigest(rehashedEvidence);
   expectCode({ ...resolverInput(built), evidenceBundle: rehashedEvidence }, 'evidence_bundle_not_bound_to_set');
 });
 
 test('selecting authentic open, realized-partial, or limited candidates fails closed and status fields do not leak', () => {
-  const openFixture = { wallet: SIMPLE.wallet, tokenMint: 'OPEN-TOKEN', quoteMint: QUOTE_USDC };
-  const partialFixture = { wallet: SIMPLE.wallet, tokenMint: 'PARTIAL-TOKEN', quoteMint: QUOTE_USDC };
-  const limitedFixture = { wallet: SIMPLE.wallet, tokenMint: 'LIMITED-TOKEN', quoteMint: QUOTE_USDC };
+  const openFixture = { wallet: SIMPLE.wallet, tokenMint: providerPublicKey('OPEN-TOKEN'), quoteMint: QUOTE_USDC };
+  const partialFixture = { wallet: SIMPLE.wallet, tokenMint: providerPublicKey('PARTIAL-TOKEN'), quoteMint: QUOTE_USDC };
+  const limitedFixture = { wallet: SIMPLE.wallet, tokenMint: providerPublicKey('LIMITED-TOKEN'), quoteMint: QUOTE_USDC };
   const records = [
     event(openFixture, { timestamp: 300, txHash: 'open-buy', buy: true, rawIndex: 2, sourceSlot: 30, tokenAmount: 2, quoteAmount: 3 }),
     event(partialFixture, { timestamp: 400, txHash: 'partial-buy', buy: true, rawIndex: 3, sourceSlot: 40, tokenAmount: 2, quoteAmount: 3 }),
@@ -196,7 +198,7 @@ test('retains complete same-mint history so a nonzero segment regenerates exactl
   const candidate = built.candidateSet.payload.candidates.find(item => item.projection.token_mint === SIMPLE.tokenMint && item.projection.segment_index === 1);
   const result = resolveCandidateSelectionV1({ candidateSet: built.candidateSet, evidenceBundle: built.evidenceBundle, selection: { candidate_set_digest: built.candidateSet.candidate_set_digest, candidate_digest: candidate.candidate_digest } });
   assert.equal(result.slice7_request.target.segment_index, 1);
-  assert.deepEqual(result.slice7_request.normalizedEvents.map(item => item.tx_hash), ['buy', 'sell', 'buy-2', 'sell-2']);
+  assert.deepEqual(result.slice7_request.normalizedEvents.map(item => item.tx_hash), [SIMPLE.buyTx, SIMPLE.sellTx, providerSignature('buy-2'), providerSignature('sell-2')]);
   assert.equal(result.audit.ledger_candidate_hash, candidate.ledger_candidate_hash);
 });
 

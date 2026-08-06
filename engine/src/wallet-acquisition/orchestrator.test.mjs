@@ -9,7 +9,9 @@ import { canonical, enhanced, fakePort, request, ANCHOR_SLOT, ANCHOR_TIME, BLOCK
 async function expectCode(promise, expected) {
   await assert.rejects(promise, error => error?.code === expected && error.stack === undefined && error.cause === undefined);
 }
-function run(port, req = request()) { return acquireWalletHistoryV1(req, { walletHistoryPort: port }); }
+function run(port, req = request()) {
+  return acquireWalletHistoryV1(req, { walletHistoryPort: createWalletHistoryPortV1(port, { beginAcquisitionV1() {} }) });
+}
 function bodyFor(source, options = {}) { return enhanced(source.signature, { slot: source.slot, timestamp: source.block_time, failed: source.execution_state === 'failed', ...options }); }
 
 const stableSource = canonical('stable', ANCHOR_SLOT, ANCHOR_TIME);
@@ -18,9 +20,20 @@ test('forwards request-specific budgets through hidden acquisition controls with
   let received = null;
   const port = createWalletHistoryPortV1(fakePort({ pages: [[]] }), { beginAcquisitionV1(budgets) { received = budgets; } });
   const req = request({ budgets: { ...request().budgets, max_attempts_per_operation: 2, request_timeout_ms: 500, overall_timeout_ms: 1000 } });
-  await run(port, req);
+  await acquireWalletHistoryV1(req, { walletHistoryPort: port });
   assert.deepEqual(received, req.budgets);
   assert.deepEqual(Object.keys(port), ['getNetworkIdentityV1','getFinalizedSlotV1','getFinalizedBlockV1','getFinalizedWalletSignaturePageV1','getEnhancedTransactionsBySignatureV1']);
+});
+
+test('rejects an unregistered five-method port before invoking any provider method', async () => {
+  let calls = 0;
+  const raw = fakePort({ pages: [[]] });
+  for (const name of Object.keys(raw)) {
+    const original = raw[name];
+    raw[name] = async (...args) => { calls += 1; return original(...args); };
+  }
+  await expectCode(acquireWalletHistoryV1(request(), { walletHistoryPort: raw }), 'acquisition_capability_denied');
+  assert.equal(calls, 0);
 });
 
 test('proves mainnet finalized anchor and handles skipped-slot backward search within the locked budget', async () => {

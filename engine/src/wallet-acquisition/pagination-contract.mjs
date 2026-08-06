@@ -6,6 +6,7 @@ import {
   cloneAndFreezePlainDataV1,
   failWalletAcquisitionV1,
 } from './errors.mjs';
+import { isSolanaSignatureV1 } from './solana-identities.mjs';
 import {
   MAX_PAGES_V1,
   MAX_TRANSACTIONS_V1,
@@ -29,7 +30,7 @@ function sourceEqual(left, right) {
 
 function validateSource(source) {
   assertExactFieldsV1(source, SOURCE_FIELDS, 'pagination_incomplete');
-  if (typeof source.signature !== 'string' || source.signature.length === 0 || source.signature.length > 128) failWalletAcquisitionV1('pagination_incomplete');
+  if (!isSolanaSignatureV1(source.signature)) failWalletAcquisitionV1('pagination_incomplete');
   assertSafeNonnegativeIntegerV1(source.slot, 'pagination_incomplete');
   assertSafeNonnegativeIntegerV1(source.block_time, 'pagination_incomplete');
 }
@@ -197,7 +198,7 @@ export function acceptWalletHistoryPageV1(state, input) {
   if (!['acquiring_head','paginating'].includes(state.phase)) failWalletAcquisitionV1('pagination_incomplete');
   assertExactFieldsV1(input, PAGE_INPUT_FIELDS, 'pagination_incomplete');
   const expectedCursor = state.phase === 'acquiring_head' ? null : state.next_before_signature;
-  if (input.before_signature !== null && (typeof input.before_signature !== 'string' || input.before_signature.length === 0 || input.before_signature.length > 128)) failWalletAcquisitionV1('pagination_cursor_invalid');
+  if (input.before_signature !== null && !isSolanaSignatureV1(input.before_signature)) failWalletAcquisitionV1('pagination_cursor_invalid');
   if (input.before_signature !== expectedCursor) failWalletAcquisitionV1('pagination_cursor_invalid');
   assertPlainDataV1(input.page, 'pagination_incomplete');
   if (!Array.isArray(input.page) || input.page.length > PAGE_SIZE_V1) failWalletAcquisitionV1('pagination_incomplete');

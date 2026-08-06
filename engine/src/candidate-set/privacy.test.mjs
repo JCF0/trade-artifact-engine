@@ -8,6 +8,7 @@ import {
   FIXTURE_MATRIX,
   buildDeterministicCandidateFixtureV1,
 } from './fixtures/deterministic-fixtures.mjs';
+import { providerPublicKey } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
 const forbiddenIdentityKeys = [
   /^(?:raw_)?provider_(?:response|body|url)$/i,
@@ -57,6 +58,7 @@ function allKeys(value) {
 }
 
 function candidateFor(built, tokenMint) {
+  tokenMint = providerPublicKey(tokenMint);
   const candidate = built.candidateSet.payload.candidates.find(item => item.projection.token_mint === tokenMint);
   assert.ok(candidate);
   return candidate;

@@ -6,10 +6,11 @@ import {
   buildReceiptScopedEvidenceV1,
   validateReceiptScopedEvidenceV1,
 } from './receipt-scoped-evidence.mjs';
+import { providerPublicKey, providerSignature } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
-const WALLET = 'wallet';
-const TOKEN = 'TokenMint11111111111111111111111111111111111';
-const OTHER = 'OtherMint11111111111111111111111111111111111';
+const WALLET = providerPublicKey('wallet');
+const TOKEN = providerPublicKey('token');
+const OTHER = providerPublicKey('other');
 const QUOTE = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 function event({ slot, timestamp, tx, token = TOKEN, buy = true, rawIndex }) {
@@ -18,7 +19,7 @@ function event({ slot, timestamp, tx, token = TOKEN, buy = true, rawIndex }) {
     slice7_event: {
       wallet: WALLET,
       timestamp,
-      tx_hash: tx,
+      tx_hash: providerSignature(tx),
       source: 'swap',
       token_in_mint: buy ? QUOTE : token,
       token_in_amount: buy ? 10 : 2,
@@ -44,8 +45,8 @@ assert.equal(scoped.wallet, WALLET);
 assert.equal(scoped.token_mint, TOKEN);
 assert.deepEqual(scoped.source_event_digests, [earlier.event_digest, later.event_digest]);
 assert.deepEqual(scoped.events.map(item => item.raw_index), [0, 1]);
-assert.deepEqual(scoped.events.map(item => item.tx_hash), ['tx-earlier', 'tx-later']);
-assert.ok(!canonicalJson(scoped).includes('tx-other'));
+assert.deepEqual(scoped.events.map(item => item.tx_hash), [providerSignature('tx-earlier'), providerSignature('tx-later')]);
+assert.ok(!canonicalJson(scoped).includes(providerSignature('tx-other')));
 assert.match(scoped.receipt_scoped_evidence_digest, /^[0-9a-f]{64}$/);
 assert.doesNotThrow(() => validateReceiptScopedEvidenceV1(scoped));
 assert.ok(Object.isFrozen(scoped) && Object.isFrozen(scoped.events) && Object.isFrozen(scoped.events[0]));

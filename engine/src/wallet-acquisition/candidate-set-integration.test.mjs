@@ -9,6 +9,7 @@ import { resolveCandidateSelectionV1 } from '../candidate-set/selection-resolver
 import { canonicalJson } from '../candidate-set/serialize.mjs';
 import { orchestrateTargetedReceiptPackageV1 } from '../receipt-package/targeted-orchestrator.mjs';
 import { acquireWalletHistoryV1 } from './orchestrator.mjs';
+import { createWalletHistoryPortV1 } from './provider-port.mjs';
 import { providerPublicKey } from './fixtures/slice4-fixtures.mjs';
 import {
   JUP_MINT_V1,
@@ -25,7 +26,7 @@ import {
 const MEMBER_NAMES = ['archive-record.json', 'canonical-receipt.json', 'economics.json', 'manifest.json', 'verification.json'];
 
 async function buildBridge(fixture) {
-  const acquisitionResult = await acquireWalletHistoryV1(fixture.request, { walletHistoryPort: fixture.port });
+  const acquisitionResult = await acquireWalletHistoryV1(fixture.request, { walletHistoryPort: createWalletHistoryPortV1(fixture.port, { beginAcquisitionV1() {} }) });
   const evidenceBundle = buildCandidateEvidenceBundleV1({
     acquisitionResult,
     markObservations: [],
@@ -183,7 +184,7 @@ test('wallet-wide ambiguity stops before evidence-bundle or candidate-set issuan
   assert.equal(fixture.evidenceFidelity.enhancedBodies, 'clearly_synthetic_enhanced_bodies');
   let acquisitionResult;
   await assert.rejects(
-    async () => { acquisitionResult = await acquireWalletHistoryV1(fixture.request, { walletHistoryPort: fixture.port }); },
+    async () => { acquisitionResult = await acquireWalletHistoryV1(fixture.request, { walletHistoryPort: createWalletHistoryPortV1(fixture.port, { beginAcquisitionV1() {} }) }); },
     error => error.code === 'wallet_wide_impact_unresolved',
   );
   assert.equal(acquisitionResult, undefined);

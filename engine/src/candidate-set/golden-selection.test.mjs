@@ -24,8 +24,10 @@ import {
   buildDeterministicCandidateFixtureV1,
 } from './fixtures/deterministic-fixtures.mjs';
 import { GENESIS_HASH } from './schema.mjs';
+import { providerPublicKey, providerSignature } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
 function candidateFor(built, tokenMint, segmentIndex = undefined) {
+  tokenMint = providerPublicKey(tokenMint);
   const matches = built.candidateSet.payload.candidates.filter(item => item.projection.token_mint === tokenMint
     && (segmentIndex === undefined || item.projection.segment_index === segmentIndex));
   assert.equal(matches.length, 1, `expected exactly one ${tokenMint} candidate`);
@@ -87,7 +89,7 @@ test('multiple closed positions are deterministically ordered and resolve only i
 
 test('reopened nonzero segment retains complete same-mint reconstruction history and exact hash', () => {
   const built = buildDeterministicCandidateFixtureV1(FIXTURE_MATRIX.reopened);
-  const tokenCandidates = built.candidateSet.payload.candidates.filter(item => item.projection.token_mint === 'REOPEN');
+  const tokenCandidates = built.candidateSet.payload.candidates.filter(item => item.projection.token_mint === providerPublicKey('REOPEN'));
   assert.deepEqual(tokenCandidates.map(item => item.projection.segment_index).sort(), [0, 1]);
   assert.deepEqual(
     tokenCandidates.map(item => item.candidate_digest),
@@ -97,7 +99,7 @@ test('reopened nonzero segment retains complete same-mint reconstruction history
   const resolved = resolve(built, later);
   assert.equal(resolved.slice7_request.target.segment_index, 1);
   assert.deepEqual(resolved.slice7_request.normalizedEvents.map(item => item.tx_hash), [
-    'reopen-buy-0', 'reopen-sell-0', 'reopen-buy-1', 'reopen-sell-1',
+    providerSignature('reopen-buy-0'), providerSignature('reopen-sell-0'), providerSignature('reopen-buy-1'), providerSignature('reopen-sell-1'),
   ]);
   assert.equal(resolved.audit.ledger_candidate_hash, later.ledger_candidate_hash);
 });
@@ -174,9 +176,9 @@ test('same timestamp ordering is timestamp, signature code units, source slot, t
   const permuted = buildDeterministicCandidateFixtureV1(FIXTURE_MATRIX.sameTimestamp, { permuteInput: true });
   const records = first.evidenceBundle.payload.normalized_event_records;
   assert.deepEqual(records.map(item => [item.slice7_event.timestamp, item.slice7_event.tx_hash, item.source_slot]), [
-    [100, 'sig-a', 30],
-    [100, 'sig-b', 10],
-    [100, 'sig-c', 20],
+    [100, providerSignature('sig-a'), 30],
+    [100, providerSignature('sig-b'), 10],
+    [100, providerSignature('sig-c'), 20],
   ]);
   assert.equal(canonicalJson(first.acquisitionResult), canonicalJson(permuted.acquisitionResult));
   assert.equal(canonicalJson(first.evidenceBundle), canonicalJson(permuted.evidenceBundle));
@@ -188,25 +190,16 @@ test('same timestamp ordering is timestamp, signature code units, source slot, t
     normalized_event_records: [...first.acquisitionResult.normalized_event_records].reverse(),
     activity_findings: [...first.acquisitionResult.activity_findings].reverse(),
   }), error => error.code === 'event_index_mismatch' || error.code === 'order_invalid');
-  const independentlyPermutedAcquisition = buildWalletAcquisitionResultV1({
+  assert.throws(() => buildWalletAcquisitionResultV1({
     ...first.acquisitionResult,
     transaction_dispositions: [...first.acquisitionResult.transaction_dispositions].reverse(),
     activity_findings: [...first.acquisitionResult.activity_findings].reverse(),
-  });
-  assert.notEqual(canonicalJson(independentlyPermutedAcquisition), canonicalJson(first.acquisitionResult));
-  const canonicalizedEvidence = buildCandidateEvidenceBundleV1({
-    acquisitionResult: independentlyPermutedAcquisition,
-    markObservations: [],
-    profiles: independentlyPermutedAcquisition.profiles,
-  });
-  const canonicalizedSet = buildWalletCandidateSetV1({ evidenceBundle: canonicalizedEvidence });
-  assert.equal(canonicalJson(canonicalizedEvidence), canonicalJson(first.evidenceBundle));
-  assert.equal(canonicalJson(canonicalizedSet), canonicalJson(first.candidateSet));
+  }), error => error.code === 'order_invalid');
 
   const tied = [
-    buildEventRecordV1({ source_slot: 9, slice7_event: { wallet: 'matrix-wallet', timestamp: 100, tx_hash: 'same-signature', source: 'deterministic_fixture', token_in_mint: USDC_MINT, token_in_amount: 2, token_in_decimals: 6, token_out_mint: 'TIE-B', token_out_amount: 1, token_out_decimals: 6, extraction_method: 'events_swap', raw_index: 0 } }),
-    buildEventRecordV1({ source_slot: 8, slice7_event: { wallet: 'matrix-wallet', timestamp: 100, tx_hash: 'same-signature', source: 'deterministic_fixture', token_in_mint: USDC_MINT, token_in_amount: 2, token_in_decimals: 6, token_out_mint: 'TIE-A', token_out_amount: 1, token_out_decimals: 6, extraction_method: 'events_swap', raw_index: 1 } }),
-    buildEventRecordV1({ source_slot: 9, slice7_event: { wallet: 'matrix-wallet', timestamp: 100, tx_hash: 'same-signature', source: 'deterministic_fixture', token_in_mint: USDC_MINT, token_in_amount: 3, token_in_decimals: 6, token_out_mint: 'TIE-C', token_out_amount: 1, token_out_decimals: 6, extraction_method: 'events_swap', raw_index: 2 } }),
+    buildEventRecordV1({ source_slot: 9, slice7_event: { wallet: providerPublicKey('matrix-wallet'), timestamp: 100, tx_hash: providerSignature('same-signature'), source: 'deterministic_fixture', token_in_mint: USDC_MINT, token_in_amount: 2, token_in_decimals: 6, token_out_mint: providerPublicKey('TIE-B'), token_out_amount: 1, token_out_decimals: 6, extraction_method: 'events_swap', raw_index: 0 } }),
+    buildEventRecordV1({ source_slot: 8, slice7_event: { wallet: providerPublicKey('matrix-wallet'), timestamp: 100, tx_hash: providerSignature('same-signature'), source: 'deterministic_fixture', token_in_mint: USDC_MINT, token_in_amount: 2, token_in_decimals: 6, token_out_mint: providerPublicKey('TIE-A'), token_out_amount: 1, token_out_decimals: 6, extraction_method: 'events_swap', raw_index: 1 } }),
+    buildEventRecordV1({ source_slot: 9, slice7_event: { wallet: providerPublicKey('matrix-wallet'), timestamp: 100, tx_hash: providerSignature('same-signature'), source: 'deterministic_fixture', token_in_mint: USDC_MINT, token_in_amount: 3, token_in_decimals: 6, token_out_mint: providerPublicKey('TIE-C'), token_out_amount: 1, token_out_decimals: 6, extraction_method: 'events_swap', raw_index: 2 } }),
   ].sort(compareNormalizedEventRecordsV1);
   assert.equal(tied[0].source_slot, 8);
   assert.deepEqual(tied.slice(1).map(item => item.event_digest), [...tied.slice(1).map(item => item.event_digest)].sort());
@@ -216,14 +209,15 @@ test('available, missing, stale, after-boundary, and quote-mismatch marks preser
   const boundary = {
     boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta',
     genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 1000,
-    anchor_blockhash: 'mark-boundary', history_complete_through_anchor: true, lower_bound_completion_proven: true,
+    anchor_blockhash: providerPublicKey('mark-boundary'), history_complete_through_anchor: true, lower_bound_completion_proven: true,
     boundary_status: 'proven',
   };
-  const position = { candidate_type: 'open_snapshot', token_mint: 'MARK-TOKEN', quote_mint: USDC_MINT, remaining_qty: 4, remaining_cost_basis_quote: 8 };
-  const available = buildMarkObservationV1({ token_mint: 'MARK-TOKEN', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 999, source_slot: 99, reason_code: null });
-  const stale = buildMarkObservationV1({ token_mint: 'MARK-TOKEN', quote_mint: USDC_MINT, observation_status: 'unavailable', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: null, observed_at: null, source_slot: null, reason_code: 'mark_stale' });
-  const after = buildMarkObservationV1({ token_mint: 'MARK-TOKEN', quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 1001, source_slot: 99, reason_code: null });
-  const mismatch = buildMarkObservationV1({ token_mint: 'MARK-TOKEN', quote_mint: 'OTHER-QUOTE', observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 999, source_slot: 99, reason_code: null });
+  const markToken = providerPublicKey('MARK-TOKEN');
+  const position = { candidate_type: 'open_snapshot', token_mint: markToken, quote_mint: USDC_MINT, remaining_qty: 4, remaining_cost_basis_quote: 8 };
+  const available = buildMarkObservationV1({ token_mint: markToken, quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 999, source_slot: 99, reason_code: null });
+  const stale = buildMarkObservationV1({ token_mint: markToken, quote_mint: USDC_MINT, observation_status: 'unavailable', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: null, observed_at: null, source_slot: null, reason_code: 'mark_stale' });
+  const after = buildMarkObservationV1({ token_mint: markToken, quote_mint: USDC_MINT, observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 1001, source_slot: 99, reason_code: null });
+  const mismatch = buildMarkObservationV1({ token_mint: markToken, quote_mint: providerPublicKey('OTHER-QUOTE'), observation_status: 'available', source_profile: 'direct_quote_mark_v1', mark_price_raw_quote: 3, observed_at: 999, source_slot: 99, reason_code: null });
   const cases = [
     [available, 'available', 'fresh', 12],
     [null, 'unavailable', 'unavailable', null],
@@ -246,7 +240,7 @@ test('available, missing, stale, after-boundary, and quote-mismatch marks preser
 test('mark variants flow through evidence and candidate-set construction with boundary failures closed', () => {
   const base = structuredClone(FIXTURE_MATRIX.openAndPartialHistory);
   const projectionFor = spec => buildDeterministicCandidateFixtureV1(spec).candidateSet.payload.candidates
-    .find(candidate => candidate.projection.token_mint === 'CLEAN-OPEN').projection;
+    .find(candidate => candidate.projection.token_mint === providerPublicKey('CLEAN-OPEN')).projection;
 
   const available = projectionFor(structuredClone(base));
   assert.equal(available.valuation_status, 'mark_available');
@@ -380,7 +374,7 @@ test('hostile graphs and bounded scale reject safely without accessor or proxy i
 
   const boundary = {
     boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH,
-    commitment: 'finalized', anchor_slot: 5000, anchor_block_time: 5000, anchor_blockhash: 'scale-boundary',
+    commitment: 'finalized', anchor_slot: 5000, anchor_block_time: 5000, anchor_blockhash: providerPublicKey('scale-boundary'),
     history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven',
   };
   const dense = Array.from({ length: 4000 }, (_, index) => ({ disposition_type: 'unrelated_activity', slot: index + 1, block_time: index + 1 }));

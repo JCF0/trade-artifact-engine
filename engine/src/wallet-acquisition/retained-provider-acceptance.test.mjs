@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { canonicalJson } from '../candidate-set/serialize.mjs';
 import { acquireWalletHistoryV1 } from './orchestrator.mjs';
+import { createWalletHistoryPortV1 } from './provider-port.mjs';
 import { projectHeliusEnhancedTransactionV1 } from './helius-enhanced-projector.mjs';
 import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
 import {
@@ -17,7 +18,7 @@ import {
 } from './fixtures/retained-provider-fixtures.mjs';
 
 async function acquire(fixture) {
-  return acquireWalletHistoryV1(fixture.request, { walletHistoryPort: fixture.port });
+  return acquireWalletHistoryV1(fixture.request, { walletHistoryPort: createWalletHistoryPortV1(fixture.port, { beginAcquisitionV1() {} }) });
 }
 
 function eventValues(result) {

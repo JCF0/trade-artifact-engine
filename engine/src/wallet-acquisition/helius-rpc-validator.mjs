@@ -1,6 +1,7 @@
 import { assertPlainDataV1, cloneAndFreezePlainDataV1 } from './errors.mjs';
 import { SOLANA_MAINNET_GENESIS_HASH } from './request-contract.mjs';
 import { failWalletAcquisitionOperationV1 } from './provider-port.mjs';
+import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './solana-identities.mjs';
 
 function malformed() { failWalletAcquisitionOperationV1('malformed_provider_response'); }
 function safePlain(value) { try { assertPlainDataV1(value, 'invalid_acquisition_request'); } catch { malformed(); } }
@@ -13,26 +14,7 @@ function rpcResult(value) {
   return value.result;
 }
 function safeInteger(value) { return Number.isSafeInteger(value) && value >= 0; }
-const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-function decodedBase58Length(value) {
-  if (typeof value !== 'string' || value.length === 0) return null;
-  const bytes = [0];
-  for (const character of value) {
-    let carry = BASE58.indexOf(character);
-    if (carry < 0) return null;
-    for (let index = 0; index < bytes.length; index += 1) {
-      carry += bytes[index] * 58;
-      bytes[index] = carry & 0xff;
-      carry >>= 8;
-    }
-    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
-  }
-  let leadingZeroes = 0;
-  while (leadingZeroes < value.length && value[leadingZeroes] === '1') leadingZeroes += 1;
-  return bytes.length + leadingZeroes - (bytes.length === 1 && bytes[0] === 0 ? 1 : 0);
-}
-export function isSolanaPublicKeyV1(value) { return decodedBase58Length(value) === 32; }
-export function isSolanaSignatureV1(value) { return decodedBase58Length(value) === 64; }
+export { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './solana-identities.mjs';
 function detached(value) { return cloneAndFreezePlainDataV1(value, 'invalid_acquisition_request'); }
 
 export function validateHeliusRpcGenesisResponseV1(value) {

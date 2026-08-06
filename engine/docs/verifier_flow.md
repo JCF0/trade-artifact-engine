@@ -254,3 +254,5 @@ node src/mint/verify-mints.mjs <mintResultsPath> [--network devnet|mainnet]
 ```
 
 This performs Levels 2–3 automatically. For Level 5, the full pipeline can be re-run on the same wallet and the output compared, subject to the same provider-attested wallet-history completeness boundary.
+
+For v1.14 patch 3, the authoritative acquisition result is not established by digest consistency alone: complete disposition accounting, exact reference/set equality, canonical order/dense indexes, quote/finding relationships, and native Solana identity widths are revalidated at exported boundaries. Wallet-history completeness remains provider-attested rather than a trustless cryptographic proof. Deterministic remediation is complete only after the tests pass, and one final controlled live validation is required after this patch before tagging v1.14.0.

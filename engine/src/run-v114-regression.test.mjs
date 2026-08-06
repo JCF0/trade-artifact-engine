@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { discoverWalletAcquisitionTestsV1, parseTopLevelTapV1, validateWalletTestExecutionSetV1 } from './run-v114-regression.mjs';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const RUNNER_PATH = resolve(REPOSITORY_ROOT, 'engine/src/run-v114-regression.mjs');
@@ -31,26 +32,78 @@ test('v1.14 runner discovers the complete wallet-acquisition suite and names the
     .filter(name => name.endsWith('.test.mjs'))
     .sort();
   assert.ok(testFiles.length > 0);
-  assert.match(runner, /readdirSync\(WALLET_ACQUISITION_ROOT/);
+  assert.match(runner, /readdirSync\(root, \{ withFileTypes: true \}\)/);
   assert.match(runner, /endsWith\('\.test\.mjs'\)/);
   assert.ok(testFiles.includes('retained-provider-acceptance.test.mjs'));
   assert.ok(testFiles.includes('candidate-set-integration.test.mjs'));
   assert.match(runner, /retained-provider-acceptance\.test\.mjs/);
   assert.match(runner, /candidate-set-integration\.test\.mjs/);
+  assert.match(runner, /run-controlled-live-validation\.test\.mjs/);
+  assert.deepEqual(discoverWalletAcquisitionTestsV1().map(path => basename(path)), testFiles);
+  assert.match(runner, /for \(const file of files\)/);
+  assert.match(runner, /strictTapChild\(file/);
 });
 
-test('v1.14 runner is direct-Node, safety-adapted, capability-minimal, and excludes live and commit-bearing paths', () => {
+test('v1.14 runner is direct-Node, safety-adapted, excludes a live command, and accurately names offline operator fixtures', () => {
   const runner = readFileSync(RUNNER_PATH, 'utf8');
   assert.match(runner, /safety-adapted v1\.13 baseline gate/);
   assert.match(runner, /process\.execPath/);
   assert.match(runner, /run-v113-regression\.mjs/);
   assert.doesNotMatch(runner, /spawnSync\(\s*['"]npm['"]/);
-  assert.doesNotMatch(runner, /run-live|live-validation|controlled-live/i);
+  assert.doesNotMatch(runner, /run-controlled-live-validation\.mjs['"]/);
+  assert.match(runner, /Offline controlled-live operator tests use injected ports/);
   assert.doesNotMatch(runner, /process\.env|\.env\b|HELIUS_API_KEY/);
-  assert.doesNotMatch(runner, /targeted-orchestrator\.test\.mjs|package-store|publication|upload|signing|minting|deployment/);
+  assert.doesNotMatch(runner, /targeted-orchestrator\.test\.mjs|from ['"][^'"]*(?:package-store|publication|upload|signing|minting|deployment)/);
 });
 
-test('v1.14 documentation records the completed final post-remediation live gate', () => {
+function tap(records, plan = records.length, summaries = {}) {
+  const pass = records.filter(record => /^ok\b/.test(record) && !/#\s*(?:SKIP|TODO|CANCELLED)/i.test(record)).length;
+  const fail = records.filter(record => /^not ok\b/.test(record) && !/#\s*(?:SKIP|TODO|CANCELLED)/i.test(record)).length;
+  const skipped = records.filter(record => /#\s*SKIP/i.test(record)).length;
+  const todo = records.filter(record => /#\s*TODO/i.test(record)).length;
+  const cancelled = records.filter(record => /#\s*CANCELLED/i.test(record)).length;
+  const counts = { tests: records.length, pass, fail, cancelled, skipped, todo, ...summaries };
+  return `TAP version 13\n${records.join('\n')}\n1..${plan}\n${Object.entries(counts).map(([name, value]) => `# ${name} ${value}`).join('\n')}\n`;
+}
+
+test('v1.14 TAP parser accepts one complete dense passing stream', () => {
+  assert.deepEqual(parseTopLevelTapV1(tap(['ok 1 - first', 'ok 2 - second'])), {
+    tests: 2, pass: 2, fail: 0, skipped: 0, todo: 0, cancelled: 0,
+  });
+});
+
+test('v1.14 TAP parser fails closed against ordinal, plan, status, directive, summary, and truncation attacks', () => {
+  const valid = tap(['ok 1 - first', 'ok 2 - second']);
+  for (const attack of [
+    tap(['ok 1 - first', 'ok 1 - duplicate']),
+    tap(['ok 1 - first'], 2),
+    tap(['ok 1 - first', 'ok 3 - sparse']),
+    valid.replace('1..2\n', '1..2\n1..2\n'),
+    valid.replace('1..2\n', ''),
+    valid.replace('1..2\n', '1..2\nok 3 - after\n'),
+    tap(['ok 1 - first'], 1, { pass: 0, fail: 1 }),
+    tap(['not ok 1 - failing'], 1, { pass: 1, fail: 0 }),
+    tap(['ok 1 - skipped # SKIP']),
+    tap(['ok 1 - todo # TODO']),
+    tap(['not ok 1 - cancelled # CANCELLED']),
+    valid.slice(0, -1),
+    `${valid}garbage\n`,
+  ]) assert.throws(() => parseTopLevelTapV1(attack));
+});
+
+test('wallet-acquisition discovery rejects alternate roots and returns every current file exactly once', () => {
+  const discovered = discoverWalletAcquisitionTestsV1();
+  assert.equal(new Set(discovered).size, discovered.length);
+  assert.deepEqual(discovered.map(path => basename(path)), readdirSync(WALLET_ACQUISITION_ROOT)
+    .filter(name => name.endsWith('.test.mjs')).sort());
+  assert.throws(() => discoverWalletAcquisitionTestsV1(resolve(WALLET_ACQUISITION_ROOT, '..')));
+  assert.equal(validateWalletTestExecutionSetV1(discovered, discovered), true);
+  assert.throws(() => validateWalletTestExecutionSetV1(discovered, discovered.slice(1)));
+  assert.throws(() => validateWalletTestExecutionSetV1(discovered, [...discovered, discovered[0]]));
+  assert.throws(() => validateWalletTestExecutionSetV1(discovered, [...discovered.slice(0, -1), resolve(WALLET_ACQUISITION_ROOT, '../unexpected.test.mjs')]));
+});
+
+test('v1.14 documentation records patch 3 remediation and the required final post-patch live gate', () => {
   const documents = Object.fromEntries(DOCUMENTATION_PATHS.map(path => [path, read(path)]));
   const combined = Object.values(documents).join('\n');
   for (const obsolete of [
@@ -58,8 +111,8 @@ test('v1.14 documentation records the completed final post-remediation live gate
     /future live adapter must prove/i,
     /does not acquire live wallet history/i,
     /live validation (?:has not occurred|was not performed)/i,
-    /one fresh post-remediation controlled live validation is still required before tagging/i,
-    /fresh post-remediation controlled live validation is still required/i,
+    /live release gate is complete/i,
+    /no further live (?:rerun|re-run) is required before tagging v1\.14\.0/i,
   ]) assert.doesNotMatch(combined, obsolete);
   assert.match(combined, /provider-attested/i);
   assert.match(combined, /not (?:a )?trustless cryptographic proof/i);
@@ -94,8 +147,8 @@ test('v1.14 documentation records the completed final post-remediation live gate
   assert.match(combined, /API key, URLs, headers, provider prose, and raw provider bodies (?:were )?absent/i);
   assert.match(combined, /final hardening changed no aggregate classifications relative to the previous run/i);
   assert.match(combined, /zero candidates was a valid result, not a validation failure/i);
-  assert.match(combined, /live release gate is complete/i);
-  assert.match(combined, /no further live (?:rerun|re-run) is required before tagging v1\.14\.0/i);
+  assert.match(combined, /one final controlled live validation is required after this patch before tagging/i);
+  assert.match(combined, /deterministic remediation is complete only after (?:the )?tests pass/i);
   assert.match(combined, /v1\.14\.0 is not yet tagged/i);
   assert.match(combined, /tracked tree intentionally contains (?:exactly )?(?:the )?five exact retained Helius fixture bodies|tracked tree intentionally contains exactly five retained Helius fixture bodies/i);
   assert.match(combined, /controlled-live raw responses are not retained/i);

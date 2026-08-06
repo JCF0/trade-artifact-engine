@@ -15,18 +15,19 @@ import {
   buildCandidateSelectionProjectionV1,
   validateCandidateSelectionProjectionV1,
 } from './selection-projection.mjs';
+import { providerPublicKey, providerSignature } from '../wallet-acquisition/fixtures/test-identities.mjs';
 
-const WALLET = 'wallet';
-const TOKEN = 'TokenMint11111111111111111111111111111111111';
-const OTHER = 'OtherMint11111111111111111111111111111111111';
+const WALLET = providerPublicKey('wallet');
+const TOKEN = providerPublicKey('token');
+const OTHER = providerPublicKey('other');
 const QUOTE = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const profiles = { wallet_acquisition_profile: 'wallet_wide_bounded_history_v1', wallet_normalization_profile: 'artifact_wallet_wide_solana_spot_normalization_v1', reconstruction_engine_version: 'artifact_position_ledger_receipt_v1', accounting_method_version: 'weighted_average_position_accounting_v1', mark_profile: null, mark_max_age_seconds: null };
 const scope = { scope_version: 'wallet_candidate_scope_input_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, wallet: WALLET, window: { window_version: 'fixed_lookback_latest_state_v1', lookback_profile: 'lookback_30d_v1', requested_lookback_seconds: 2592000, initial_before_signature: null, lower_bound: { oldest_allowed_timestamp: 1, completion_status: 'proven' } } };
-const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 2592001, anchor_blockhash: 'blockhash', history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
+const boundary = { boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: 'solana', network: 'mainnet-beta', genesis_hash: GENESIS_HASH, commitment: 'finalized', anchor_slot: 100, anchor_block_time: 2592001, anchor_blockhash: providerPublicKey('blockhash'), history_complete_through_anchor: true, lower_bound_completion_proven: true, boundary_status: 'proven' };
 const inputStatus = { coverage_status: 'complete', acquisition_complete: true, normalization_complete: true, classification_complete: true, pagination_complete: true, historical_bound_proven: true, chain_boundary_proven: true, truncated: false, capped: false, partial: false, provider_uncertain: false };
 
 function raw({ token = TOKEN, timestamp, tx, rawIndex, buy = true }) {
-  return { wallet: WALLET, timestamp, tx_hash: tx, source: 'swap', token_in_mint: buy ? QUOTE : token, token_in_amount: buy ? 10 : 5, token_in_decimals: 6, token_out_mint: buy ? token : QUOTE, token_out_amount: buy ? 5 : 12, token_out_decimals: 6, extraction_method: 'balance_delta', raw_index: rawIndex };
+  return { wallet: WALLET, timestamp, tx_hash: providerSignature(tx), source: 'swap', token_in_mint: buy ? QUOTE : token, token_in_amount: buy ? 10 : 5, token_in_decimals: 6, token_out_mint: buy ? token : QUOTE, token_out_amount: buy ? 5 : 12, token_out_decimals: 6, extraction_method: 'balance_delta', raw_index: rawIndex };
 }
 
 function evidenceFor(specs) {
@@ -49,7 +50,7 @@ test('projects every target event, excludes unrelated events, and builds a detac
   const projection = buildCandidateSelectionProjectionV1({ evidenceBundle, tokenMint: TOKEN });
   assert.equal(projection.projection_version, SELECTION_PROJECTION_VERSION);
   assert.equal(projection.projection_mapping.projection_mapping_version, PROJECTION_MAPPING_VERSION);
-  assert.deepEqual(projection.receipt_scoped_evidence.events.map(event => event.tx_hash), ['buy', 'sell']);
+  assert.deepEqual(projection.receipt_scoped_evidence.events.map(event => event.tx_hash), [providerSignature('buy'), providerSignature('sell')]);
   assert.deepEqual(projection.receipt_scoped_evidence.events.map(event => event.raw_index), [0, 1]);
   assert.deepEqual(Object.keys(projection.receipt_scoped_evidence.events[0]), [
     'wallet', 'timestamp', 'tx_hash', 'source',
@@ -76,7 +77,7 @@ test('uses target-acquisition timestamp/signature order even when same-time sour
     { slot: 11, timestamp: 100, tx: 'a-signature', rawIndex: 0, buy: false },
   ]);
   const projection = buildCandidateSelectionProjectionV1({ evidenceBundle, tokenMint: TOKEN });
-  assert.deepEqual(projection.receipt_scoped_evidence.events.map(event => event.tx_hash), ['a-signature', 'z-signature']);
+  assert.deepEqual(projection.receipt_scoped_evidence.events.map(event => event.tx_hash), [providerSignature('a-signature'), providerSignature('z-signature')]);
   assert.deepEqual(projection.projection_mapping.entries.map(entry => entry.projected_raw_index), [0, 1]);
 });
 
@@ -173,7 +174,7 @@ test('rejects target-affecting unsupported or ambiguous findings before projecti
     { slot: 12, timestamp: 200, tx: 'sell', rawIndex: 1, buy: false },
   ]);
   for (const [findingType, reasonCode] of [['unsupported_activity', 'unsupported_swap_shape'], ['ambiguous_activity', 'ambiguous_swap_direction']]) {
-    const source = { tx_hash: `${findingType}-target`, slot: 30, block_time: 300 };
+    const source = { tx_hash: providerSignature(`${findingType}-target`), slot: 30, block_time: 300 };
     const finding = buildActivityFindingV1({
       finding_type: findingType, severity: 'candidate_blocking', impact_scope: 'token_specific',
       time_range: { first_observed_at: 300, last_observed_at: 300, first_observed_slot: 30, last_observed_slot: 30 },

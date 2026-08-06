@@ -86,18 +86,13 @@ test('malformed disposition accounting cannot reach a content-addressed evidence
     ...dispositionInput,
     affected_token_mints: [JUP_GOLDEN.quoteMint, JUP_GOLDEN.tokenMint].sort(),
   });
-  const malformed = buildWalletAcquisitionResultV1({
-    ...structuredClone(normal.acquisitionResult),
-    transaction_dispositions: [
-      malformedDisposition,
-      ...normal.acquisitionResult.transaction_dispositions.slice(1),
-    ],
-  });
   assert.throws(
-    () => buildCandidateEvidenceBundleV1({
-      acquisitionResult: malformed,
-      markObservations: [],
-      profiles: malformed.profiles,
+    () => buildWalletAcquisitionResultV1({
+      ...structuredClone(normal.acquisitionResult),
+      transaction_dispositions: [
+        malformedDisposition,
+        ...normal.acquisitionResult.transaction_dispositions.slice(1),
+      ],
     }),
     error => error.code === 'event_disposition_mismatch',
   );
