@@ -103,7 +103,7 @@ test('wallet-acquisition discovery rejects alternate roots and returns every cur
   assert.throws(() => validateWalletTestExecutionSetV1(discovered, [...discovered.slice(0, -1), resolve(WALLET_ACQUISITION_ROOT, '../unexpected.test.mjs')]));
 });
 
-test('v1.14 documentation records patch 3 remediation and the required final post-patch live gate', () => {
+test('v1.14 documentation records the completed final post-patch-3 live release gate', () => {
   const documents = Object.fromEntries(DOCUMENTATION_PATHS.map(path => [path, read(path)]));
   const combined = Object.values(documents).join('\n');
   for (const obsolete of [
@@ -111,8 +111,9 @@ test('v1.14 documentation records patch 3 remediation and the required final pos
     /future live adapter must prove/i,
     /does not acquire live wallet history/i,
     /live validation (?:has not occurred|was not performed)/i,
-    /live release gate is complete/i,
-    /no further live (?:rerun|re-run) is required before tagging v1\.14\.0/i,
+    /one final controlled live validation is required after (?:this )?patch(?: 3)? before tagging/i,
+    /one final post-patch-3 controlled live validation is required/i,
+    /do not satisfy this post-patch rerun requirement/i,
   ]) assert.doesNotMatch(combined, obsolete);
   assert.match(combined, /provider-attested/i);
   assert.match(combined, /not (?:a )?trustless cryptographic proof/i);
@@ -122,10 +123,15 @@ test('v1.14 documentation records patch 3 remediation and the required final pos
   assert.match(combined, /distinct later post-hardening/i);
   assert.match(combined, /post-hardening[^\n]*PASS/i);
   assert.match(combined, /final post-remediation controlled live validation[^\n]*PASS/i);
+  assert.match(combined, /final post-patch-3 controlled live validation[^\n]*PASS/i);
+  assert.match(combined, /final authoritative release-gate run/i);
   assert.match(combined, /one approved public Solana mainnet-beta wallet/i);
   assert.match(combined, /lookback_7d_v1/);
   assert.match(combined, /finalized anchor slot[^\n]*437570354/i);
   assert.match(combined, /finalized anchor block time[^\n]*1786013791/i);
+  assert.match(combined, /finalized anchor slot[^\n]*437600788/i);
+  assert.match(combined, /finalized anchor block time[^\n]*1786026671/i);
+  assert.match(combined, /lower timestamp bound[^\n]*1785421871/i);
   assert.match(combined, /two pages/i);
   assert.match(combined, /historical_bound_reached|historical bound reached/i);
   assert.match(combined, /76 canonical signatures/i);
@@ -144,10 +150,15 @@ test('v1.14 documentation records patch 3 remediation and the required final pos
   assert.match(combined, /live candidate resolution and Slice 7 were not exercised/i);
   assert.match(combined, /Slice 7 (?:was )?not invoked because there was no selectable candidate/i);
   assert.match(combined, /no package-store (?:write|operation), publication, upload, signing, minting, or deployment/i);
-  assert.match(combined, /API key, URLs, headers, provider prose, and raw provider bodies (?:were )?absent/i);
-  assert.match(combined, /final hardening changed no aggregate classifications relative to the previous run/i);
+  assert.match(combined, /credentials, URLs, headers, provider prose, response bodies, and raw provider bodies (?:were )?absent/i);
+  assert.match(combined, /no retry attempt actually began/i);
+  assert.match(combined, /no HTTP attempt terminated because of its effective transport timeout/i);
+  assert.match(combined, /patch 3 changed no aggregate classification relative to the prior run/i);
+  assert.match(combined, /newer finalized anchor naturally changed (?:the )?content-addressed digests/i);
   assert.match(combined, /zero candidates was a valid result, not a validation failure/i);
-  assert.match(combined, /one final controlled live validation is required after this patch before tagging/i);
+  assert.match(combined, /no receipt or package digest (?:was )?issued/i);
+  assert.match(combined, /live release gate is complete/i);
+  assert.match(combined, /no further live (?:rerun|re-run) is required before tagging v1\.14\.0/i);
   assert.match(combined, /deterministic remediation is complete only after (?:the )?tests pass/i);
   assert.match(combined, /v1\.14\.0 is not yet tagged/i);
   assert.match(combined, /tracked tree intentionally contains (?:exactly )?(?:the )?five exact retained Helius fixture bodies|tracked tree intentionally contains exactly five retained Helius fixture bodies/i);
@@ -156,10 +167,10 @@ test('v1.14 documentation records patch 3 remediation and the required final pos
   assert.doesNotMatch(documents['README.md'], /fully verifiable trade|Anyone can independently|Anyone can verify a trade receipt independently|full re-derivation from raw transactions/i);
   assert.doesNotMatch(documents['engine/docs/verifier_flow.md'], /No proprietary tools, API keys, or trust relationships required|Full Re-Derivation \(Highest Assurance\)|Trades actually happened as claimed|strongest possible verification/i);
   for (const digest of [
-    'f2566c45d0971dfacf195521b4938eaf7ce5bd685f3ac7c07d101a42bd52921f',
-    '2e5af4531c0e42a12cfb611e476d5fd8f0d9237d2e6476a23554be04066689b6',
-    'df4f97aa7030006695f4fe42845277c59cc815f15125b0bfe743d7038608965a',
-    '5beff3e59820576b5e8d8c76943ce65c89ca0e62f0423be5a2b15c7c133d61a1',
+    'd2973f4f97745880d05dd75100071d22b339ac12366db798730f7b7eea8b1ef5',
+    'd1ae883f9b41566fd547a79f2dfcb7894e8e7e827e7229abfba1a5c0606f93d3',
+    'f463e5cd140b97fba00ad25eb86244ab7bad03dd97412f70d2613aa4ca809dfd',
+    '86400e78a0bc28b0367dcd4a8787abf49e58a68939590e8e0e5a449bf6084a61',
   ]) assert.match(combined, new RegExp(digest));
   assert.match(combined, /1,951 bytes/);
   assert.match(combined, /(?:mode|permissions) (?:were )?`?0600`?/i);
