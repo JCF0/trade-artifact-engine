@@ -12,7 +12,11 @@ import { canonicalJson, sha256CanonicalJson } from '../candidate-set/serialize.m
 import { orchestrateTargetedReceiptPackageV1 } from '../receipt-package/targeted-orchestrator.mjs';
 import { createHeliusWalletHistoryPortV1 } from './helius-wallet-history-adapter.mjs';
 import { acquireWalletHistoryV1 } from './orchestrator.mjs';
-import { beginWalletHistoryAcquisitionV1, createWalletHistoryPortV1 } from './provider-port.mjs';
+import {
+  beginWalletHistoryAcquisitionV1,
+  createWalletHistoryPortV1,
+  getWalletAcquisitionFailureDiagnosticV1,
+} from './provider-port.mjs';
 import {
   LOOKBACK_SECONDS_BY_PROFILE_V1,
   MAX_ANCHOR_SEARCH_SLOTS_V1,
@@ -22,6 +26,7 @@ import {
 } from './request-contract.mjs';
 
 export const CONTROLLED_LIVE_VALIDATION_VERSION_V1 = 'artifact_v1.14_controlled_live_validation_v1';
+export const CONTROLLED_LIVE_VALIDATION_VERSION_V2 = 'artifact_v1.14_controlled_live_validation_v2';
 const REPOSITORY_ROOT = realpathSync(new URL('../../../', import.meta.url));
 const FLAG_FIELDS = Object.freeze({
   '--wallet': 'wallet',
@@ -241,7 +246,7 @@ function budgetsForReport(request) {
 }
 function baseReport(request) {
   return {
-    validation_version: CONTROLLED_LIVE_VALIDATION_VERSION_V1,
+    validation_version: CONTROLLED_LIVE_VALIDATION_VERSION_V2,
     status: 'safe_failure',
     wallet: request.wallet,
     chain: request.chain,
@@ -368,7 +373,19 @@ export async function runControlledLiveValidationV1(optionInput, dependencyInput
     writeReport(reportPath, report);
     return Object.freeze({ status: 'pass', report: Object.freeze(report) });
   } catch (error) {
-    const report = { ...baseReport(request), error_code: ownSafeCode(error) };
+    const errorCode = ownSafeCode(error);
+    const report = { ...baseReport(request), error_code: errorCode };
+    if (errorCode === 'malformed_provider_response') {
+      const diagnostic = getWalletAcquisitionFailureDiagnosticV1(error);
+      report.failure_diagnostic = diagnostic !== null && diagnostic.stage !== null && diagnostic.operation !== null
+        ? diagnostic
+        : Object.freeze({
+          diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+          stage: 'internal_boundary',
+          operation: 'none',
+          reason: 'unlocalized_malformed_response',
+        });
+    }
     writeReport(reportPath, report);
     return Object.freeze({ status: 'safe_failure', report: Object.freeze(report) });
   } finally {

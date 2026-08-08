@@ -3,7 +3,7 @@ import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './helius-rpc-validator
 import { buildSolanaSpotEvidenceV1, isRecognizedSpotProgramV1 } from './solana-spot-evidence.mjs';
 import { failWalletAcquisitionOperationV1 } from './provider-port.mjs';
 
-function malformed() { failWalletAcquisitionOperationV1('malformed_provider_response'); }
+function malformed() { failWalletAcquisitionOperationV1('malformed_provider_response', 'enhanced_transaction_shape_invalid'); }
 function safeInteger(value) { return Number.isSafeInteger(value) && value >= 0; }
 function raw(value, { allowZero = false } = {}) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) malformed();
@@ -427,6 +427,6 @@ export function projectHeliusEnhancedTransactionV1(input) {
     });
   } catch (error) {
     if (error?.name === 'WalletAcquisitionError') throw error;
-    malformed();
+    failWalletAcquisitionOperationV1('malformed_provider_response', 'enhanced_projection_internal_rejection');
   }
 }

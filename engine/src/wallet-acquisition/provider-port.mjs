@@ -22,6 +22,25 @@ export const WALLET_ACQUISITION_OPERATION_ERROR_CODES_V1 = Object.freeze([
 const CODES = new Set(WALLET_ACQUISITION_OPERATION_ERROR_CODES_V1);
 const MESSAGES = Object.freeze(Object.fromEntries(WALLET_ACQUISITION_OPERATION_ERROR_CODES_V1.map(code => [code, code.replaceAll('_', ' ')])));
 const ACQUISITION_STARTERS = new WeakMap();
+export const WALLET_ACQUISITION_FAILURE_STAGES_V1 = Object.freeze([
+  'request_binding','finalized_anchor','canonical_pagination','latest_state_recheck',
+  'enhanced_history','enhanced_projection','internal_boundary',
+]);
+export const WALLET_ACQUISITION_FAILURE_OPERATIONS_V1 = Object.freeze([
+  'acquisition_budget_binding','network_identity','finalized_slot','finalized_block',
+  'canonical_signature_page','enhanced_address_history','enhanced_transaction_projection','none',
+]);
+export const WALLET_ACQUISITION_MALFORMED_REASONS_V1 = Object.freeze([
+  'invalid_json','rpc_envelope_invalid','rpc_genesis_result_invalid','rpc_slot_result_invalid',
+  'rpc_block_result_invalid','rpc_signature_page_invalid','enhanced_page_invalid',
+  'enhanced_duplicate_signature','enhanced_order_invalid','enhanced_page_incomplete',
+  'enhanced_cursor_repeated','enhanced_transaction_shape_invalid',
+  'enhanced_projection_internal_rejection','provider_value_unsafe','unlocalized_malformed_response',
+]);
+const FAILURE_STAGES = new Set(WALLET_ACQUISITION_FAILURE_STAGES_V1);
+const FAILURE_OPERATIONS = new Set(WALLET_ACQUISITION_FAILURE_OPERATIONS_V1);
+const MALFORMED_REASONS = new Set(WALLET_ACQUISITION_MALFORMED_REASONS_V1);
+const FAILURE_DIAGNOSTICS = new WeakMap();
 
 export class WalletAcquisitionError extends Error {
   constructor(code) {
@@ -33,7 +52,13 @@ export class WalletAcquisitionError extends Error {
     this.details = Object.freeze({});
   }
 }
-export function failWalletAcquisitionOperationV1(code) { throw new WalletAcquisitionError(code); }
+export function failWalletAcquisitionOperationV1(code, reason) {
+  const error = new WalletAcquisitionError(code);
+  if (error.code === 'malformed_provider_response' && MALFORMED_REASONS.has(reason)) {
+    FAILURE_DIAGNOSTICS.set(error, Object.freeze({ stage: null, operation: null, reason }));
+  }
+  throw error;
+}
 
 function ownCode(error) {
   try {
@@ -43,28 +68,55 @@ function ownCode(error) {
   } catch { return null; }
 }
 export function sanitizeWalletAcquisitionErrorV1(error, fallback = 'provider_uncertain') {
-  return new WalletAcquisitionError(ownCode(error) ?? fallback);
+  const sanitized = new WalletAcquisitionError(ownCode(error) ?? fallback);
+  const diagnostic = error !== null && (typeof error === 'object' || typeof error === 'function')
+    && !utilTypes.isProxy(error) ? FAILURE_DIAGNOSTICS.get(error) : null;
+  if (sanitized.code === 'malformed_provider_response' && diagnostic !== undefined && diagnostic !== null
+      && MALFORMED_REASONS.has(diagnostic.reason)) FAILURE_DIAGNOSTICS.set(sanitized, diagnostic);
+  return sanitized;
+}
+
+export function contextualizeWalletAcquisitionErrorV1(error, stage, operation) {
+  const sanitized = sanitizeWalletAcquisitionErrorV1(error);
+  const diagnostic = FAILURE_DIAGNOSTICS.get(sanitized);
+  if (sanitized.code === 'malformed_provider_response' && diagnostic !== undefined
+      && FAILURE_STAGES.has(stage) && FAILURE_OPERATIONS.has(operation)) {
+    FAILURE_DIAGNOSTICS.set(sanitized, Object.freeze({ stage, operation, reason: diagnostic.reason }));
+  }
+  return sanitized;
+}
+
+export function getWalletAcquisitionFailureDiagnosticV1(error) {
+  if (error === null || (typeof error !== 'object' && typeof error !== 'function') || utilTypes.isProxy(error)) return null;
+  const diagnostic = FAILURE_DIAGNOSTICS.get(error);
+  if (diagnostic === undefined) return null;
+  return Object.freeze({
+    diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+    stage: diagnostic.stage,
+    operation: diagnostic.operation,
+    reason: diagnostic.reason,
+  });
 }
 
 function plain(value, active = new Set(), depth = 0, budget = { nodes: 0 }) {
   budget.nodes += 1;
-  if (budget.nodes > 100000 || depth > 256) failWalletAcquisitionOperationV1('malformed_provider_response');
+  if (budget.nodes > 100000 || depth > 256) failWalletAcquisitionOperationV1('malformed_provider_response', 'provider_value_unsafe');
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
   if (typeof value === 'number') {
-    if (!Number.isFinite(value) || Object.is(value, -0)) failWalletAcquisitionOperationV1('malformed_provider_response');
+    if (!Number.isFinite(value) || Object.is(value, -0)) failWalletAcquisitionOperationV1('malformed_provider_response', 'provider_value_unsafe');
     return;
   }
-  if (typeof value !== 'object' || utilTypes.isProxy(value) || active.has(value)) failWalletAcquisitionOperationV1('malformed_provider_response');
+  if (typeof value !== 'object' || utilTypes.isProxy(value) || active.has(value)) failWalletAcquisitionOperationV1('malformed_provider_response', 'provider_value_unsafe');
   let prototype; let descriptors; let symbols;
   try { prototype = Object.getPrototypeOf(value); descriptors = Object.getOwnPropertyDescriptors(value); symbols = Object.getOwnPropertySymbols(value); }
-  catch { failWalletAcquisitionOperationV1('malformed_provider_response'); }
+  catch { failWalletAcquisitionOperationV1('malformed_provider_response', 'provider_value_unsafe'); }
   const array = Array.isArray(value);
-  if (prototype !== (array ? Array.prototype : Object.prototype) || symbols.length) failWalletAcquisitionOperationV1('malformed_provider_response');
+  if (prototype !== (array ? Array.prototype : Object.prototype) || symbols.length) failWalletAcquisitionOperationV1('malformed_provider_response', 'provider_value_unsafe');
   const entries = Object.entries(descriptors).filter(([key]) => !(array && key === 'length'));
-  if (array && (entries.length !== value.length || entries.some(([key], index) => key !== String(index)))) failWalletAcquisitionOperationV1('malformed_provider_response');
+  if (array && (entries.length !== value.length || entries.some(([key], index) => key !== String(index)))) failWalletAcquisitionOperationV1('malformed_provider_response', 'provider_value_unsafe');
   active.add(value);
   for (const [, descriptor] of entries) {
-    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) failWalletAcquisitionOperationV1('malformed_provider_response');
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) failWalletAcquisitionOperationV1('malformed_provider_response', 'provider_value_unsafe');
     plain(descriptor.value, active, depth + 1, budget);
   }
   active.delete(value);

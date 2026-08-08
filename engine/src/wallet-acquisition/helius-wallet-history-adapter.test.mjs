@@ -4,7 +4,7 @@ import test from 'node:test';
 import { inspect } from 'node:util';
 
 import { createHeliusWalletHistoryPortV1 } from './helius-wallet-history-adapter.mjs';
-import { beginWalletHistoryAcquisitionV1 } from './provider-port.mjs';
+import { beginWalletHistoryAcquisitionV1, getWalletAcquisitionFailureDiagnosticV1 } from './provider-port.mjs';
 import { SOLANA_MAINNET_GENESIS_HASH } from './request-contract.mjs';
 import { enhanced, providerSignature, request, WALLET } from './fixtures/slice4-fixtures.mjs';
 
@@ -19,8 +19,9 @@ function harness(responses, options = {}) {
   });
   return { port, seen, calls: () => calls };
 }
-async function code(promise, expected) {
+async function code(promise, expected, reason = null) {
   await assert.rejects(promise, error => error?.name === 'WalletAcquisitionError' && error.code === expected
+    && (reason === null || getWalletAcquisitionFailureDiagnosticV1(error)?.reason === reason)
     && error.stack === undefined && error.cause === undefined && !inspect(error, { depth: 10 }).includes('super-secret-key'));
 }
 
@@ -49,9 +50,23 @@ test('established Enhanced operation uses exact reconciliation against local add
   assert.equal(h.seen[0].method, 'GET');
   assert.equal(h.seen[0].url, `https://api.helius.xyz/v0/addresses/${WALLET}/transactions`);
   assert.deepEqual(h.seen[0].query, { 'api-key': 'super-secret-key', limit: 100 });
-  await code(harness([{ status: 200, data: [a] }]).port.getEnhancedTransactionsBySignatureV1({ wallet: WALLET, signatures: [a.signature,providerSignature('missing')] }), 'malformed_provider_response');
+  await code(harness([{ status: 200, data: [a] }]).port.getEnhancedTransactionsBySignatureV1({ wallet: WALLET, signatures: [a.signature,providerSignature('missing')] }), 'malformed_provider_response', 'enhanced_page_incomplete');
   const duplicate = harness([{ status: 200, data: [a, a] }]);
-  await code(duplicate.port.getEnhancedTransactionsBySignatureV1({ wallet: WALLET, signatures: [a.signature] }), 'malformed_provider_response');
+  await code(duplicate.port.getEnhancedTransactionsBySignatureV1({ wallet: WALLET, signatures: [a.signature] }), 'malformed_provider_response', 'enhanced_duplicate_signature');
+
+  const newer = structuredClone(a);
+  newer.signature = providerSignature('newer-order'); newer.slot = a.slot + 1; newer.timestamp = a.timestamp + 1;
+  await code(harness([{ status: 200, data: [a, newer] }]).port.getEnhancedTransactionsBySignatureV1({
+    wallet: WALLET, signatures: [providerSignature('missing')],
+  }), 'malformed_provider_response', 'enhanced_order_invalid');
+
+  const full = Array.from({ length: 100 }, (_, index) => ({
+    ...structuredClone(a), signature: providerSignature(`cursor-${index}`), slot: a.slot - index, timestamp: a.timestamp - index,
+  }));
+  const repeatedCursor = harness([{ status: 200, data: full }, { status: 200, data: [full.at(-1)] }]);
+  await code(repeatedCursor.port.getEnhancedTransactionsBySignatureV1({
+    wallet: WALLET, signatures: [providerSignature('still-missing')],
+  }), 'malformed_provider_response', 'enhanced_cursor_repeated');
 });
 
 test('Enhanced address-history pagination continues identically until all signatures reconcile', async () => {
@@ -75,7 +90,15 @@ test('retries only timeout, transient transport, 429, and 5xx with identical met
     await code(one.port.getFinalizedSlotV1(), expected); assert.equal(one.calls(), 1);
   }
   const malformed = harness([{ status: 200, data: rpc('bad-slot') }]);
-  await code(malformed.port.getFinalizedSlotV1(), 'malformed_provider_response'); assert.equal(malformed.calls(), 1);
+  await code(malformed.port.getFinalizedSlotV1(), 'malformed_provider_response', 'rpc_slot_result_invalid'); assert.equal(malformed.calls(), 1);
+});
+
+test('invalid JSON fails immediately with a fixed reason and no retry', async () => {
+  const invalid = Object.assign(new Error('provider prose'), { code: 'invalid_json' });
+  const h = harness([invalid, { status: 200, data: rpc(7) }]);
+  beginWalletHistoryAcquisitionV1(h.port, { ...request().budgets, max_attempts_per_operation: 2 });
+  await code(h.port.getFinalizedSlotV1(), 'malformed_provider_response', 'invalid_json');
+  assert.equal(h.calls(), 1);
 });
 
 test('retry and timeout telemetry counts only attempts actually begun and actually timed out', async () => {

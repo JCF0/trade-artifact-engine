@@ -23,8 +23,10 @@ import {
 } from './pagination-contract.mjs';
 import {
   beginWalletHistoryAcquisitionV1,
+  contextualizeWalletAcquisitionErrorV1,
   createWalletHistoryPortV1,
   failWalletAcquisitionOperationV1,
+  getWalletAcquisitionFailureDiagnosticV1,
   sanitizeWalletAcquisitionErrorV1,
 } from './provider-port.mjs';
 import { validateWalletAcquisitionRequestV1 } from './request-contract.mjs';
@@ -34,6 +36,17 @@ import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalize
 import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './solana-identities.mjs';
 
 function fail(code) { failWalletAcquisitionOperationV1(code); }
+async function diagnosedCall(stage, operation, call) {
+  try { return await call(); }
+  catch (error) {
+    const diagnostic = getWalletAcquisitionFailureDiagnosticV1(error);
+    if (diagnostic?.reason === 'enhanced_transaction_shape_invalid'
+        || diagnostic?.reason === 'enhanced_projection_internal_rejection') {
+      throw contextualizeWalletAcquisitionErrorV1(error, 'enhanced_projection', 'enhanced_transaction_projection');
+    }
+    throw contextualizeWalletAcquisitionErrorV1(error, stage, operation);
+  }
+}
 function exactObject(value, fields, code) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail(code);
   const keys = Object.keys(value);
@@ -55,15 +68,15 @@ function assertBoundaryCoherent(source, anchor) {
 }
 
 async function finalizedAnchor(port, request) {
-  const identity = await port.getNetworkIdentityV1();
+  const identity = await diagnosedCall('finalized_anchor', 'network_identity', () => port.getNetworkIdentityV1());
   exactObject(identity, ['chain','network','genesis_hash'], 'chain_identity_mismatch');
   if (identity.chain !== request.chain || identity.network !== request.network || identity.genesis_hash !== request.genesis_hash) fail('chain_identity_mismatch');
-  const initialSlot = await port.getFinalizedSlotV1();
+  const initialSlot = await diagnosedCall('finalized_anchor', 'finalized_slot', () => port.getFinalizedSlotV1());
   if (!Number.isSafeInteger(initialSlot) || initialSlot < 0) fail('finalized_boundary_incoherent');
   let state = createFinalizedAnchorSearchStateV1({ initial_slot: initialSlot, max_anchor_search_slots: request.finality.max_anchor_search_slots });
   while (state.search_status === 'searching') {
     const requestedSlot = state.next_slot;
-    const block = await port.getFinalizedBlockV1({ slot: requestedSlot });
+    const block = await diagnosedCall('finalized_anchor', 'finalized_block', () => port.getFinalizedBlockV1({ slot: requestedSlot }));
     if (block === null) {
       state = advanceFinalizedAnchorSearchStateV1(state, 'unavailable');
       continue;
@@ -88,7 +101,9 @@ async function paginateInitial(port, request, anchor, oldest) {
   let headFloor = null;
   while (['acquiring_head','paginating'].includes(state.phase)) {
     const before = state.phase === 'acquiring_head' ? null : state.next_before_signature;
-    const page = await port.getFinalizedWalletSignaturePageV1({ wallet: request.wallet, before, limit: request.budgets.page_size, commitment: 'finalized' });
+    const page = await diagnosedCall('canonical_pagination', 'canonical_signature_page', () => (
+      port.getFinalizedWalletSignaturePageV1({ wallet: request.wallet, before, limit: request.budgets.page_size, commitment: 'finalized' })
+    ));
     if (!Array.isArray(page) || page.length > request.budgets.page_size) fail('pagination_incomplete');
     for (const source of page) {
       validateCanonicalSource(source);
@@ -126,7 +141,11 @@ async function proveLatestState(port, request, anchor, initial) {
   while (!reached) {
     if (pages >= request.budgets.max_pages || entries >= request.budgets.max_transactions) fail('latest_state_unproven');
     let page;
-    try { page = await port.getFinalizedWalletSignaturePageV1({ wallet: request.wallet, before, limit: request.budgets.page_size, commitment: 'finalized' }); }
+    try {
+      page = await diagnosedCall('latest_state_recheck', 'canonical_signature_page', () => (
+        port.getFinalizedWalletSignaturePageV1({ wallet: request.wallet, before, limit: request.budgets.page_size, commitment: 'finalized' })
+      ));
+    }
     catch (error) {
       const sanitized = sanitizeWalletAcquisitionErrorV1(error);
       if (['acquisition_deadline_exceeded','provider_retry_exhausted','provider_timeout','provider_transient_failure','provider_uncertain'].includes(sanitized.code)) fail('latest_state_unproven');
@@ -223,14 +242,17 @@ async function acquire(requestInput, dependencyInput) {
   exactObject(dependencyInput, ['walletHistoryPort'], 'acquisition_capability_denied');
   const request = structuredClone(requestInput);
   const port = createWalletHistoryPortV1(dependencyInput.walletHistoryPort);
-  beginWalletHistoryAcquisitionV1(port, request.budgets);
+  try { beginWalletHistoryAcquisitionV1(port, request.budgets); }
+  catch (error) { throw contextualizeWalletAcquisitionErrorV1(error, 'request_binding', 'acquisition_budget_binding'); }
   const anchor = await finalizedAnchor(port, request);
   const oldest = deriveOldestAllowedTimestampV1({ anchor_block_time: anchor.block_time, requested_lookback_seconds: request.window.requested_lookback_seconds });
   const pagination = await paginateInitial(port, request, anchor, oldest);
   await proveLatestState(port, request, anchor, pagination);
   let state = advancePaginationPhaseV1(pagination.state, 'enriching');
   const signatures = pagination.authoritative.map(source => source.signature);
-  const evidenceRecords = await port.getEnhancedTransactionsBySignatureV1({ wallet: request.wallet, signatures });
+  const evidenceRecords = await diagnosedCall('enhanced_history', 'enhanced_address_history', () => (
+    port.getEnhancedTransactionsBySignatureV1({ wallet: request.wallet, signatures })
+  ));
   const evidence = reconcileEnhanced(request.wallet, pagination.authoritative, evidenceRecords);
   state = advancePaginationPhaseV1(state, 'classifying');
   const assembled = classifyAll(pagination.authoritative, evidence);

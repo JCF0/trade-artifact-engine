@@ -11,9 +11,14 @@ import {
   validateHeliusRpcSlotResponseV1,
 } from './helius-rpc-validator.mjs';
 import { providerSignature } from './fixtures/slice4-fixtures.mjs';
+import { getWalletAcquisitionFailureDiagnosticV1 } from './provider-port.mjs';
 
 function rpc(result) { return { jsonrpc: '2.0', id: 'wallet-acquisition-v1', result }; }
 function expectMalformed(fn) { assert.throws(fn, error => error?.code === 'malformed_provider_response' && error.stack === undefined); }
+function expectReason(fn, reason) {
+  assert.throws(fn, error => error?.code === 'malformed_provider_response'
+    && getWalletAcquisitionFailureDiagnosticV1(error)?.reason === reason);
+}
 
 test('validates mainnet genesis, finalized slot, and coherent finalized block', () => {
   assert.deepEqual(validateHeliusRpcGenesisResponseV1(rpc(SOLANA_MAINNET_GENESIS_HASH)), { chain: 'solana', network: 'mainnet-beta', genesis_hash: SOLANA_MAINNET_GENESIS_HASH });
@@ -49,4 +54,27 @@ test('Enhanced address pages retain detached plain bodies but enforce signature/
   page[0].slot = 8;
   assert.equal(result[0].slot, 7);
   for (const invalid of [{ transactions: [] }, [null], [{ signature: '', slot: 1, timestamp: 1 }], new Array(1)]) expectMalformed(() => validateHeliusEnhancedAddressPageV1(invalid));
+});
+
+test('unsafe raw RPC and Enhanced values use the generic provider-boundary reason', () => {
+  const cyclic = {}; cyclic.self = cyclic;
+  const accessor = {}; Object.defineProperty(accessor, 'signature', { get() { return 'secret'; }, enumerable: true });
+  const sparse = []; sparse.length = 1;
+  for (const value of [new Proxy({}, {}), cyclic]) {
+    expectReason(() => validateHeliusRpcSlotResponseV1(value), 'provider_value_unsafe');
+  }
+  expectReason(() => validateHeliusEnhancedAddressPageV1([accessor]), 'provider_value_unsafe');
+  expectReason(() => validateHeliusEnhancedAddressPageV1(sparse), 'provider_value_unsafe');
+  expectReason(() => validateHeliusEnhancedAddressPageV1([{
+    signature: providerSignature('unsafe-non-finite'), slot: Infinity, timestamp: 1, transactionError: null,
+  }]), 'provider_value_unsafe');
+});
+
+test('every RPC and Enhanced validator class emits one fixed malformed reason', () => {
+  expectReason(() => validateHeliusRpcSlotResponseV1({ result: 1 }), 'rpc_envelope_invalid');
+  expectReason(() => validateHeliusRpcGenesisResponseV1(rpc(7)), 'rpc_genesis_result_invalid');
+  expectReason(() => validateHeliusRpcSlotResponseV1(rpc(-1)), 'rpc_slot_result_invalid');
+  expectReason(() => validateHeliusRpcBlockResponseV1(rpc({ blockTime: null, blockhash: 'abc' }), 8), 'rpc_block_result_invalid');
+  expectReason(() => validateHeliusRpcSignaturePageResponseV1(rpc([null])), 'rpc_signature_page_invalid');
+  expectReason(() => validateHeliusEnhancedAddressPageV1([null]), 'enhanced_page_invalid');
 });

@@ -6,11 +6,17 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  CONTROLLED_LIVE_VALIDATION_VERSION_V1,
+  CONTROLLED_LIVE_VALIDATION_VERSION_V2,
   parseControlledLiveValidationArgsV1,
   runControlledLiveValidationV1,
 } from './run-controlled-live-validation.mjs';
 import { fakePort, providerPublicKey } from './fixtures/slice4-fixtures.mjs';
-import { createWalletHistoryPortV1 } from './provider-port.mjs';
+import {
+  contextualizeWalletAcquisitionErrorV1,
+  createWalletHistoryPortV1,
+  failWalletAcquisitionOperationV1,
+} from './provider-port.mjs';
 import {
   JUP_WALLET_V1,
   USDC_MINT_V1,
@@ -52,6 +58,8 @@ function withTemp(t, fn) {
 }
 
 test('CLI parser requires the closed flag set and rejects unknown flags and historical end dates', () => {
+  assert.equal(CONTROLLED_LIVE_VALIDATION_VERSION_V1, 'artifact_v1.14_controlled_live_validation_v1');
+  assert.equal(CONTROLLED_LIVE_VALIDATION_VERSION_V2, 'artifact_v1.14_controlled_live_validation_v2');
   const argv = [
     '--wallet', JUP_WALLET_V1, '--lookback-profile', 'lookback_7d_v1', '--max-pages', '5',
     '--max-transactions', '500', '--max-attempts', '2', '--request-timeout-ms', '20000',
@@ -185,6 +193,94 @@ test('hostile thrown errors, key values, provider prose, URLs, paths, and stacks
   const bytes = readFileSync(outputPath(root), 'utf8');
   assert.equal(result.report.error_code, 'provider_uncertain');
   for (const forbidden of [KEY_CANARY, 'https://', '/root/', 'stack prose', 'api-key']) assert.equal(bytes.includes(forbidden), false);
+}));
+
+test('malformed safe failure emits only the exact report-v2 fixed-enum diagnostic', t => withTemp(t, async root => {
+  const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+  fixture.port.getFinalizedSlotV1 = async () => {
+    let malformed;
+    try { failWalletAcquisitionOperationV1('malformed_provider_response', 'rpc_slot_result_invalid'); }
+    catch (error) { malformed = error; }
+    throw contextualizeWalletAcquisitionErrorV1(malformed, 'finalized_anchor', 'finalized_slot');
+  };
+  const result = await runFixture(root, fixture);
+  const report = readReport(outputPath(root));
+  assert.equal(result.status, 'safe_failure');
+  assert.equal(report.validation_version, 'artifact_v1.14_controlled_live_validation_v2');
+  assert.equal(report.error_code, 'malformed_provider_response');
+  assert.deepEqual(report.failure_diagnostic, {
+    diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+    stage: 'finalized_anchor', operation: 'finalized_slot', reason: 'rpc_slot_result_invalid',
+  });
+  assert.deepEqual(Object.keys(report.failure_diagnostic).sort(), ['diagnostic_version','operation','reason','stage']);
+
+  const unsafeFixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+  const cyclic = {}; cyclic.self = cyclic;
+  unsafeFixture.port.getFinalizedSlotV1 = async () => cyclic;
+  const unsafe = await runFixture(root, unsafeFixture, {}, 'unsafe.json');
+  assert.deepEqual(unsafe.report.failure_diagnostic, {
+    diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+    stage: 'finalized_anchor', operation: 'finalized_slot', reason: 'provider_value_unsafe',
+  });
+}));
+
+test('all remaining known malformed reason classes reach report v2 without the fallback tuple', t => withTemp(t, async root => {
+  function throwReason(reason) {
+    try { failWalletAcquisitionOperationV1('malformed_provider_response', reason); }
+    catch (error) { throw error; }
+  }
+  const cases = [
+    ['invalid_json', 'getNetworkIdentityV1', 'finalized_anchor', 'network_identity'],
+    ['rpc_genesis_result_invalid', 'getNetworkIdentityV1', 'finalized_anchor', 'network_identity'],
+    ['enhanced_duplicate_signature', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
+    ['enhanced_order_invalid', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
+    ['enhanced_page_incomplete', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
+    ['enhanced_cursor_repeated', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
+  ];
+  for (const [reason, method, stage, operation] of cases) {
+    const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy'] });
+    fixture.port[method] = async () => throwReason(reason);
+    const result = await runFixture(root, fixture, {}, `${reason}.json`);
+    assert.deepEqual(result.report.failure_diagnostic, {
+      diagnostic_version: 'controlled_live_failure_diagnostic_v1', stage, operation, reason,
+    });
+    assert.notEqual(result.report.failure_diagnostic.reason, 'unlocalized_malformed_response');
+  }
+}));
+
+test('PASS and non-malformed failures use report v2 without failure diagnostics', t => withTemp(t, async root => {
+  const passFixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy','jup_sell'] });
+  const passed = await runFixture(root, passFixture, {}, 'pass.json');
+  assert.equal(passed.report.validation_version, 'artifact_v1.14_controlled_live_validation_v2');
+  assert.equal(Object.hasOwn(passed.report, 'failure_diagnostic'), false);
+
+  const failureFixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+  failureFixture.port.getNetworkIdentityV1 = async () => { throw { code: 'provider_timeout' }; };
+  const failed = await runFixture(root, failureFixture, {}, 'failure.json');
+  assert.equal(failed.report.validation_version, 'artifact_v1.14_controlled_live_validation_v2');
+  assert.equal(failed.report.error_code, 'provider_timeout');
+  assert.equal(Object.hasOwn(failed.report, 'failure_diagnostic'), false);
+}));
+
+test('untrusted malformed metadata cannot enter the report and uses only the fixed fallback tuple', t => withTemp(t, async root => {
+  const canary = 'secret-provider-body https://host.invalid /root/key';
+  const result = await runFixture(root, offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 }), {
+    acquireWalletHistory: async () => { throw {
+      code: 'malformed_provider_response',
+      failure_diagnostic: { stage: canary, operation: canary, reason: canary },
+      message: canary,
+      stack: canary,
+    }; },
+  });
+  assert.equal(result.status, 'safe_failure');
+  assert.deepEqual(result.report.failure_diagnostic, {
+    diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+    stage: 'internal_boundary', operation: 'none', reason: 'unlocalized_malformed_response',
+  });
+  const bytes = readFileSync(outputPath(root), 'utf8');
+  assert.equal(bytes.includes(canary), false);
+  assert.equal(bytes.includes('https://'), false);
+  assert.equal(bytes.includes('/root/'), false);
 }));
 
 test('production operator imports no store, signer, uploader, minter, deployment, API, UI, or hosted-job module', () => {

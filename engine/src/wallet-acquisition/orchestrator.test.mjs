@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { acquireWalletHistoryV1 } from './orchestrator.mjs';
-import { createWalletHistoryPortV1 } from './provider-port.mjs';
+import {
+  createWalletHistoryPortV1,
+  failWalletAcquisitionOperationV1,
+  getWalletAcquisitionFailureDiagnosticV1,
+} from './provider-port.mjs';
 import { canonical, enhanced, fakePort, request, ANCHOR_SLOT, ANCHOR_TIME, BLOCKHASH, JUP, PROGRAMS, RAY, USDC, WALLET } from './fixtures/slice4-fixtures.mjs';
 
 async function expectCode(promise, expected) {
@@ -205,4 +209,59 @@ test('source/disposition sets are exact, output is provider-permutation invarian
   assert.deepEqual(left.transaction_dispositions.map(x => x.tx_hash).sort(), sources.map(x => x.signature).sort());
   const serialized = JSON.stringify(left);
   for (const forbidden of ['transactionError','tokenTransfers','nativeTransfers','instructions','description','api-key']) assert.equal(serialized.includes(forbidden), false);
+});
+
+function malformed(reason) {
+  try { failWalletAcquisitionOperationV1('malformed_provider_response', reason); }
+  catch (error) { return error; }
+}
+async function expectDiagnostic(promise, expected) {
+  await assert.rejects(promise, error => {
+    assert.equal(error.code, 'malformed_provider_response');
+    assert.deepEqual(getWalletAcquisitionFailureDiagnosticV1(error), {
+      diagnostic_version: 'controlled_live_failure_diagnostic_v1', ...expected,
+    });
+    return true;
+  });
+}
+
+test('trusted call sites attach exact stage and operation to every malformed acquisition class', async () => {
+  const identity = fakePort({ pages: [[]] });
+  identity.getNetworkIdentityV1 = async () => { throw malformed('rpc_envelope_invalid'); };
+  await expectDiagnostic(run(identity), { stage: 'finalized_anchor', operation: 'network_identity', reason: 'rpc_envelope_invalid' });
+
+  const slot = fakePort({ pages: [[]] });
+  slot.getFinalizedSlotV1 = async () => { throw malformed('rpc_slot_result_invalid'); };
+  await expectDiagnostic(run(slot), { stage: 'finalized_anchor', operation: 'finalized_slot', reason: 'rpc_slot_result_invalid' });
+
+  const block = fakePort({ pages: [[]] });
+  block.getFinalizedBlockV1 = async () => { throw malformed('rpc_block_result_invalid'); };
+  await expectDiagnostic(run(block), { stage: 'finalized_anchor', operation: 'finalized_block', reason: 'rpc_block_result_invalid' });
+
+  const pagination = fakePort({ pages: [[]] });
+  pagination.getFinalizedWalletSignaturePageV1 = async () => { throw malformed('rpc_signature_page_invalid'); };
+  await expectDiagnostic(run(pagination), { stage: 'canonical_pagination', operation: 'canonical_signature_page', reason: 'rpc_signature_page_invalid' });
+
+  const recheck = fakePort({ pages: [[stableSource]], enhancedBodies: [bodyFor(stableSource)] });
+  const readPage = recheck.getFinalizedWalletSignaturePageV1.bind(recheck); let pageCalls = 0;
+  recheck.getFinalizedWalletSignaturePageV1 = async input => {
+    pageCalls += 1;
+    if (pageCalls === 2) throw malformed('rpc_signature_page_invalid');
+    return readPage(input);
+  };
+  await expectDiagnostic(run(recheck), { stage: 'latest_state_recheck', operation: 'canonical_signature_page', reason: 'rpc_signature_page_invalid' });
+
+  for (const [reason, stage, operation] of [
+    ['enhanced_page_invalid', 'enhanced_history', 'enhanced_address_history'],
+    ['enhanced_transaction_shape_invalid', 'enhanced_projection', 'enhanced_transaction_projection'],
+    ['enhanced_projection_internal_rejection', 'enhanced_projection', 'enhanced_transaction_projection'],
+  ]) {
+    const enhancedPort = fakePort({ pages: [[stableSource]], enhancedBodies: [bodyFor(stableSource)] });
+    enhancedPort.getEnhancedTransactionsBySignatureV1 = async () => { throw malformed(reason); };
+    await expectDiagnostic(run(enhancedPort), { stage, operation, reason });
+  }
+
+  const unsafe = fakePort({ pages: [[]] });
+  unsafe.getFinalizedSlotV1 = async () => { const cyclic = {}; cyclic.self = cyclic; return cyclic; };
+  await expectDiagnostic(run(unsafe), { stage: 'finalized_anchor', operation: 'finalized_slot', reason: 'provider_value_unsafe' });
 });

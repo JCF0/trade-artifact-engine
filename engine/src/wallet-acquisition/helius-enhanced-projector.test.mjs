@@ -7,8 +7,14 @@ import { buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-ev
 import { classifyWalletSourceTransactionV1 } from './transaction-classifier.mjs';
 import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
 import { enhanced, JUP, PROGRAMS, providerPublicKey, providerSignature, RAY, USDC, WALLET } from './fixtures/slice4-fixtures.mjs';
+import { getWalletAcquisitionFailureDiagnosticV1 } from './provider-port.mjs';
 
-function expectMalformed(value) { assert.throws(() => projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: value }), error => error?.code === 'malformed_provider_response'); }
+function expectMalformed(value, reason = 'enhanced_transaction_shape_invalid') {
+  assert.throws(() => projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction: value }), error => (
+    error?.code === 'malformed_provider_response'
+    && getWalletAcquisitionFailureDiagnosticV1(error)?.reason === reason
+  ));
+}
 
 function classify(transaction) {
   const evidence = projectHeliusEnhancedTransactionV1({ wallet: WALLET, transaction });
@@ -112,7 +118,7 @@ test('does not use arbitrary mint mentions and fails malformed ownership/amount/
     badMint.events.swap.tokenInputs[0].mint = mint;
     expectMalformed(badMint);
   }
-  expectMalformed(new Proxy({}, { ownKeys() { throw new Error('secret'); } }));
+  expectMalformed(new Proxy({}, { ownKeys() { throw new Error('secret'); } }), 'enhanced_projection_internal_rejection');
 });
 
 test('attractive swap plus an unmatched wallet-owned nonquote accountData change cannot remain supported', () => {

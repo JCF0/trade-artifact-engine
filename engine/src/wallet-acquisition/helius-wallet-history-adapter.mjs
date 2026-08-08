@@ -16,7 +16,7 @@ import {
 const RPC_URL = 'https://mainnet.helius-rpc.com/';
 const ENHANCED_ORIGIN = 'https://api.helius.xyz';
 
-function fail(code) { failWalletAcquisitionOperationV1(code); }
+function fail(code, reason) { failWalletAcquisitionOperationV1(code, reason); }
 function method(value, name) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length) fail('acquisition_capability_denied');
   const descriptors = Object.getOwnPropertyDescriptors(value);
@@ -144,7 +144,7 @@ async function execute(capabilities, logicalRequest, context = beginOperation(ca
     catch (error) {
       if (lateSuccessfulSettlement) fail(timeoutCode);
       const code = thrownCode(error);
-      if (code === 'invalid_json') fail('malformed_provider_response');
+      if (code === 'invalid_json') fail('malformed_provider_response', 'invalid_json');
       const timeoutCodeThrown = code === 'request_timeout' || code === 'provider_timeout' || code === 'ETIMEDOUT';
       const terminatedByEffectiveTimeout = transportSettled && (timeoutCodeThrown || (deadlineExpired && controller.signal.aborted));
       if (terminatedByEffectiveTimeout) { markTimeout(); retryable = true; }
@@ -208,8 +208,9 @@ async function enhancedBySignature(capabilities, input, operation) {
     entries += page.length;
     if (entries > operation.max_transactions) fail('acquisition_capped');
     for (const body of page) {
-      if (seen.has(body.signature)) fail('malformed_provider_response');
-      if (body.signature === before || (previous !== null && (body.slot > previous.slot || body.timestamp > previous.timestamp))) fail('malformed_provider_response');
+      if (body.signature === before) fail('malformed_provider_response', 'enhanced_cursor_repeated');
+      if (seen.has(body.signature)) fail('malformed_provider_response', 'enhanced_duplicate_signature');
+      if (previous !== null && (body.slot > previous.slot || body.timestamp > previous.timestamp)) fail('malformed_provider_response', 'enhanced_order_invalid');
       seen.set(body.signature, body);
       if (requested.has(body.signature)) found.set(body.signature, body);
       previous = body;
@@ -217,9 +218,9 @@ async function enhancedBySignature(capabilities, input, operation) {
     if (found.size === requested.size) {
       return input.signatures.map(signature => projectHeliusEnhancedTransactionV1({ wallet: input.wallet, transaction: found.get(signature) }));
     }
-    if (page.length < PAGE_SIZE_V1) fail('malformed_provider_response');
+    if (page.length < PAGE_SIZE_V1) fail('malformed_provider_response', 'enhanced_page_incomplete');
     const next = page.at(-1).signature;
-    if (next === before) fail('malformed_provider_response');
+    if (next === before) fail('malformed_provider_response', 'enhanced_cursor_repeated');
     before = next;
   }
   fail('acquisition_capped');
