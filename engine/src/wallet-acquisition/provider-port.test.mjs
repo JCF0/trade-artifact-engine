@@ -50,18 +50,26 @@ test('allowlisted WalletAcquisitionError codes are laundered into fresh fixed er
 test('diagnostic enums are closed and trusted metadata survives only private provenance', () => {
   assert.deepEqual(WALLET_ACQUISITION_FAILURE_STAGES_V1, [
     'request_binding','finalized_anchor','canonical_pagination','latest_state_recheck',
-    'enhanced_history','enhanced_projection','internal_boundary',
+    'enhanced_history','enhanced_projection','full_transaction_history','full_transaction_projection',
+    'exact_transaction_fallback','internal_boundary',
   ]);
   assert.deepEqual(WALLET_ACQUISITION_FAILURE_OPERATIONS_V1, [
     'acquisition_budget_binding','network_identity','finalized_slot','finalized_block',
-    'canonical_signature_page','enhanced_address_history','enhanced_transaction_projection','none',
+    'canonical_signature_page','enhanced_address_history','enhanced_transaction_projection',
+    'full_transaction_address_history','full_transaction_validation','full_transaction_projection',
+    'exact_transaction_fallback','none',
   ]);
   assert.deepEqual(WALLET_ACQUISITION_MALFORMED_REASONS_V1, [
     'invalid_json','rpc_envelope_invalid','rpc_genesis_result_invalid','rpc_slot_result_invalid',
     'rpc_block_result_invalid','rpc_signature_page_invalid','enhanced_page_invalid',
     'enhanced_duplicate_signature','enhanced_order_invalid','enhanced_page_incomplete',
     'enhanced_cursor_repeated','enhanced_transaction_shape_invalid',
-    'enhanced_projection_internal_rejection','provider_value_unsafe','unlocalized_malformed_response',
+    'enhanced_projection_internal_rejection','full_transaction_page_invalid',
+    'full_transaction_duplicate_signature','full_transaction_order_invalid',
+    'full_transaction_page_incomplete','full_transaction_pagination_token_invalid',
+    'full_transaction_pagination_token_repeated','full_transaction_shape_invalid',
+    'full_transaction_signature_mismatch','full_transaction_projection_internal_rejection',
+    'exact_transaction_result_invalid','provider_value_unsafe','unlocalized_malformed_response',
   ]);
 
   let minted;

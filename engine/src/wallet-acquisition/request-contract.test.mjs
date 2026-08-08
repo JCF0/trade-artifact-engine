@@ -6,7 +6,9 @@ import {
   LOOKBACK_SECONDS_BY_PROFILE_V1,
   SOLANA_MAINNET_GENESIS_HASH,
   buildWalletAcquisitionRequestV1,
+  buildWalletAcquisitionRequestV2,
   validateWalletAcquisitionRequestV1,
+  validateWalletAcquisitionRequestV2,
 } from './request-contract.mjs';
 import { WALLET_ACQUISITION_ERROR_CODES_V1 } from './errors.mjs';
 
@@ -49,6 +51,19 @@ function validRequest(overrides = {}) {
   return { ...request, ...overrides };
 }
 
+function validRequestV2(overrides = {}) {
+  const request = validRequest({
+    request_version: 'wallet_wide_acquisition_request_v2',
+    budgets: {
+      ...validRequest().budgets,
+      pagination_profile: 'solana_full_transaction_page_100_v1',
+      exact_fallback_profile: 'finalized_get_transaction_missing_only_v1',
+      max_exact_fallback_transactions: 8,
+    },
+  });
+  return { ...request, ...overrides };
+}
+
 function expectCode(fn, code) {
   assert.throws(fn, error => error?.name === 'WalletAcquisitionContractError' && error.code === code);
 }
@@ -71,6 +86,48 @@ test('accepts and freezes every permitted lookback profile', () => {
     assert.equal(built.window.lookback_profile, lookback_profile);
     assert.doesNotThrow(() => validateWalletAcquisitionRequestV1(built));
   }
+});
+
+test('request v2 has the exact full-transaction and bounded-fallback budget schema', () => {
+  const input = validRequestV2();
+  const built = buildWalletAcquisitionRequestV2(input);
+  assert.deepEqual(built, input);
+  assert.deepEqual(Object.keys(built.budgets), [
+    'pagination_profile','page_size','max_pages','max_transactions','retry_profile',
+    'max_attempts_per_operation','timeout_profile','request_timeout_ms','overall_timeout_ms',
+    'exact_fallback_profile','max_exact_fallback_transactions',
+  ]);
+  assert.ok(Object.isFrozen(built) && Object.isFrozen(built.budgets));
+  input.budgets.max_exact_fallback_transactions = 0;
+  assert.equal(built.budgets.max_exact_fallback_transactions, 8);
+
+  for (const allowance of [0, 1, 8]) {
+    assert.equal(validateWalletAcquisitionRequestV2(validRequestV2({
+      budgets: { ...validRequestV2().budgets, max_exact_fallback_transactions: allowance },
+    })), true);
+  }
+});
+
+test('request v2 rejects v1/v2 hybrids and malformed fallback allowances', () => {
+  expectCode(() => validateWalletAcquisitionRequestV2(validRequest()), 'invalid_acquisition_request');
+  expectCode(() => validateWalletAcquisitionRequestV1(validRequestV2()), 'invalid_acquisition_request');
+  expectCode(() => validateWalletAcquisitionRequestV2(validRequestV2({
+    budgets: { ...validRequestV2().budgets, pagination_profile: 'helius_wallet_history_page_100_v1' },
+  })), 'invalid_acquisition_request');
+  expectCode(() => validateWalletAcquisitionRequestV2(validRequestV2({
+    budgets: { ...validRequestV2().budgets, exact_fallback_profile: 'other' },
+  })), 'invalid_acquisition_request');
+  for (const value of [-1, 9, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    expectCode(() => validateWalletAcquisitionRequestV2(validRequestV2({
+      budgets: { ...validRequestV2().budgets, max_exact_fallback_transactions: value },
+    })), 'invalid_acquisition_request');
+  }
+  const missing = validRequestV2();
+  delete missing.budgets.max_exact_fallback_transactions;
+  expectCode(() => validateWalletAcquisitionRequestV2(missing), 'invalid_acquisition_request');
+  const extra = validRequestV2();
+  extra.budgets.hidden_fallback_allowance = 1;
+  expectCode(() => validateWalletAcquisitionRequestV2(extra), 'invalid_acquisition_request');
 });
 
 test('exports the exact stable sanitized wallet-acquisition error taxonomy through Slice 2', () => {
