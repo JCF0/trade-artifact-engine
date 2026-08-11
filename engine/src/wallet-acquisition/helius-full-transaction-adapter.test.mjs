@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { inspect } from 'node:util';
 
+import { acquireFinalizedFullTransactionHistoryV1 } from './full-transaction-history-acquisition.mjs';
 import { createHeliusFullTransactionPortV2 } from './helius-full-transaction-adapter.mjs';
 import { createFullTransactionPageReconcilerV1 } from './full-transaction-page-reconciler.mjs';
 import { beginWalletHistoryAcquisitionV2 } from './provider-port-v2.mjs';
@@ -42,6 +43,7 @@ function rawTransaction(name, { slot = 900, blockTime = 1_780_000_000, fee = 500
 
 function rpc(result) { return { jsonrpc: '2.0', id: 'wallet-acquisition-v2', result }; }
 function page(data, paginationToken = null) { return { status: 200, data: rpc({ data, paginationToken }) }; }
+function exact(transaction) { return { status: 200, data: rpc(transaction) }; }
 function budgets(overrides = {}) {
   return {
     pagination_profile: 'solana_full_transaction_page_100_v1', page_size: 100,
@@ -66,6 +68,22 @@ function input(pagination_token = null, overrides = {}) {
     token_account_scope: 'none',
     status: 'any',
     ...overrides,
+  };
+}
+function exactInput(signature) {
+  return {
+    signature,
+    commitment: 'finalized',
+    encoding: 'json',
+    max_supported_transaction_version: 0,
+  };
+}
+function canonical(raw) {
+  return {
+    signature: raw.transaction.signatures[0],
+    slot: raw.slot,
+    block_time: raw.blockTime,
+    execution_state: raw.meta.err === null ? 'succeeded' : 'failed',
   };
 }
 function harness(responses, options = {}) {
@@ -386,14 +404,243 @@ test('aborts timed-out requests and discards late success without retry or post-
   assert.deepEqual(counts, { retry: 0, timeout: 0 });
 });
 
-test('Slice 4 fallback is unavailable and no global fetch, environment, or arbitrary origin is used', async () => {
+test('generates the exact fixed finalized getTransaction request and returns one detached transaction', async () => {
   const prior = globalThis.fetch; let globalCalls = 0;
   globalThis.fetch = () => { globalCalls += 1; throw new Error('forbidden'); };
   try {
-    const h = harness([page([])]); beginWalletHistoryAcquisitionV2(h.port, budgets());
-    await h.port.getFinalizedFullTransactionPageV1(input());
-    await reject(h.port.getFinalizedTransactionV1({ signature: providerSignature('fallback') }), 'acquisition_capability_denied');
+    const raw = rawTransaction('fallback');
+    const h = harness([exact(raw)]);
+    beginWalletHistoryAcquisitionV2(h.port, budgets({ max_exact_fallback_transactions: 1 }));
+    const result = await h.port.getFinalizedTransactionV1(exactInput(raw.transaction.signatures[0]));
+    assert.equal(result.signature, raw.transaction.signatures[0]);
+    assert.ok(Object.isFrozen(result));
     assert.equal(h.calls(), 1);
+    assert.deepEqual(h.seen[0].body, {
+      jsonrpc: '2.0', id: 'wallet-acquisition-v2', method: 'getTransaction',
+      params: [raw.transaction.signatures[0], {
+        commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: 0,
+      }],
+    });
     assert.equal(globalCalls, 0);
   } finally { globalThis.fetch = prior; }
+});
+
+test('recovers terminal bulk-history omissions in deterministic canonical order only', async () => {
+  const newest = rawTransaction('canonical-newest', { slot: 903, blockTime: 1_780_000_003 });
+  const middle = rawTransaction('canonical-middle', { slot: 902, blockTime: 1_780_000_002 });
+  const oldest = rawTransaction('canonical-oldest', { slot: 901, blockTime: 1_780_000_001 });
+  const h = harness([page([middle]), exact(newest), exact(oldest)]);
+  const configured = budgets({ max_exact_fallback_transactions: 2 });
+  beginWalletHistoryAcquisitionV2(h.port, configured);
+  const result = await acquireFinalizedFullTransactionHistoryV1({
+    port: h.port,
+    wallet: WALLET,
+    anchor_slot: 1000,
+    canonical_sources: [canonical(newest), canonical(middle), canonical(oldest)],
+    budgets: configured,
+  });
+  assert.deepEqual(result.map(transaction => transaction.signature), [
+    newest.transaction.signatures[0], middle.transaction.signatures[0], oldest.transaction.signatures[0],
+  ]);
+  assert.deepEqual(h.seen.map(request => request.body.method), [
+    'getTransactionsForAddress','getTransaction','getTransaction',
+  ]);
+  assert.deepEqual(h.seen.slice(1).map(request => request.body.params[0]), [
+    newest.transaction.signatures[0], oldest.transaction.signatures[0],
+  ]);
+});
+
+test('enforces zero allowance and the configured exact-call cap before transport', async () => {
+  const signature = providerSignature('no-fallback-allowance');
+  const disabled = harness([exact(rawTransaction('unused'))]);
+  beginWalletHistoryAcquisitionV2(disabled.port, budgets());
+  await reject(disabled.port.getFinalizedTransactionV1(exactInput(signature)), 'acquisition_capped');
+  assert.equal(disabled.calls(), 0);
+
+  const first = rawTransaction('exact-cap-first');
+  const capped = harness([exact(first), exact(rawTransaction('exact-cap-second'))]);
+  beginWalletHistoryAcquisitionV2(capped.port, budgets({ max_exact_fallback_transactions: 1 }));
+  await capped.port.getFinalizedTransactionV1(exactInput(first.transaction.signatures[0]));
+  await reject(capped.port.getFinalizedTransactionV1(exactInput(providerSignature('exact-cap-second'))),
+    'acquisition_capped');
+  assert.equal(capped.calls(), 1);
+});
+
+test('rejects non-exact getTransaction inputs before transport', async () => {
+  const signature = providerSignature('invalid-exact-input');
+  const invalid = [
+    { signature },
+    { ...exactInput(signature), commitment: 'confirmed' },
+    { ...exactInput(signature), encoding: 'jsonParsed' },
+    { ...exactInput(signature), max_supported_transaction_version: 1 },
+    { ...exactInput(signature), extra: true },
+  ];
+  for (const candidate of invalid) {
+    const h = harness([exact(rawTransaction('unused-exact-input'))]);
+    beginWalletHistoryAcquisitionV2(h.port, budgets({ max_exact_fallback_transactions: 1 }));
+    await reject(h.port.getFinalizedTransactionV1(candidate), 'provider_request_invalid');
+    assert.equal(h.calls(), 0);
+  }
+});
+
+test('recovers the hard maximum of eight omissions without a ninth call', async () => {
+  const raws = Array.from({ length: 8 }, (_, index) => rawTransaction(`fallback-eight-${index}`, {
+    slot: 908 - index, blockTime: 1_780_000_008 - index,
+  }));
+  const h = harness([page([]), ...raws.map(exact)]);
+  const configured = budgets({ max_exact_fallback_transactions: 8 });
+  beginWalletHistoryAcquisitionV2(h.port, configured);
+  const result = await acquireFinalizedFullTransactionHistoryV1({
+    port: h.port, wallet: WALLET, anchor_slot: 1000,
+    canonical_sources: raws.map(canonical), budgets: configured,
+  });
+  assert.deepEqual(result.map(transaction => transaction.signature), raws.map(raw => raw.transaction.signatures[0]));
+  assert.equal(h.seen.filter(request => request.body.method === 'getTransaction').length, 8);
+});
+
+test('fails closed on null, malformed, signature-mismatching, and source-mismatching exact results', async () => {
+  const expected = rawTransaction('exact-expected');
+  const malformed = structuredClone(expected); delete malformed.meta.fee;
+  const cases = [
+    [null, 'source_transaction_mismatch'],
+    [malformed, 'malformed_provider_response'],
+    [rawTransaction('wrong-signature'), 'malformed_provider_response'],
+    [rawTransaction('exact-expected', { slot: 899 }), 'source_transaction_mismatch'],
+    [rawTransaction('exact-expected', { blockTime: 1_779_999_999 }), 'source_transaction_mismatch'],
+  ];
+  for (const [candidate, code] of cases) {
+    const h = harness([page([]), exact(candidate)]);
+    const configured = budgets({ max_exact_fallback_transactions: 1, max_attempts_per_operation: 1 });
+    beginWalletHistoryAcquisitionV2(h.port, configured);
+    await reject(acquireFinalizedFullTransactionHistoryV1({
+      port: h.port, wallet: WALLET, anchor_slot: 1000,
+      canonical_sources: [canonical(expected)], budgets: configured,
+    }), code);
+    assert.deepEqual(h.seen.map(request => request.body.method), ['getTransactionsForAddress','getTransaction']);
+  }
+  const failed = rawTransaction('exact-expected'); failed.meta.err = { InstructionError: [0, 'Custom'] };
+  const execution = harness([page([]), exact(failed)]);
+  const configured = budgets({ max_exact_fallback_transactions: 1 });
+  beginWalletHistoryAcquisitionV2(execution.port, configured);
+  await reject(acquireFinalizedFullTransactionHistoryV1({
+    port: execution.port, wallet: WALLET, anchor_slot: 1000,
+    canonical_sources: [canonical(expected)], budgets: configured,
+  }), 'source_transaction_mismatch');
+
+  const cyclic = rpc(null); cyclic.result = cyclic;
+  const unsafe = harness([{ status: 200, data: cyclic }]);
+  beginWalletHistoryAcquisitionV2(unsafe.port, configured);
+  await reject(unsafe.port.getFinalizedTransactionV1(exactInput(expected.transaction.signatures[0])),
+    'malformed_provider_response', 'provider_value_unsafe');
+});
+
+test('does not fallback when allowance is zero or terminal omissions exceed allowance', async () => {
+  const sources = [canonical(rawTransaction('missing-one')), canonical(rawTransaction('missing-two', { slot: 899 }))];
+  for (const allowance of [0, 1]) {
+    const h = harness([page([])]);
+    const configured = budgets({ max_exact_fallback_transactions: allowance });
+    beginWalletHistoryAcquisitionV2(h.port, configured);
+    await reject(acquireFinalizedFullTransactionHistoryV1({
+      port: h.port, wallet: WALLET, anchor_slot: 1000, canonical_sources: sources, budgets: configured,
+    }), 'source_transaction_mismatch');
+    assert.deepEqual(h.seen.map(request => request.body.method), ['getTransactionsForAddress']);
+  }
+});
+
+test('never starts fallback after malformed bulk evidence, duplicate conflict, repeated token, cap, timeout, or deadline failure', async () => {
+  const source = canonical(rawTransaction('bulk-failure-missing'));
+  const duplicate = rawTransaction('bulk-conflict');
+  const changed = structuredClone(duplicate); changed.meta.fee = 1; changed.meta.postBalances[0] = 99999;
+  const timeout = Object.assign(new Error('hostile timeout'), { code: 'request_timeout' });
+  const cases = [
+    { responses: [{ status: 200, data: rpc({ data: 'bad', paginationToken: null }) }] },
+    { responses: [page([duplicate, changed])] },
+    { responses: [page([], 'repeat'), page([], 'repeat')] },
+    { responses: [page([], 'next')], overrides: { max_pages: 1 } },
+    { responses: [timeout], overrides: { max_attempts_per_operation: 1 } },
+    { responses: [({ advance }) => { advance(21); return page([]); }], overrides: {
+      request_timeout_ms: 19, overall_timeout_ms: 20,
+    } },
+  ];
+  for (const fixture of cases) {
+    const h = harness(fixture.responses);
+    const configured = budgets({ max_exact_fallback_transactions: 1, ...fixture.overrides });
+    beginWalletHistoryAcquisitionV2(h.port, configured);
+    await assert.rejects(acquireFinalizedFullTransactionHistoryV1({
+      port: h.port, wallet: WALLET, anchor_slot: 1000,
+      canonical_sources: [source], budgets: configured,
+    }));
+    assert.equal(h.seen.some(request => request.body.method === 'getTransaction'), false);
+  }
+});
+
+test('never repairs a canonical bulk signature carrying contradictory post-anchor source evidence', async () => {
+  const expected = rawTransaction('canonical-post-anchor-conflict', { slot: 900 });
+  const contradictory = rawTransaction('canonical-post-anchor-conflict', { slot: 1001 });
+  const h = harness([page([contradictory]), exact(expected)]);
+  const configured = budgets({ max_exact_fallback_transactions: 1 });
+  beginWalletHistoryAcquisitionV2(h.port, configured);
+  await reject(acquireFinalizedFullTransactionHistoryV1({
+    port: h.port, wallet: WALLET, anchor_slot: 1000,
+    canonical_sources: [canonical(expected)], budgets: configured,
+  }), 'source_transaction_mismatch');
+  assert.deepEqual(h.seen.map(request => request.body.method), ['getTransactionsForAddress']);
+});
+
+test('fallback shares the acquisition deadline, retries, and telemetry', async () => {
+  const missing = rawTransaction('shared-fallback', { slot: 899 });
+  const transient = Object.assign(new Error('hostile timeout'), { code: 'request_timeout' });
+  const h = harness([
+    ({ advance }) => { advance(5); return page([]); },
+    transient,
+    ({ request, advance }) => { assert.equal(request.timeout_ms, 15); advance(1); return exact(missing); },
+  ]);
+  const configured = budgets({
+    max_exact_fallback_transactions: 1, max_attempts_per_operation: 2,
+    request_timeout_ms: 20, overall_timeout_ms: 120,
+  });
+  beginWalletHistoryAcquisitionV2(h.port, configured);
+  const result = await acquireFinalizedFullTransactionHistoryV1({
+    port: h.port, wallet: WALLET, anchor_slot: 1000,
+    canonical_sources: [canonical(missing)], budgets: configured,
+  });
+  assert.equal(result[0].signature, missing.transaction.signatures[0]);
+  assert.deepEqual(h.counts, { retry: 1, timeout: 1 });
+  assert.deepEqual(h.seen.map(request => request.body.method), [
+    'getTransactionsForAddress','getTransaction','getTransaction',
+  ]);
+});
+
+test('fallback aborts and discards abort-ignoring late success without retry or telemetry mutation', async () => {
+  const missing = rawTransaction('late-fallback', { slot: 899 });
+  let calls = 0; let clockCalls = 0; let aborted = false;
+  const counts = { retry: 0, timeout: 0 };
+  const port = createHeliusFullTransactionPortV2({
+    httpClient: { request(request) {
+      calls += 1;
+      if (calls === 1) return page([]);
+      request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+      return new Promise(resolve => setTimeout(() => resolve(exact(missing)), 50));
+    } },
+    apiKeyProvider: () => 'super-secret-key', sleep: async () => {},
+    clock: () => { clockCalls += 1; return performance.now(); }, random: () => 0,
+    telemetry: { onRetryAttemptV1() { counts.retry += 1; }, onTimeoutAttemptV1() { counts.timeout += 1; } },
+  });
+  const configured = budgets({
+    max_exact_fallback_transactions: 1, max_attempts_per_operation: 2,
+    request_timeout_ms: 10, overall_timeout_ms: 100,
+  });
+  beginWalletHistoryAcquisitionV2(port, configured);
+  await reject(acquireFinalizedFullTransactionHistoryV1({
+    port, wallet: WALLET, anchor_slot: 1000,
+    canonical_sources: [canonical(missing)], budgets: configured,
+  }), 'provider_retry_exhausted');
+  assert.equal(aborted, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(counts, { retry: 0, timeout: 0 });
+  const finalizedClockCalls = clockCalls;
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(calls, 2);
+  assert.equal(clockCalls, finalizedClockCalls);
+  assert.deepEqual(counts, { retry: 0, timeout: 0 });
 });

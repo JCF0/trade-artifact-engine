@@ -31,6 +31,9 @@ const FULL_PAGE_INPUT_FIELDS = [
   'wallet','pagination_token','limit','commitment','anchor_slot','transaction_details',
   'sort_order','encoding','max_supported_transaction_version','token_account_scope','status',
 ];
+const EXACT_TRANSACTION_INPUT_FIELDS = [
+  'signature','commitment','encoding','max_supported_transaction_version',
+];
 const BUDGET_FIELDS = [
   'pagination_profile','page_size','max_pages','max_transactions','retry_profile',
   'max_attempts_per_operation','timeout_profile','request_timeout_ms','overall_timeout_ms',
@@ -127,6 +130,7 @@ function operationBudgets(value) {
     max_attempts_per_operation: MAX_ATTEMPTS_PER_OPERATION_V1,
     request_timeout_ms: MAX_REQUEST_TIMEOUT_MS_V1,
     overall_timeout_ms: MAX_OVERALL_TIMEOUT_MS_V1,
+    max_exact_fallback_transactions: 0,
   };
   const budget = exactObject(value, BUDGET_FIELDS, 'invalid_acquisition_request');
   if (budget.pagination_profile !== 'solana_full_transaction_page_100_v1' || budget.page_size !== PAGE_SIZE_V1
@@ -149,7 +153,7 @@ function beginOperation(capability, requestedBudgets) {
   const deadline = now(capability.clock) + budget.overall_timeout_ms;
   const key = apiKey(capability.apiKeyProvider);
   if (now(capability.clock) >= deadline) fail('acquisition_deadline_exceeded');
-  return { deadline, apiKey: key, ...budget };
+  return { deadline, apiKey: key, exactFallbackCalls: 0, ...budget };
 }
 
 async function execute(capability, logicalRequest, operation) {
@@ -272,6 +276,14 @@ function validateFullPageInput(value) {
   }
   return input;
 }
+function validateExactTransactionInput(value) {
+  const input = exactObject(value, EXACT_TRANSACTION_INPUT_FIELDS);
+  if (!isSolanaSignatureV1(input.signature) || input.commitment !== 'finalized'
+      || input.encoding !== 'json' || input.max_supported_transaction_version !== 0) {
+    fail('provider_request_invalid');
+  }
+  return input;
+}
 function paginationToken(value) {
   if (value === null) return null;
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_PAGINATION_TOKEN_LENGTH) {
@@ -349,8 +361,15 @@ export function createHeliusFullTransactionPortV2(rawOptions) {
       const body = await execute(capability, post(rpc('getTransactionsForAddress', [input.wallet, config])), current);
       return validateFullPage(body);
     },
-    async getFinalizedTransactionV1() {
-      fail('acquisition_capability_denied');
+    async getFinalizedTransactionV1(value) {
+      const input = validateExactTransactionInput(value);
+      const current = context();
+      if (current.exactFallbackCalls >= current.max_exact_fallback_transactions) fail('acquisition_capped');
+      current.exactFallbackCalls += 1;
+      const result = rpcResultV2(await execute(capability, post(rpc('getTransaction', [input.signature, {
+        commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: 0,
+      }])), current));
+      return result === null ? null : validateHeliusFullTransactionV1(result, input.signature);
     },
   }, {
     beginAcquisitionV2(budgets) {
