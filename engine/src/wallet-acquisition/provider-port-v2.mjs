@@ -78,7 +78,14 @@ export function createWalletHistoryPortV2(capability, options) {
     });
   }
   Object.freeze(port);
-  if (starter !== null) ACQUISITION_STARTERS_V2.set(port, starter);
+  if (starter !== null) {
+    let acquisitionStarted = false;
+    ACQUISITION_STARTERS_V2.set(port, budgets => {
+      if (acquisitionStarted) failWalletAcquisitionOperationV1('acquisition_capability_denied');
+      acquisitionStarted = true;
+      return starter(budgets);
+    });
+  }
   return port;
 }
 

@@ -57,6 +57,20 @@ test('provider port v2 keeps the acquisition starter hidden and passes detached 
   assert.throws(() => beginWalletHistoryAcquisitionV2(createWalletHistoryPortV2(capability()), budgets), error => error?.code === 'acquisition_capability_denied');
 });
 
+test('provider port v2 acquisition starter is one-shot and cannot refresh an operation', () => {
+  const received = [];
+  const adapterPort = createWalletHistoryPortV2(capability(), {
+    beginAcquisitionV2(value) { received.push(value); },
+  });
+  const orchestratorPort = createWalletHistoryPortV2(adapterPort);
+  assert.equal(beginWalletHistoryAcquisitionV2(orchestratorPort, { overall_timeout_ms: 1000 }), true);
+  assert.throws(
+    () => beginWalletHistoryAcquisitionV2(orchestratorPort, { overall_timeout_ms: 2000 }),
+    error => error?.code === 'acquisition_capability_denied',
+  );
+  assert.deepEqual(received, [{ overall_timeout_ms: 1000 }]);
+});
+
 test('provider port v2 preserves the hidden starter when a registered port crosses the orchestrator boundary', () => {
   let received = null;
   const adapterPort = createWalletHistoryPortV2(capability(), { beginAcquisitionV2(value) { received = value; } });
