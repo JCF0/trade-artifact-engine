@@ -30,6 +30,160 @@ function tokenRowsByIndex(rows) {
   return new Map(rows.map(row => [row.account_index, row]));
 }
 
+function tokenRowsByAccount(rows) {
+  return new Map(rows.map(row => [row.account, row]));
+}
+
+function instructionEntries(transaction) {
+  const entries = transaction.instructions.map((instruction, index) => ({
+    key: `top-${index}`,
+    instruction,
+    outerProgram: null,
+  }));
+  for (const group of transaction.inner_instruction_groups) {
+    const outerProgram = transaction.instructions[group.outer_instruction_index].program_id;
+    group.instructions.forEach((instruction, index) => entries.push({
+      key: `inner-${group.outer_instruction_index}-${index}`,
+      instruction,
+      outerProgram,
+    }));
+  }
+  return entries;
+}
+
+function closureMintScope(closedAccount, preByAccount, postByAccount, wallet) {
+  const before = preByAccount.get(closedAccount);
+  const after = postByAccount.get(closedAccount);
+  const rows = [before, after].filter(Boolean);
+  if (rows.length === 0 || rows.some(row => row.owner !== wallet)) return null;
+  return new Set(rows.map(row => row.mint)).size === 1 ? rows[0].mint : null;
+}
+
+function unresolvedClosureMint(mint) {
+  return mint !== null && QUOTE_MINTS.has(mint) ? null : mint;
+}
+
+function closureEvidence(transaction, wallet) {
+  const preByAccount = tokenRowsByAccount(transaction.pre_token_balances);
+  const postByAccount = tokenRowsByAccount(transaction.post_token_balances);
+  const accountIndexes = new Map(transaction.accounts.map((account, index) => [account.address, index]));
+  const candidates = new Map();
+  const consumedInstructionKeys = new Set();
+  const unresolved = [];
+  const boundAccountIndexes = new Set();
+
+  for (const { key, instruction } of instructionEntries(transaction)) {
+    if (!TOKEN_PROGRAMS.has(instruction.program_id) || instruction.data !== 'A') continue;
+    consumedInstructionKeys.add(key);
+    const closedAccount = instruction.accounts[0] ?? null;
+    const mint = closedAccount === null ? null : closureMintScope(closedAccount, preByAccount, postByAccount, wallet);
+    if (closedAccount !== null && mint !== null) boundAccountIndexes.add(accountIndexes.get(closedAccount));
+    if (instruction.accounts.length !== 3) {
+      unresolved.push({ mint: instruction.accounts.length >= 2 ? unresolvedClosureMint(mint) : null });
+      continue;
+    }
+    const [account, destination, authority] = instruction.accounts;
+    const externalBefore = preByAccount.get(account);
+    if (externalBefore !== undefined && externalBefore.owner !== null && externalBefore.owner !== wallet
+        && authority === externalBefore.owner && destination !== wallet && authority !== wallet) {
+      const externalAfter = postByAccount.get(account);
+      const accountIndex = accountIndexes.get(account);
+      const destinationIndex = accountIndexes.get(destination);
+      const decrease = BigInt(transaction.pre_lamport_balances[accountIndex])
+        - BigInt(transaction.post_lamport_balances[accountIndex]);
+      const destinationIncrease = BigInt(transaction.post_lamport_balances[destinationIndex])
+        - BigInt(transaction.pre_lamport_balances[destinationIndex]);
+      const coherentExternalClosure = externalBefore.token_program === instruction.program_id
+        && (externalAfter === undefined || externalAfter.raw_amount === '0')
+        && account !== destination
+        && transaction.post_lamport_balances[accountIndex] === 0
+        && decrease >= 0n
+        && destinationIncrease === decrease;
+      if (!coherentExternalClosure) unresolved.push({ mint: null });
+      continue;
+    }
+    const values = candidates.get(account) ?? [];
+    values.push({ account, destination, authority, programId: instruction.program_id, mint });
+    candidates.set(account, values);
+  }
+
+  const provisionallyValid = [];
+  for (const account of [...candidates.keys()].sort(compareCodeUnits)) {
+    const values = candidates.get(account);
+    const mint = closureMintScope(account, preByAccount, postByAccount, wallet);
+    if (values.length !== 1) {
+      const destinations = new Set(values.map(value => value.destination));
+      unresolved.push({ mint: destinations.size === 1 ? unresolvedClosureMint(mint) : null });
+      continue;
+    }
+    const candidate = values[0];
+    const before = preByAccount.get(account);
+    const after = postByAccount.get(account);
+    const accountIndex = accountIndexes.get(account);
+    const destinationIndex = accountIndexes.get(candidate.destination);
+    const identityBound = before !== undefined
+      && before.owner === wallet
+      && before.token_program === candidate.programId
+      && (after === undefined || after.raw_amount === '0');
+    const authorityBound = candidate.authority === wallet;
+    const endpointsDistinct = candidate.destination !== account;
+    const decrease = BigInt(transaction.pre_lamport_balances[accountIndex])
+      - BigInt(transaction.post_lamport_balances[accountIndex]);
+    const closedLamportsDrained = transaction.post_lamport_balances[accountIndex] === 0;
+    if (!identityBound || !authorityBound || !endpointsDistinct || !closedLamportsDrained || decrease < 0n) {
+      unresolved.push({ mint: unresolvedClosureMint(identityBound ? before.mint : mint) });
+      continue;
+    }
+    boundAccountIndexes.add(accountIndex);
+    provisionallyValid.push({
+      account,
+      destination: candidate.destination,
+      destinationIndex,
+      mint: before.mint,
+      rentLamports: decrease,
+    });
+  }
+
+  const destinationGroups = new Map();
+  for (const closure of provisionallyValid) {
+    const values = destinationGroups.get(closure.destination) ?? [];
+    values.push(closure);
+    destinationGroups.set(closure.destination, values);
+  }
+  const valid = [];
+  let returnedRentLamports = 0n;
+  for (const [destination, closures] of destinationGroups) {
+    const expectedIncrease = closures.reduce((sum, closure) => sum + closure.rentLamports, 0n);
+    const observedIncrease = BigInt(transaction.post_lamport_balances[closures[0].destinationIndex])
+      - BigInt(transaction.pre_lamport_balances[closures[0].destinationIndex]);
+    const feeAdjustment = destination === wallet && transaction.fee_payer === wallet
+      ? BigInt(transaction.fee_lamports)
+      : 0n;
+    const destinationReconciled = destination === wallet
+      ? observedIncrease + feeAdjustment === expectedIncrease
+      : observedIncrease === expectedIncrease;
+    if (!destinationReconciled) {
+      unresolved.push(...closures.map(closure => ({
+        mint: destination === wallet ? null : unresolvedClosureMint(closure.mint),
+      })));
+      continue;
+    }
+    valid.push(...closures);
+    if (destination === wallet) returnedRentLamports += expectedIncrease;
+    else if (expectedIncrease > 0n) unresolved.push(...closures.map(closure => ({ mint: closure.mint })));
+  }
+
+  return {
+    closures: valid
+      .sort((left, right) => compareCodeUnits(left.account, right.account))
+      .map((closure, index) => ({ closure_id: `account-close-${index}`, owner: wallet, mint: closure.mint })),
+    unresolved,
+    boundAccountIndexes,
+    consumedInstructionKeys,
+    returnedRentLamports,
+  };
+}
+
 function recognizedPrograms(transaction) {
   const found = new Set();
   const inspect = instructions => {
@@ -76,9 +230,10 @@ function tokenDeltas(transaction, wallet) {
   return { legs, unresolved, walletOwnedAccountIndexes };
 }
 
-function unresolvedNativeEvidence(transaction, wallet, walletOwnedAccountIndexes) {
+function unresolvedNativeEvidence(transaction, wallet, walletOwnedAccountIndexes, boundClosureAccountIndexes) {
   const unresolved = [];
   for (const accountIndex of walletOwnedAccountIndexes) {
+    if (boundClosureAccountIndexes.has(accountIndex)) continue;
     const delta = BigInt(transaction.post_lamport_balances[accountIndex])
       - BigInt(transaction.pre_lamport_balances[accountIndex]);
     if (delta === 0n) continue;
@@ -98,7 +253,7 @@ function unresolvedBalanceEquation(transaction) {
   return post - pre + BigInt(transaction.fee_lamports) === 0n ? [] : [{ mint: null }];
 }
 
-function unresolvedWalletInstructions(transaction, wallet) {
+function unresolvedWalletInstructions(transaction, wallet, consumedClosureInstructionKeys) {
   const walletTokenMints = new Map();
   for (const row of [...transaction.pre_token_balances, ...transaction.post_token_balances]) {
     if (row.owner === wallet) walletTokenMints.set(row.account, row.mint);
@@ -109,23 +264,23 @@ function unresolvedWalletInstructions(transaction, wallet) {
     return [...new Set(instruction.accounts.map(account => walletTokenMints.get(account)).filter(Boolean))]
       .sort(compareCodeUnits).map(mint => ({ mint }));
   };
-  const unresolved = transaction.instructions.flatMap(effectsFor);
-  for (const group of transaction.inner_instruction_groups) {
-    const outerProgram = transaction.instructions[group.outer_instruction_index].program_id;
-    for (const instruction of group.instructions) {
-      const tokenLegBoundToSpotOuter = TOKEN_PROGRAMS.has(instruction.program_id)
-        && isRecognizedSpotProgramV1(outerProgram);
-      if (!tokenLegBoundToSpotOuter) unresolved.push(...effectsFor(instruction));
-    }
+  const unresolved = [];
+  for (const { key, instruction, outerProgram } of instructionEntries(transaction)) {
+    if (consumedClosureInstructionKeys.has(key)) continue;
+    const tokenLegBoundToSpotOuter = outerProgram !== null
+      && TOKEN_PROGRAMS.has(instruction.program_id)
+      && isRecognizedSpotProgramV1(outerProgram);
+    if (!tokenLegBoundToSpotOuter) unresolved.push(...effectsFor(instruction));
   }
   return unresolved;
 }
 
-function nativeDeltaLeg(transaction, wallet, walletIndex, unresolved) {
+function nativeDeltaLeg(transaction, wallet, walletIndex, returnedRentLamports, unresolved) {
   if (walletIndex === null) return null;
   let economicDelta = BigInt(transaction.post_lamport_balances[walletIndex])
     - BigInt(transaction.pre_lamport_balances[walletIndex]);
   if (transaction.fee_payer === wallet) economicDelta += BigInt(transaction.fee_lamports);
+  economicDelta -= returnedRentLamports;
   if (economicDelta === 0n) return null;
   const magnitude = economicDelta < 0n ? -economicDelta : economicDelta;
   if (magnitude > MAX_SAFE_BIGINT) {
@@ -173,17 +328,32 @@ export function projectSolanaFullTransactionV1(input) {
     let tokenLegs = [];
     let nativeLegs = [];
     let unresolved = [];
+    let closures = [];
     if (transaction.execution_state === 'succeeded') {
       const tokens = tokenDeltas(transaction, detached.wallet);
       tokenLegs = tokens.legs;
-      const native = unresolvedNativeEvidence(transaction, detached.wallet, tokens.walletOwnedAccountIndexes);
+      const closure = closureEvidence(transaction, detached.wallet);
+      closures = closure.closures;
+      const native = unresolvedNativeEvidence(
+        transaction,
+        detached.wallet,
+        tokens.walletOwnedAccountIndexes,
+        closure.boundAccountIndexes,
+      );
       unresolved = [
         ...tokens.unresolved,
         ...native.unresolved,
         ...unresolvedBalanceEquation(transaction),
-        ...unresolvedWalletInstructions(transaction, detached.wallet),
+        ...unresolvedWalletInstructions(transaction, detached.wallet, closure.consumedInstructionKeys),
+        ...closure.unresolved,
       ];
-      const nativeLeg = nativeDeltaLeg(transaction, detached.wallet, native.walletIndex, unresolved);
+      const nativeLeg = nativeDeltaLeg(
+        transaction,
+        detached.wallet,
+        native.walletIndex,
+        closure.returnedRentLamports,
+        unresolved,
+      );
       if (nativeLeg !== null) nativeLegs.push(nativeLeg);
 
       const groupable = unresolved.length === 0
@@ -209,7 +379,7 @@ export function projectSolanaFullTransactionV1(input) {
       structured_swap_groups: [],
       token_transfer_legs: tokenLegs.map(({ account_index: _accountIndex, ...leg }) => leg),
       native_sol_transfer_legs: nativeLegs,
-      account_closures: [],
+      account_closures: closures,
       unresolved_wallet_effects: numberUnresolvedEffects(unresolved),
     });
   } catch (error) {
