@@ -318,7 +318,7 @@ export function createHeliusFullTransactionPortV2(rawOptions) {
   const capability = capabilities(rawOptions);
   let operation = null;
   const context = () => {
-    if (operation === null) operation = beginOperation(capability);
+    if (operation === null) fail('acquisition_capability_denied');
     return operation;
   };
   return createWalletHistoryPortV2({

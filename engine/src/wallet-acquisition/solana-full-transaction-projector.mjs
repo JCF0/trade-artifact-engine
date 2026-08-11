@@ -9,6 +9,8 @@ const TOKEN_PROGRAMS = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
 ]);
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const TOKEN_TRANSFER_OPCODES = new Set([3, 12]);
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 function rejectProjection() {
@@ -17,6 +19,26 @@ function rejectProjection() {
 
 function compareCodeUnits(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function tokenInstructionOpcode(data) {
+  if (typeof data !== 'string' || data.length === 0) return null;
+  const bytes = [0];
+  for (const character of data) {
+    let carry = BASE58_ALPHABET.indexOf(character);
+    if (carry < 0) return null;
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  if (data[0] === '1') return 0;
+  return bytes.at(-1);
 }
 
 function exactProjectorInput(input) {
@@ -269,6 +291,7 @@ function unresolvedWalletInstructions(transaction, wallet, consumedClosureInstru
     if (consumedClosureInstructionKeys.has(key)) continue;
     const tokenLegBoundToSpotOuter = outerProgram !== null
       && TOKEN_PROGRAMS.has(instruction.program_id)
+      && TOKEN_TRANSFER_OPCODES.has(tokenInstructionOpcode(instruction.data))
       && isRecognizedSpotProgramV1(outerProgram);
     if (!tokenLegBoundToSpotOuter) unresolved.push(...effectsFor(instruction));
   }

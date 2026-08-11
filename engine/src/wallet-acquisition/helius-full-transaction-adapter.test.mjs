@@ -119,6 +119,21 @@ async function reject(promise, expectedCode, reason = null) {
     && !inspect(error, { depth: 10 }).includes('super-secret-key'));
 }
 
+test('refuses every provider call until the hidden acquisition starter binds request budgets and deadline', async () => {
+  const h = harness([{ status: 200, data: rpc(SOLANA_MAINNET_GENESIS_HASH) }]);
+  const operations = [
+    () => h.port.getNetworkIdentityV1(),
+    () => h.port.getFinalizedSlotV1(),
+    () => h.port.getFinalizedBlockV1({ slot: 1000 }),
+    () => h.port.getFinalizedWalletSignaturePageV1({ wallet: WALLET, before: null, limit: 100, commitment: 'finalized' }),
+    () => h.port.getFinalizedFullTransactionPageV1(input()),
+    () => h.port.getFinalizedTransactionV1(exactInput(providerSignature('before-begin'))),
+  ];
+  for (const operation of operations) await reject(operation(), 'acquisition_capability_denied');
+  assert.equal(h.calls(), 0);
+  assert.deepEqual(h.seen, []);
+});
+
 test('generates the exact fixed Helius full-transaction request and returns detached transactions', async () => {
   const raw = rawTransaction('exact-request');
   const h = harness([page([raw])]);

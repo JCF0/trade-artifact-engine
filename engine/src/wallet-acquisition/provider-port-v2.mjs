@@ -41,8 +41,8 @@ function validateCapability(capability) {
   }
 }
 
-function validateOptions(options) {
-  if (options === undefined) return null;
+function validateOptions(options, capability) {
+  if (options === undefined) return ACQUISITION_STARTERS_V2.get(capability) ?? null;
   try {
     if (options === null || typeof options !== 'object' || Array.isArray(options)
         || utilTypes.isProxy(options) || Object.getPrototypeOf(options) !== Object.prototype
@@ -63,7 +63,7 @@ function validateOptions(options) {
 
 export function createWalletHistoryPortV2(capability, options) {
   const methods = validateCapability(capability);
-  const starter = validateOptions(options);
+  const starter = validateOptions(options, capability);
   const port = {};
   for (const name of WALLET_ACQUISITION_PORT_METHODS_V2) {
     Object.defineProperty(port, name, {

@@ -145,6 +145,27 @@ test('reconstructs separately identified same-mint wallet account legs and aggre
   assert.equal(result.normalized_event_records[0].slice7_event.token_in_amount, 25000);
 });
 
+test('keeps unmatched wallet-relevant Token instructions unresolved both top-level and inside a recognized DEX instruction', () => {
+  const make = location => {
+    const value = transaction(`unmatched-token-${location}`);
+    const walletTokenAccount = value.pre_token_balances[0].account;
+    const instruction = {
+      instruction_index: location === 'top' ? 1 : 0,
+      program_id: TOKEN_PROGRAM,
+      accounts: [walletTokenAccount, WALLET],
+      data: '7',
+    };
+    if (location === 'top') value.instructions.push(instruction);
+    else value.inner_instruction_groups.push({ outer_instruction_index: 0, instructions: [instruction] });
+    return value;
+  };
+  for (const location of ['top','inner']) {
+    const value = make(location);
+    assert.deepEqual(project(value).unresolved_wallet_effects.map(effect => effect.mint), [null]);
+    assert.equal(disposition(value), 'ambiguous_activity');
+  }
+});
+
 test('uses the reconciled pre/post union only for wallet-owned token accounts, including pre-only and post-only rows', () => {
   const externalOwner = providerPublicKey('full-projector-external-owner');
   const value = transaction('token-union', {

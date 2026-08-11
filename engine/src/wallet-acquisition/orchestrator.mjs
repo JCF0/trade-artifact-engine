@@ -29,7 +29,10 @@ import {
   getWalletAcquisitionFailureDiagnosticV1,
   sanitizeWalletAcquisitionErrorV1,
 } from './provider-port.mjs';
-import { validateWalletAcquisitionRequestV1 } from './request-contract.mjs';
+import { beginWalletHistoryAcquisitionV2, createWalletHistoryPortV2 } from './provider-port-v2.mjs';
+import { validateWalletAcquisitionRequestV1, validateWalletAcquisitionRequestV2 } from './request-contract.mjs';
+import { acquireFinalizedFullTransactionHistoryV1 } from './full-transaction-history-acquisition.mjs';
+import { projectSolanaFullTransactionV1 } from './solana-full-transaction-projector.mjs';
 import { buildSolanaSpotEvidenceV1, buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-evidence.mjs';
 import { classifyWalletSourceTransactionV1 } from './transaction-classifier.mjs';
 import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
@@ -177,7 +180,7 @@ async function proveLatestState(port, request, anchor, initial) {
   }
 }
 
-function reconcileEnhanced(wallet, sources, evidenceRecords) {
+function reconcileProjectedEvidence(wallet, sources, evidenceRecords) {
   if (!Array.isArray(evidenceRecords) || evidenceRecords.length !== sources.length) fail('source_transaction_mismatch');
   const canonical = new Map(sources.map(source => [source.signature, source]));
   const projected = new Map();
@@ -237,23 +240,46 @@ function completeStatus() {
   return { coverage_status: 'complete', acquisition_complete: true, normalization_complete: true, classification_complete: true, pagination_complete: true, historical_bound_proven: true, chain_boundary_proven: true, truncated: false, capped: false, partial: false, provider_uncertain: false };
 }
 
-async function acquire(requestInput, dependencyInput) {
-  validateWalletAcquisitionRequestV1(requestInput);
+async function acquire(requestInput, dependencyInput, portVersion) {
+  if (portVersion === 'v1') validateWalletAcquisitionRequestV1(requestInput);
+  else validateWalletAcquisitionRequestV2(requestInput);
   exactObject(dependencyInput, ['walletHistoryPort'], 'acquisition_capability_denied');
   const request = structuredClone(requestInput);
-  const port = createWalletHistoryPortV1(dependencyInput.walletHistoryPort);
-  try { beginWalletHistoryAcquisitionV1(port, request.budgets); }
+  const port = portVersion === 'v1'
+    ? createWalletHistoryPortV1(dependencyInput.walletHistoryPort)
+    : createWalletHistoryPortV2(dependencyInput.walletHistoryPort);
+  try {
+    if (portVersion === 'v1') beginWalletHistoryAcquisitionV1(port, request.budgets);
+    else beginWalletHistoryAcquisitionV2(port, request.budgets);
+  }
   catch (error) { throw contextualizeWalletAcquisitionErrorV1(error, 'request_binding', 'acquisition_budget_binding'); }
   const anchor = await finalizedAnchor(port, request);
   const oldest = deriveOldestAllowedTimestampV1({ anchor_block_time: anchor.block_time, requested_lookback_seconds: request.window.requested_lookback_seconds });
   const pagination = await paginateInitial(port, request, anchor, oldest);
   await proveLatestState(port, request, anchor, pagination);
   let state = advancePaginationPhaseV1(pagination.state, 'enriching');
-  const signatures = pagination.authoritative.map(source => source.signature);
-  const evidenceRecords = await diagnosedCall('enhanced_history', 'enhanced_address_history', () => (
-    port.getEnhancedTransactionsBySignatureV1({ wallet: request.wallet, signatures })
-  ));
-  const evidence = reconcileEnhanced(request.wallet, pagination.authoritative, evidenceRecords);
+  let evidenceRecords;
+  if (portVersion === 'v1') {
+    const signatures = pagination.authoritative.map(source => source.signature);
+    evidenceRecords = await diagnosedCall('enhanced_history', 'enhanced_address_history', () => (
+      port.getEnhancedTransactionsBySignatureV1({ wallet: request.wallet, signatures })
+    ));
+  } else {
+    const transactions = await acquireFinalizedFullTransactionHistoryV1({
+      port,
+      wallet: request.wallet,
+      anchor_slot: anchor.slot,
+      canonical_sources: pagination.authoritative,
+      budgets: request.budgets,
+    });
+    evidenceRecords = [];
+    for (const transaction of transactions) {
+      evidenceRecords.push(await diagnosedCall('full_transaction_projection', 'full_transaction_projection', () => (
+        projectSolanaFullTransactionV1({ wallet: request.wallet, transaction })
+      )));
+    }
+  }
+  const evidence = reconcileProjectedEvidence(request.wallet, pagination.authoritative, evidenceRecords);
   state = advancePaginationPhaseV1(state, 'classifying');
   const assembled = classifyAll(pagination.authoritative, evidence);
   state = advancePaginationPhaseV1(state, 'reconciling');
@@ -281,6 +307,11 @@ async function acquire(requestInput, dependencyInput) {
 }
 
 export async function acquireWalletHistoryV1(request, dependencies) {
-  try { return await acquire(request, dependencies); }
+  try { return await acquire(request, dependencies, 'v1'); }
+  catch (error) { throw sanitizeWalletAcquisitionErrorV1(error, 'provider_uncertain'); }
+}
+
+export async function acquireWalletHistoryV2(request, dependencies) {
+  try { return await acquire(request, dependencies, 'v2'); }
   catch (error) { throw sanitizeWalletAcquisitionErrorV1(error, 'provider_uncertain'); }
 }
