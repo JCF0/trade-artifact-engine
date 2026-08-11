@@ -259,6 +259,37 @@ test('v2 preserves all five wallet-wide disposition classes and dense normalizat
   assert.equal(result.coverage.transactions_examined, 5);
 });
 
+test('a separate wallet-wide blocker preserves the supported JUP target but refuses authoritative issuance with fixed provenance', async () => {
+  const targets = goldenTransactions(JUP_GOLDEN, JUP_WALLET_V1, JUP_MINT_V1, USDC_MINT_V1);
+  const blocker = fullTransaction({
+    wallet: JUP_WALLET_V1,
+    signature: providerSignature('v2-unrelated-wallet-wide-blocker'),
+    slot: Math.min(...targets.map(transaction => transaction.slot)) - 1,
+    blockTime: Math.min(...targets.map(transaction => transaction.block_time)) - 1,
+    program: JUPITER_PROGRAM_V1,
+    inputs: [],
+    outputs: [],
+  });
+  blocker.instructions.push({
+    instruction_index: 1,
+    program_id: TOKEN_PROGRAM,
+    accounts: [JUP_WALLET_V1],
+    data: '7',
+  });
+  const value = fixture({ wallet: JUP_WALLET_V1, transactions: [...targets, blocker] });
+  await assert.rejects(acquire(value), error => {
+    assert.equal(error.code, 'wallet_wide_impact_unresolved');
+    assert.deepEqual(getWalletAcquisitionFailureDiagnosticV1(error), {
+      diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+      stage: 'wallet_wide_classification',
+      operation: 'transaction_classification',
+      reason: 'unmatched_wallet_instruction',
+    });
+    return true;
+  });
+  assert.deepEqual(value.counts(), { signatureCalls: 2, bulkCalls: 1, fallbackCalls: 0 });
+});
+
 test('v2 never repairs contradictory canonical bulk evidence through exact fallback', async () => {
   const [buy, sell] = goldenTransactions(JUP_GOLDEN, JUP_WALLET_V1, JUP_MINT_V1, USDC_MINT_V1);
   const contradictory = { ...buy, slot: buy.slot + 1 };

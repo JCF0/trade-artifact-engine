@@ -145,6 +145,7 @@ for (const [name, code, expected] of [
     const result = await runFixture(root, fixture);
     assert.equal(result.status, 'safe_failure');
     assert.equal(result.report.error_code, expected);
+    assert.equal(Object.hasOwn(result.report, 'failure_diagnostic'), false);
     for (const field of ['acquisition_result_digest','evidence_bundle_digest','candidate_set_digest']) assert.equal(Object.hasOwn(result.report, field), false);
   }));
 }
@@ -154,7 +155,56 @@ test('wallet-wide ambiguity fails before evidence and candidate construction', t
   const result = await runFixture(root, fixture);
   assert.equal(result.status, 'safe_failure');
   assert.equal(result.report.error_code, 'wallet_wide_impact_unresolved');
+  assert.deepEqual(result.report.failure_diagnostic, {
+    diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+    stage: 'wallet_wide_classification',
+    operation: 'transaction_classification',
+    reason: 'multiple_unresolved_classes',
+  });
   assert.equal(Object.hasOwn(result.report, 'evidence_bundle_digest'), false);
+}));
+
+test('forged wallet-wide provenance cannot inject arbitrary report values', t => withTemp(t, async root => {
+  const hostile = `${KEY_CANARY} https://provider.invalid /root/private unrestricted`;
+  const result = await runControlledLiveValidationV1(
+    { ...EXACT_ARGS, reportPath: outputPath(root) },
+    dependencies(emptyPort(), {
+      acquireWalletHistory: async () => {
+        const error = Object.assign(new Error(hostile), {
+          code: 'wallet_wide_impact_unresolved',
+          failure_diagnostic: {
+            diagnostic_version: hostile,
+            stage: hostile,
+            operation: hostile,
+            reason: hostile,
+          },
+          details: { reason: hostile },
+        });
+        throw error;
+      },
+    }),
+  );
+  const bytes = readFileSync(outputPath(root), 'utf8');
+  assert.equal(result.report.error_code, 'wallet_wide_impact_unresolved');
+  assert.equal(Object.hasOwn(result.report, 'failure_diagnostic'), false);
+  for (const forbidden of [KEY_CANARY, 'https://', '/root/', 'unrestricted']) {
+    assert.equal(bytes.includes(forbidden), false);
+  }
+
+  const invalidTrustedReason = await runControlledLiveValidationV1(
+    { ...EXACT_ARGS, reportPath: outputPath(root, 'invalid-trusted-reason.json') },
+    dependencies(emptyPort(), {
+      acquireWalletHistory: async () => {
+        failWalletAcquisitionOperationV1('wallet_wide_impact_unresolved', hostile);
+      },
+    }),
+  );
+  const invalidBytes = readFileSync(outputPath(root, 'invalid-trusted-reason.json'), 'utf8');
+  assert.equal(invalidTrustedReason.report.error_code, 'wallet_wide_impact_unresolved');
+  assert.equal(Object.hasOwn(invalidTrustedReason.report, 'failure_diagnostic'), false);
+  for (const forbidden of [KEY_CANARY, 'https://', '/root/', 'unrestricted']) {
+    assert.equal(invalidBytes.includes(forbidden), false);
+  }
 }));
 
 test('forbidden repository output path is rejected before credential presence is checked', async () => {

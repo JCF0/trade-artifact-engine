@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { projectSolanaFullTransactionV1 } from './solana-full-transaction-projector.mjs';
+import {
+  getSolanaFullTransactionUnresolvedReasonV1,
+  projectSolanaFullTransactionV1,
+} from './solana-full-transaction-projector.mjs';
 import { buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-evidence.mjs';
 import { classifyWalletSourceTransactionV1 } from './transaction-classifier.mjs';
 import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
@@ -163,6 +166,7 @@ test('preserves external closure rent and localizes only one exactly proven non-
   const knownEvidence = project(known);
   assert.deepEqual(knownEvidence.account_closures, [{ closure_id: 'account-close-0', owner: WALLET, mint: JUP }]);
   assert.deepEqual(knownEvidence.unresolved_wallet_effects.map(effect => effect.mint), [JUP]);
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(knownEvidence), 'closure_rent_unreconciled');
   const knownResult = classify(known);
   assert.equal(knownResult.disposition.disposition_type, 'ambiguous_activity');
   assert.equal(knownResult.activity_findings[0].impact_scope, 'token_specific');
@@ -173,11 +177,16 @@ test('preserves external closure rent and localizes only one exactly proven non-
   assert.equal(quoteResult.disposition.disposition_type, 'ambiguous_activity');
   assert.equal(quoteResult.activity_findings[0].impact_scope, 'wallet_wide');
   assert.deepEqual(quoteResult.disposition.affected_token_mints, []);
+  assert.equal(
+    getSolanaFullTransactionUnresolvedReasonV1(project(quote)),
+    'quote_mint_closure_unreconciled',
+  );
 
   const unknown = closureTransaction('external-unknown-rent', { destination, mint: null }).value;
   const unknownResult = classify(unknown);
   assert.equal(unknownResult.disposition.disposition_type, 'ambiguous_activity');
   assert.equal(unknownResult.activity_findings[0].impact_scope, 'wallet_wide');
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(project(unknown)), 'unknown_token_scope');
 });
 
 test('fails closed on incomplete, conflicting, duplicate, ownership-incoherent, and unreconciled closure evidence', () => {
@@ -243,7 +252,15 @@ test('fails closed on incomplete, conflicting, duplicate, ownership-incoherent, 
     assert.ok(evidence.unresolved_wallet_effects.length > 0, value.signature);
   }
   assert.equal(classify(incomplete.value).activity_findings[0].impact_scope, 'wallet_wide');
+  assert.equal(
+    getSolanaFullTransactionUnresolvedReasonV1(project(incomplete.value)),
+    'closure_evidence_unreconciled',
+  );
   assert.equal(classify(quoteIncomplete.value).activity_findings[0].impact_scope, 'wallet_wide');
+  assert.equal(
+    getSolanaFullTransactionUnresolvedReasonV1(project(quoteIncomplete.value)),
+    'quote_mint_closure_unreconciled',
+  );
   assert.equal(classify(conflicting).activity_findings[0].impact_scope, 'wallet_wide');
   assert.equal(classify(unknownOwner).activity_findings[0].impact_scope, 'wallet_wide');
 });
@@ -264,6 +281,23 @@ test('ignores an exactly bound closure whose account, authority, owner, and dest
   assert.deepEqual(evidence.account_closures, []);
   assert.deepEqual(evidence.unresolved_wallet_effects, []);
   assert.equal(classify(value).disposition.disposition_type, 'supported_normalized_event');
+
+  const incoherent = closureTransaction('external-close-incoherent', {
+    mint: RAY,
+    owner,
+    authority: owner,
+    destination,
+  });
+  incoherent.value.post_lamport_balances[incoherent.destinationIndex] -= 1;
+  incoherent.value.post_lamport_balances[0] += 1;
+  const incoherentEvidence = project(incoherent.value);
+  assert.deepEqual(incoherentEvidence.account_closures, []);
+  assert.deepEqual(incoherentEvidence.unresolved_wallet_effects.map(effect => effect.mint), [null]);
+  assert.equal(
+    getSolanaFullTransactionUnresolvedReasonV1(incoherentEvidence),
+    'closure_evidence_unreconciled',
+  );
+
 });
 
 test('does not subtract wallet-returned rent when the destination balance cannot prove the return', () => {
@@ -283,6 +317,7 @@ test('does not subtract wallet-returned rent when the destination balance cannot
   const result = classify(diverted.value);
   assert.equal(result.disposition.disposition_type, 'ambiguous_activity');
   assert.equal(result.activity_findings[0].impact_scope, 'wallet_wide');
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(evidence), 'closure_rent_unreconciled');
 
   const overcredited = closureTransaction('wallet-rent-overcredited');
   overcredited.value.post_lamport_balances[0] += 1;

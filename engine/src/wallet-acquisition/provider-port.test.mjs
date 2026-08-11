@@ -7,6 +7,7 @@ import {
   WALLET_ACQUISITION_FAILURE_OPERATIONS_V1,
   WALLET_ACQUISITION_FAILURE_STAGES_V1,
   WALLET_ACQUISITION_MALFORMED_REASONS_V1,
+  WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1,
   beginWalletHistoryAcquisitionV1,
   contextualizeWalletAcquisitionErrorV1,
   createWalletHistoryPortV1,
@@ -51,13 +52,13 @@ test('diagnostic enums are closed and trusted metadata survives only private pro
   assert.deepEqual(WALLET_ACQUISITION_FAILURE_STAGES_V1, [
     'request_binding','finalized_anchor','canonical_pagination','latest_state_recheck',
     'enhanced_history','enhanced_projection','full_transaction_history','full_transaction_projection',
-    'exact_transaction_fallback','internal_boundary',
+    'exact_transaction_fallback','wallet_wide_classification','internal_boundary',
   ]);
   assert.deepEqual(WALLET_ACQUISITION_FAILURE_OPERATIONS_V1, [
     'acquisition_budget_binding','network_identity','finalized_slot','finalized_block',
     'canonical_signature_page','enhanced_address_history','enhanced_transaction_projection',
     'full_transaction_address_history','full_transaction_validation','full_transaction_projection',
-    'exact_transaction_fallback','none',
+    'exact_transaction_fallback','transaction_classification','none',
   ]);
   assert.deepEqual(WALLET_ACQUISITION_MALFORMED_REASONS_V1, [
     'invalid_json','rpc_envelope_invalid','rpc_genesis_result_invalid','rpc_slot_result_invalid',
@@ -70,6 +71,12 @@ test('diagnostic enums are closed and trusted metadata survives only private pro
     'full_transaction_pagination_token_repeated','full_transaction_shape_invalid',
     'full_transaction_signature_mismatch','full_transaction_projection_internal_rejection',
     'exact_transaction_result_invalid','provider_value_unsafe','unlocalized_malformed_response',
+  ]);
+  assert.deepEqual(WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1, [
+    'unknown_token_scope','wallet_account_evidence_unresolved','native_balance_unreconciled',
+    'closure_evidence_unreconciled','closure_rent_unreconciled','quote_mint_closure_unreconciled',
+    'unmatched_wallet_instruction','unsupported_nested_instruction_shape','native_amount_out_of_range',
+    'multiple_unresolved_classes',
   ]);
 
   let minted;
@@ -92,6 +99,22 @@ test('diagnostic enums are closed and trusted metadata survives only private pro
   assert.throws(
     () => failWalletAcquisitionOperationV1('malformed_provider_response', 'secret-value'),
     error => error.code === 'malformed_provider_response' && getWalletAcquisitionFailureDiagnosticV1(error) === null,
+  );
+
+  assert.throws(
+    () => failWalletAcquisitionOperationV1('wallet_wide_impact_unresolved', 'native_balance_unreconciled'),
+    error => error.code === 'wallet_wide_impact_unresolved'
+      && JSON.stringify(getWalletAcquisitionFailureDiagnosticV1(error)) === JSON.stringify({
+        diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+        stage: 'wallet_wide_classification',
+        operation: 'transaction_classification',
+        reason: 'native_balance_unreconciled',
+      }),
+  );
+  assert.throws(
+    () => failWalletAcquisitionOperationV1('wallet_wide_impact_unresolved', 'secret-value'),
+    error => error.code === 'wallet_wide_impact_unresolved'
+      && getWalletAcquisitionFailureDiagnosticV1(error) === null,
   );
 });
 

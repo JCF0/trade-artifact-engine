@@ -2,7 +2,11 @@ import { SOL_MINT, USDC_MINT, USDT_MINT } from '../pipeline/constants.mjs';
 import { buildSolanaFullTransactionV1 } from './solana-full-transaction.mjs';
 import { isSolanaPublicKeyV1 } from './solana-identities.mjs';
 import { buildSolanaSpotEvidenceV1, isRecognizedSpotProgramV1 } from './solana-spot-evidence.mjs';
-import { detachProviderNeutralValueV1, failWalletAcquisitionOperationV1 } from './provider-port.mjs';
+import {
+  WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1,
+  detachProviderNeutralValueV1,
+  failWalletAcquisitionOperationV1,
+} from './provider-port.mjs';
 
 const QUOTE_MINTS = new Set([SOL_MINT, USDC_MINT, USDT_MINT]);
 const TOKEN_PROGRAMS = new Set([
@@ -24,6 +28,9 @@ const KNOWN_MANIFEST_ROUTE_DATA = new Set([
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const TOKEN_TRANSFER_OPCODES = new Set([3, 12]);
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+export const SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1 = WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1;
+const UNRESOLVED_REASON_SET = new Set(SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1);
+const PROJECTION_UNRESOLVED_REASONS = new WeakMap();
 
 function rejectProjection() {
   failWalletAcquisitionOperationV1('malformed_provider_response', 'full_transaction_projection_internal_rejection');
@@ -97,6 +104,13 @@ function unresolvedClosureMint(mint) {
   return mint !== null && QUOTE_MINTS.has(mint) ? null : mint;
 }
 
+function unresolvedClosureEffect(mint, reason, projectedMint = unresolvedClosureMint(mint)) {
+  return {
+    mint: projectedMint,
+    reason: mint !== null && QUOTE_MINTS.has(mint) ? 'quote_mint_closure_unreconciled' : reason,
+  };
+}
+
 function closureEvidence(transaction, wallet) {
   const preByAccount = tokenRowsByAccount(transaction.pre_token_balances);
   const postByAccount = tokenRowsByAccount(transaction.post_token_balances);
@@ -113,7 +127,11 @@ function closureEvidence(transaction, wallet) {
     const mint = closedAccount === null ? null : closureMintScope(closedAccount, preByAccount, postByAccount, wallet);
     if (closedAccount !== null && mint !== null) boundAccountIndexes.add(accountIndexes.get(closedAccount));
     if (instruction.accounts.length !== 3) {
-      unresolved.push({ mint: instruction.accounts.length >= 2 ? unresolvedClosureMint(mint) : null });
+      unresolved.push(unresolvedClosureEffect(
+        mint,
+        'closure_evidence_unreconciled',
+        instruction.accounts.length >= 2 ? unresolvedClosureMint(mint) : null,
+      ));
       continue;
     }
     const [account, destination, authority] = instruction.accounts;
@@ -133,7 +151,7 @@ function closureEvidence(transaction, wallet) {
         && transaction.post_lamport_balances[accountIndex] === 0
         && decrease >= 0n
         && destinationIncrease === decrease;
-      if (!coherentExternalClosure) unresolved.push({ mint: null });
+      if (!coherentExternalClosure) unresolved.push({ mint: null, reason: 'closure_evidence_unreconciled' });
       continue;
     }
     const values = candidates.get(account) ?? [];
@@ -147,7 +165,11 @@ function closureEvidence(transaction, wallet) {
     const mint = closureMintScope(account, preByAccount, postByAccount, wallet);
     if (values.length !== 1) {
       const destinations = new Set(values.map(value => value.destination));
-      unresolved.push({ mint: destinations.size === 1 ? unresolvedClosureMint(mint) : null });
+      unresolved.push(unresolvedClosureEffect(
+        mint,
+        'closure_evidence_unreconciled',
+        destinations.size === 1 ? unresolvedClosureMint(mint) : null,
+      ));
       continue;
     }
     const candidate = values[0];
@@ -165,7 +187,13 @@ function closureEvidence(transaction, wallet) {
       - BigInt(transaction.post_lamport_balances[accountIndex]);
     const closedLamportsDrained = transaction.post_lamport_balances[accountIndex] === 0;
     if (!identityBound || !authorityBound || !endpointsDistinct || !closedLamportsDrained || decrease < 0n) {
-      unresolved.push({ mint: unresolvedClosureMint(identityBound ? before.mint : mint) });
+      const scopedMint = identityBound ? before.mint : mint;
+      unresolved.push(unresolvedClosureEffect(
+        scopedMint,
+        !identityBound && scopedMint === null
+          ? 'unknown_token_scope'
+          : 'closure_evidence_unreconciled',
+      ));
       continue;
     }
     boundAccountIndexes.add(accountIndex);
@@ -199,12 +227,20 @@ function closureEvidence(transaction, wallet) {
     if (!destinationReconciled) {
       unresolved.push(...closures.map(closure => ({
         mint: destination === wallet ? null : unresolvedClosureMint(closure.mint),
+        reason: QUOTE_MINTS.has(closure.mint)
+          ? 'quote_mint_closure_unreconciled'
+          : 'closure_rent_unreconciled',
       })));
       continue;
     }
     valid.push(...closures);
     if (destination === wallet) returnedRentLamports += expectedIncrease;
-    else if (expectedIncrease > 0n) unresolved.push(...closures.map(closure => ({ mint: closure.mint })));
+    else if (expectedIncrease > 0n) unresolved.push(...closures.map(closure => ({
+      mint: closure.mint,
+      reason: QUOTE_MINTS.has(closure.mint)
+        ? 'quote_mint_closure_unreconciled'
+        : 'closure_rent_unreconciled',
+    })));
   }
 
   return {
@@ -257,7 +293,7 @@ function tokenDeltas(transaction, wallet) {
     const identity = before ?? after;
     const delta = BigInt(after?.raw_amount ?? '0') - BigInt(before?.raw_amount ?? '0');
     if (identity.owner === null) {
-      if (delta !== 0n) unresolved.push({ mint: identity.mint });
+      if (delta !== 0n) unresolved.push({ mint: identity.mint, reason: 'unknown_token_scope' });
       continue;
     }
     if (identity.owner !== wallet) continue;
@@ -287,18 +323,22 @@ function unresolvedNativeEvidence(transaction, wallet, walletOwnedAccountIndexes
     if (delta === 0n) continue;
     const row = transaction.pre_token_balances.find(item => item.account_index === accountIndex)
       ?? transaction.post_token_balances.find(item => item.account_index === accountIndex);
-    unresolved.push({ mint: row?.mint ?? null });
+    unresolved.push({ mint: row?.mint ?? null, reason: 'native_balance_unreconciled' });
   }
   const walletIndexes = [];
   transaction.accounts.forEach((account, index) => { if (account.address === wallet) walletIndexes.push(index); });
-  if (walletIndexes.length !== 1) unresolved.push({ mint: null });
+  if (walletIndexes.length !== 1) {
+    unresolved.push({ mint: null, reason: 'wallet_account_evidence_unresolved' });
+  }
   return { unresolved, walletIndex: walletIndexes.length === 1 ? walletIndexes[0] : null };
 }
 
 function unresolvedBalanceEquation(transaction) {
   const pre = transaction.pre_lamport_balances.reduce((sum, value) => sum + BigInt(value), 0n);
   const post = transaction.post_lamport_balances.reduce((sum, value) => sum + BigInt(value), 0n);
-  return post - pre + BigInt(transaction.fee_lamports) === 0n ? [] : [{ mint: null }];
+  return post - pre + BigInt(transaction.fee_lamports) === 0n
+    ? []
+    : [{ mint: null, reason: 'native_balance_unreconciled' }];
 }
 
 function unresolvedWalletInstructions(transaction, wallet, consumedClosureInstructionKeys) {
@@ -341,8 +381,11 @@ function unresolvedWalletInstructions(transaction, wallet, consumedClosureInstru
       && knownManifestRouteShape(instruction)
       && touchedMints.length === 0;
     if (authorityOnlyNestedProgram) return [];
-    if (instruction.accounts.includes(wallet)) return [{ mint: null }];
-    return touchedMints.map(mint => ({ mint }));
+    const reason = outerProgram !== null && JUPITER_ROUTE_PROGRAMS.has(outerProgram)
+      ? 'unsupported_nested_instruction_shape'
+      : 'unmatched_wallet_instruction';
+    if (instruction.accounts.includes(wallet)) return [{ mint: null, reason }];
+    return touchedMints.map(mint => ({ mint, reason }));
   };
   const unresolved = [];
   for (const { key, instruction, outerProgram } of instructionEntries(transaction)) {
@@ -365,7 +408,7 @@ function nativeDeltaLeg(transaction, wallet, walletIndex, returnedRentLamports, 
   if (economicDelta === 0n) return null;
   const magnitude = economicDelta < 0n ? -economicDelta : economicDelta;
   if (magnitude > MAX_SAFE_BIGINT) {
-    unresolved.push({ mint: null });
+    unresolved.push({ mint: null, reason: 'native_amount_out_of_range' });
     return null;
   }
   return {
@@ -397,6 +440,18 @@ function numberUnresolvedEffects(values) {
   return values
     .sort((left, right) => compareCodeUnits(left.mint ?? '', right.mint ?? ''))
     .map((effect, index) => ({ effect_id: `full-transaction-unresolved-${index}`, mint: effect.mint }));
+}
+
+function unresolvedReason(values) {
+  const reasons = [...new Set(values.map(value => value.reason))];
+  if (reasons.length === 0) return null;
+  if (reasons.length > 1) return 'multiple_unresolved_classes';
+  return UNRESOLVED_REASON_SET.has(reasons[0]) ? reasons[0] : null;
+}
+
+export function getSolanaFullTransactionUnresolvedReasonV1(evidence) {
+  if (evidence === null || typeof evidence !== 'object') return null;
+  return PROJECTION_UNRESOLVED_REASONS.get(evidence) ?? null;
 }
 
 export function projectSolanaFullTransactionV1(input) {
@@ -447,7 +502,7 @@ export function projectSolanaFullTransactionV1(input) {
       }
     }
 
-    return buildSolanaSpotEvidenceV1({
+    const evidence = buildSolanaSpotEvidenceV1({
       spot_evidence_version: 'solana_spot_evidence_v1',
       signature: transaction.signature,
       slot: transaction.slot,
@@ -463,6 +518,9 @@ export function projectSolanaFullTransactionV1(input) {
       account_closures: closures,
       unresolved_wallet_effects: numberUnresolvedEffects(unresolved),
     });
+    const reason = unresolvedReason(unresolved);
+    if (reason !== null) PROJECTION_UNRESOLVED_REASONS.set(evidence, reason);
+    return evidence;
   } catch (error) {
     if (error?.name === 'WalletAcquisitionError') throw error;
     failWalletAcquisitionOperationV1('malformed_provider_response', 'full_transaction_projection_internal_rejection');

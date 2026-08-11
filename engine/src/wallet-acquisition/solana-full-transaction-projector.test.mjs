@@ -2,7 +2,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { projectSolanaFullTransactionV1 } from './solana-full-transaction-projector.mjs';
+import {
+  SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1,
+  getSolanaFullTransactionUnresolvedReasonV1,
+  projectSolanaFullTransactionV1,
+} from './solana-full-transaction-projector.mjs';
 import { buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-evidence.mjs';
 import { classifyWalletSourceTransactionV1 } from './transaction-classifier.mjs';
 import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
@@ -212,6 +216,10 @@ test('supports one recognized top-level route with nested recognized venues and 
   arbitraryNestedProgram.signature = providerSignature('arbitrary-nested-program');
   arbitraryNestedProgram.inner_instruction_groups[0].instructions[1].program_id = OTHER_PROGRAM;
   assert.equal(disposition(arbitraryNestedProgram), 'ambiguous_activity');
+  assert.equal(
+    getSolanaFullTransactionUnresolvedReasonV1(project(arbitraryNestedProgram)),
+    'unsupported_nested_instruction_shape',
+  );
 
   const unknownManifestInstruction = structuredClone(value);
   unknownManifestInstruction.signature = providerSignature('unknown-manifest-instruction');
@@ -263,7 +271,12 @@ test('keeps unmatched wallet-relevant Token instructions unresolved both top-lev
   };
   for (const location of ['top','inner']) {
     const value = make(location);
-    assert.deepEqual(project(value).unresolved_wallet_effects.map(effect => effect.mint), [null]);
+    const evidence = project(value);
+    assert.deepEqual(evidence.unresolved_wallet_effects.map(effect => effect.mint), [null]);
+    assert.equal(
+      getSolanaFullTransactionUnresolvedReasonV1(evidence),
+      location === 'inner' ? 'unsupported_nested_instruction_shape' : 'unmatched_wallet_instruction',
+    );
     assert.equal(disposition(value), 'ambiguous_activity');
   }
 });
@@ -298,6 +311,7 @@ test('unknown token ownership remains unresolved instead of allowing an attracti
   assert.deepEqual(project(value).unresolved_wallet_effects, [
     { effect_id: 'full-transaction-unresolved-0', mint: RAY },
   ]);
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(project(value)), 'unknown_token_scope');
 });
 
 test('derives native swap economics from the explicit wallet lamport delta after the explicit fee', () => {
@@ -337,7 +351,9 @@ test('impossible transaction-wide lamport equations and unmatched wallet instruc
   const impossible = transaction('impossible-native-equation');
   impossible.post_lamport_balances[1] += 1;
   assert.equal(disposition(impossible), 'ambiguous_activity');
-  assert.ok(project(impossible).unresolved_wallet_effects.some(effect => effect.mint === null));
+  const impossibleEvidence = project(impossible);
+  assert.ok(impossibleEvidence.unresolved_wallet_effects.some(effect => effect.mint === null));
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(impossibleEvidence), 'native_balance_unreconciled');
 
   const distinctTransfer = transaction('swap-plus-distinct-transfer');
   distinctTransfer.instructions.push({
@@ -357,6 +373,49 @@ test('impossible transaction-wide lamport equations and unmatched wallet instruc
     data: '',
   });
   assert.equal(disposition(distinctInnerTransfer), 'ambiguous_activity');
+});
+
+test('records fixed private reasons for missing wallet evidence, native overflow, and multiple classes', () => {
+  assert.deepEqual(SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1, [
+    'unknown_token_scope',
+    'wallet_account_evidence_unresolved',
+    'native_balance_unreconciled',
+    'closure_evidence_unreconciled',
+    'closure_rent_unreconciled',
+    'quote_mint_closure_unreconciled',
+    'unmatched_wallet_instruction',
+    'unsupported_nested_instruction_shape',
+    'native_amount_out_of_range',
+    'multiple_unresolved_classes',
+  ]);
+
+  const missingWallet = transaction('reason-missing-wallet', {
+    feePayer: SPONSOR, includeWalletAccount: false, tokenRows: [], walletDelta: 0,
+  });
+  assert.equal(
+    getSolanaFullTransactionUnresolvedReasonV1(project(missingWallet)),
+    'wallet_account_evidence_unresolved',
+  );
+
+  const overflow = transaction('reason-native-overflow', { fee: 1, walletDelta: 0, tokenRows: [] });
+  overflow.pre_lamport_balances.fill(0);
+  overflow.post_lamport_balances.fill(0);
+  overflow.pre_lamport_balances[1] = Number.MAX_SAFE_INTEGER;
+  overflow.pre_lamport_balances[2] = 1;
+  overflow.post_lamport_balances[0] = Number.MAX_SAFE_INTEGER;
+  const overflowEvidence = project(overflow);
+  assert.deepEqual(overflowEvidence.unresolved_wallet_effects.map(effect => effect.mint), [null]);
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(overflowEvidence), 'native_amount_out_of_range');
+
+  const multiple = transaction('reason-multiple');
+  multiple.post_lamport_balances[1] += 1;
+  multiple.instructions.push({
+    instruction_index: 1,
+    program_id: TOKEN_PROGRAM,
+    accounts: [WALLET],
+    data: '3',
+  });
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(project(multiple)), 'multiple_unresolved_classes');
 });
 
 test('recognizes only actual top-level and inner Jupiter, Raydium, and Orca program IDs', () => {
@@ -397,11 +456,15 @@ test('exercises supported, unsupported, ambiguous, unrelated, and failed disposi
   assert.equal(disposition(batch), 'unsupported_activity');
 
   const missingWalletEvidence = transaction('missing-wallet-evidence', {
-    feePayer: SPONSOR, includeWalletAccount: false,
+    feePayer: SPONSOR, includeWalletAccount: false, walletDelta: 0,
   });
   const ambiguous = classify(missingWalletEvidence);
   assert.equal(ambiguous.disposition.disposition_type, 'ambiguous_activity');
   assert.equal(ambiguous.activity_findings[0].impact_scope, 'wallet_wide');
+  assert.equal(
+    getSolanaFullTransactionUnresolvedReasonV1(project(missingWalletEvidence)),
+    'wallet_account_evidence_unresolved',
+  );
 
   const unrelated = transaction('unrelated', { tokenRows: [], fee: 5, walletDelta: -5 });
   assert.equal(disposition(unrelated), 'unrelated_activity');

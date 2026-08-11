@@ -25,13 +25,13 @@ const ACQUISITION_STARTERS = new WeakMap();
 export const WALLET_ACQUISITION_FAILURE_STAGES_V1 = Object.freeze([
   'request_binding','finalized_anchor','canonical_pagination','latest_state_recheck',
   'enhanced_history','enhanced_projection','full_transaction_history','full_transaction_projection',
-  'exact_transaction_fallback','internal_boundary',
+  'exact_transaction_fallback','wallet_wide_classification','internal_boundary',
 ]);
 export const WALLET_ACQUISITION_FAILURE_OPERATIONS_V1 = Object.freeze([
   'acquisition_budget_binding','network_identity','finalized_slot','finalized_block',
   'canonical_signature_page','enhanced_address_history','enhanced_transaction_projection',
   'full_transaction_address_history','full_transaction_validation','full_transaction_projection',
-  'exact_transaction_fallback','none',
+  'exact_transaction_fallback','transaction_classification','none',
 ]);
 export const WALLET_ACQUISITION_MALFORMED_REASONS_V1 = Object.freeze([
   'invalid_json','rpc_envelope_invalid','rpc_genesis_result_invalid','rpc_slot_result_invalid',
@@ -45,9 +45,22 @@ export const WALLET_ACQUISITION_MALFORMED_REASONS_V1 = Object.freeze([
   'full_transaction_signature_mismatch','full_transaction_projection_internal_rejection',
   'exact_transaction_result_invalid','provider_value_unsafe','unlocalized_malformed_response',
 ]);
+export const WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1 = Object.freeze([
+  'unknown_token_scope',
+  'wallet_account_evidence_unresolved',
+  'native_balance_unreconciled',
+  'closure_evidence_unreconciled',
+  'closure_rent_unreconciled',
+  'quote_mint_closure_unreconciled',
+  'unmatched_wallet_instruction',
+  'unsupported_nested_instruction_shape',
+  'native_amount_out_of_range',
+  'multiple_unresolved_classes',
+]);
 const FAILURE_STAGES = new Set(WALLET_ACQUISITION_FAILURE_STAGES_V1);
 const FAILURE_OPERATIONS = new Set(WALLET_ACQUISITION_FAILURE_OPERATIONS_V1);
 const MALFORMED_REASONS = new Set(WALLET_ACQUISITION_MALFORMED_REASONS_V1);
+const WALLET_WIDE_REASONS = new Set(WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1);
 const FAILURE_DIAGNOSTICS = new WeakMap();
 
 export class WalletAcquisitionError extends Error {
@@ -64,6 +77,12 @@ export function failWalletAcquisitionOperationV1(code, reason) {
   const error = new WalletAcquisitionError(code);
   if (error.code === 'malformed_provider_response' && MALFORMED_REASONS.has(reason)) {
     FAILURE_DIAGNOSTICS.set(error, Object.freeze({ stage: null, operation: null, reason }));
+  } else if (error.code === 'wallet_wide_impact_unresolved' && WALLET_WIDE_REASONS.has(reason)) {
+    FAILURE_DIAGNOSTICS.set(error, Object.freeze({
+      stage: 'wallet_wide_classification',
+      operation: 'transaction_classification',
+      reason,
+    }));
   }
   throw error;
 }
@@ -79,8 +98,14 @@ export function sanitizeWalletAcquisitionErrorV1(error, fallback = 'provider_unc
   const sanitized = new WalletAcquisitionError(ownCode(error) ?? fallback);
   const diagnostic = error !== null && (typeof error === 'object' || typeof error === 'function')
     && !utilTypes.isProxy(error) ? FAILURE_DIAGNOSTICS.get(error) : null;
-  if (sanitized.code === 'malformed_provider_response' && diagnostic !== undefined && diagnostic !== null
-      && MALFORMED_REASONS.has(diagnostic.reason)) FAILURE_DIAGNOSTICS.set(sanitized, diagnostic);
+  const diagnosticAllowed = sanitized.code === 'malformed_provider_response'
+    ? diagnostic !== undefined && diagnostic !== null && MALFORMED_REASONS.has(diagnostic.reason)
+    : sanitized.code === 'wallet_wide_impact_unresolved'
+      && diagnostic !== undefined && diagnostic !== null
+      && diagnostic.stage === 'wallet_wide_classification'
+      && diagnostic.operation === 'transaction_classification'
+      && WALLET_WIDE_REASONS.has(diagnostic.reason);
+  if (diagnosticAllowed) FAILURE_DIAGNOSTICS.set(sanitized, diagnostic);
   return sanitized;
 }
 

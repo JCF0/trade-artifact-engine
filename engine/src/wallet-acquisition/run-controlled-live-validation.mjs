@@ -417,6 +417,13 @@ export async function runControlledLiveValidationV1(optionInput, dependencyInput
           operation: 'none',
           reason: 'unlocalized_malformed_response',
         });
+    } else if (errorCode === 'wallet_wide_impact_unresolved') {
+      const diagnostic = getWalletAcquisitionFailureDiagnosticV1(error);
+      if (diagnostic !== null
+          && diagnostic.stage === 'wallet_wide_classification'
+          && diagnostic.operation === 'transaction_classification') {
+        report.failure_diagnostic = diagnostic;
+      }
     }
     writeReport(reportPath, report);
     return Object.freeze({ status: 'safe_failure', report: Object.freeze(report) });
