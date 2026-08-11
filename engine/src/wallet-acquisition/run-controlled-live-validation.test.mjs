@@ -160,6 +160,7 @@ test('wallet-wide ambiguity fails before evidence and candidate construction', t
     stage: 'wallet_wide_classification',
     operation: 'transaction_classification',
     reason: 'multiple_unresolved_classes',
+    underlying_reasons: ['unknown_token_scope', 'unmatched_wallet_instruction'],
   });
   assert.equal(Object.hasOwn(result.report, 'evidence_bundle_digest'), false);
 }));
@@ -177,6 +178,7 @@ test('forged wallet-wide provenance cannot inject arbitrary report values', t =>
             stage: hostile,
             operation: hostile,
             reason: hostile,
+            underlying_reasons: ['native_balance_unreconciled', hostile],
           },
           details: { reason: hostile },
         });
@@ -205,6 +207,31 @@ test('forged wallet-wide provenance cannot inject arbitrary report values', t =>
   for (const forbidden of [KEY_CANARY, 'https://', '/root/', 'unrestricted']) {
     assert.equal(invalidBytes.includes(forbidden), false);
   }
+}));
+
+test('trusted multiple wallet-wide provenance emits only the fixed sorted unique reason set', t => withTemp(t, async root => {
+  const result = await runControlledLiveValidationV1(
+    { ...EXACT_ARGS, reportPath: outputPath(root) },
+    dependencies(emptyPort(), {
+      acquireWalletHistory: async () => {
+        failWalletAcquisitionOperationV1(
+          'wallet_wide_impact_unresolved',
+          'multiple_unresolved_classes',
+          ['unmatched_wallet_instruction', 'native_balance_unreconciled', 'unmatched_wallet_instruction'],
+        );
+      },
+    }),
+  );
+  assert.deepEqual(result.report.failure_diagnostic, {
+    diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+    stage: 'wallet_wide_classification',
+    operation: 'transaction_classification',
+    reason: 'multiple_unresolved_classes',
+    underlying_reasons: ['native_balance_unreconciled', 'unmatched_wallet_instruction'],
+  });
+  assert.deepEqual(Object.keys(result.report.failure_diagnostic).sort(), [
+    'diagnostic_version', 'operation', 'reason', 'stage', 'underlying_reasons',
+  ]);
 }));
 
 test('forbidden repository output path is rejected before credential presence is checked', async () => {

@@ -118,6 +118,66 @@ test('diagnostic enums are closed and trusted metadata survives only private pro
   );
 });
 
+test('multiple wallet-wide reasons survive only as a bounded sorted unique trusted set', () => {
+  const diagnosticFor = reasons => {
+    try {
+      failWalletAcquisitionOperationV1('wallet_wide_impact_unresolved', 'multiple_unresolved_classes', reasons);
+    } catch (error) {
+      return getWalletAcquisitionFailureDiagnosticV1(error);
+    }
+    assert.fail('expected wallet-wide failure');
+  };
+  assert.deepEqual(diagnosticFor([
+    'unmatched_wallet_instruction',
+    'native_balance_unreconciled',
+  ]), {
+    diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+    stage: 'wallet_wide_classification',
+    operation: 'transaction_classification',
+    reason: 'multiple_unresolved_classes',
+    underlying_reasons: ['native_balance_unreconciled', 'unmatched_wallet_instruction'],
+  });
+  assert.deepEqual(diagnosticFor([
+    'unknown_token_scope',
+    'unmatched_wallet_instruction',
+    'native_balance_unreconciled',
+    'unknown_token_scope',
+  ]).underlying_reasons, [
+    'native_balance_unreconciled',
+    'unknown_token_scope',
+    'unmatched_wallet_instruction',
+  ]);
+
+  for (const malformed of [
+    ['native_balance_unreconciled', 'unknown-reason'],
+    ['native_balance_unreconciled'],
+    Array(WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1.length + 1).fill('native_balance_unreconciled'),
+    new Proxy([], {}),
+  ]) {
+    assert.deepEqual(diagnosticFor(malformed), {
+      diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+      stage: 'wallet_wide_classification',
+      operation: 'transaction_classification',
+      reason: 'multiple_unresolved_classes',
+    });
+  }
+
+  try {
+    failWalletAcquisitionOperationV1(
+      'wallet_wide_impact_unresolved',
+      'native_balance_unreconciled',
+      ['native_balance_unreconciled', 'unmatched_wallet_instruction'],
+    );
+  } catch (error) {
+    assert.deepEqual(getWalletAcquisitionFailureDiagnosticV1(error), {
+      diagnostic_version: 'controlled_live_failure_diagnostic_v1',
+      stage: 'wallet_wide_classification',
+      operation: 'transaction_classification',
+      reason: 'native_balance_unreconciled',
+    });
+  }
+});
+
 test('generic provider boundary classifies every required unsafe-value class without retaining values', async () => {
   const cyclic = {}; cyclic.self = cyclic;
   const accessor = {}; Object.defineProperty(accessor, 'secret', { enumerable: true, get() { return 'credential'; } });

@@ -61,7 +61,34 @@ const FAILURE_STAGES = new Set(WALLET_ACQUISITION_FAILURE_STAGES_V1);
 const FAILURE_OPERATIONS = new Set(WALLET_ACQUISITION_FAILURE_OPERATIONS_V1);
 const MALFORMED_REASONS = new Set(WALLET_ACQUISITION_MALFORMED_REASONS_V1);
 const WALLET_WIDE_REASONS = new Set(WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1);
+const MULTIPLE_WALLET_WIDE_REASON = 'multiple_unresolved_classes';
+const ATOMIC_WALLET_WIDE_REASONS = new Set(
+  WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1.filter(reason => reason !== MULTIPLE_WALLET_WIDE_REASON),
+);
 const FAILURE_DIAGNOSTICS = new WeakMap();
+
+function compareCodeUnits(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function normalizeUnderlyingReasons(value) {
+  try {
+    if (!Array.isArray(value) || utilTypes.isProxy(value)
+        || Object.getPrototypeOf(value) !== Array.prototype
+        || Object.getOwnPropertySymbols(value).length
+        || value.length < 2 || value.length > WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1.length) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const entries = Object.entries(descriptors).filter(([key]) => key !== 'length');
+    if (entries.length !== value.length
+        || entries.some(([key, descriptor], index) => key !== String(index)
+          || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')
+          || !ATOMIC_WALLET_WIDE_REASONS.has(descriptor.value))) return null;
+    const normalized = [...new Set(entries.map(([, descriptor]) => descriptor.value))].sort(compareCodeUnits);
+    return normalized.length < 2 ? null : Object.freeze(normalized);
+  } catch {
+    return null;
+  }
+}
 
 export class WalletAcquisitionError extends Error {
   constructor(code) {
@@ -73,16 +100,21 @@ export class WalletAcquisitionError extends Error {
     this.details = Object.freeze({});
   }
 }
-export function failWalletAcquisitionOperationV1(code, reason) {
+export function failWalletAcquisitionOperationV1(code, reason, underlyingReasons) {
   const error = new WalletAcquisitionError(code);
   if (error.code === 'malformed_provider_response' && MALFORMED_REASONS.has(reason)) {
     FAILURE_DIAGNOSTICS.set(error, Object.freeze({ stage: null, operation: null, reason }));
   } else if (error.code === 'wallet_wide_impact_unresolved' && WALLET_WIDE_REASONS.has(reason)) {
-    FAILURE_DIAGNOSTICS.set(error, Object.freeze({
+    const diagnostic = {
       stage: 'wallet_wide_classification',
       operation: 'transaction_classification',
       reason,
-    }));
+    };
+    const normalized = reason === MULTIPLE_WALLET_WIDE_REASON
+      ? normalizeUnderlyingReasons(underlyingReasons)
+      : null;
+    if (normalized !== null) diagnostic.underlying_reasons = normalized;
+    FAILURE_DIAGNOSTICS.set(error, Object.freeze(diagnostic));
   }
   throw error;
 }
@@ -123,12 +155,17 @@ export function getWalletAcquisitionFailureDiagnosticV1(error) {
   if (error === null || (typeof error !== 'object' && typeof error !== 'function') || utilTypes.isProxy(error)) return null;
   const diagnostic = FAILURE_DIAGNOSTICS.get(error);
   if (diagnostic === undefined) return null;
-  return Object.freeze({
+  const result = {
     diagnostic_version: 'controlled_live_failure_diagnostic_v1',
     stage: diagnostic.stage,
     operation: diagnostic.operation,
     reason: diagnostic.reason,
-  });
+  };
+  if (diagnostic.reason === MULTIPLE_WALLET_WIDE_REASON) {
+    const underlyingReasons = normalizeUnderlyingReasons(diagnostic.underlying_reasons);
+    if (underlyingReasons !== null) result.underlying_reasons = underlyingReasons;
+  }
+  return Object.freeze(result);
 }
 
 function plain(value, active = new Set(), depth = 0, budget = { nodes: 0 }) {

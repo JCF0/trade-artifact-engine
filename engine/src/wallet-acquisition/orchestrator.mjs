@@ -34,6 +34,7 @@ import { validateWalletAcquisitionRequestV1, validateWalletAcquisitionRequestV2 
 import { acquireFinalizedFullTransactionHistoryV1 } from './full-transaction-history-acquisition.mjs';
 import {
   getSolanaFullTransactionUnresolvedReasonV1,
+  getSolanaFullTransactionUnresolvedReasonSetV1,
   projectSolanaFullTransactionV1,
 } from './solana-full-transaction-projector.mjs';
 import { buildSolanaSpotEvidenceV1, buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-evidence.mjs';
@@ -41,7 +42,9 @@ import { classifyWalletSourceTransactionV1 } from './transaction-classifier.mjs'
 import { normalizeWalletWideSolanaSpotEvidenceV1 } from './wallet-wide-normalizer.mjs';
 import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from './solana-identities.mjs';
 
-function fail(code, reason) { failWalletAcquisitionOperationV1(code, reason); }
+function fail(code, reason, underlyingReasons) {
+  failWalletAcquisitionOperationV1(code, reason, underlyingReasons);
+}
 async function diagnosedCall(stage, operation, call) {
   try { return await call(); }
   catch (error) {
@@ -187,22 +190,25 @@ function reconcileProjectedEvidence(wallet, sources, evidenceRecords) {
   if (!Array.isArray(evidenceRecords) || evidenceRecords.length !== sources.length) fail('source_transaction_mismatch');
   const canonical = new Map(sources.map(source => [source.signature, source]));
   const projected = new Map();
-  const unresolvedReasons = new Map();
+  const unresolvedProvenance = new Map();
   for (const candidate of evidenceRecords) {
     const unresolvedReason = getSolanaFullTransactionUnresolvedReasonV1(candidate);
+    const underlyingReasons = getSolanaFullTransactionUnresolvedReasonSetV1(candidate);
     let evidence;
     try { evidence = buildSolanaSpotEvidenceV1(candidate); } catch { fail('source_transaction_mismatch'); }
     const source = canonical.get(evidence.signature);
     if (evidence.wallet !== wallet || source === undefined || projected.has(evidence.signature)
         || evidence.slot !== source.slot || evidence.block_time !== source.block_time || evidence.execution_state !== source.execution_state) fail('source_transaction_mismatch');
     projected.set(evidence.signature, evidence);
-    if (unresolvedReason !== null) unresolvedReasons.set(evidence.signature, unresolvedReason);
+    if (unresolvedReason !== null) {
+      unresolvedProvenance.set(evidence.signature, Object.freeze({ unresolvedReason, underlyingReasons }));
+    }
   }
   if (projected.size !== canonical.size) fail('source_transaction_mismatch');
-  return { projected, unresolvedReasons };
+  return { projected, unresolvedProvenance };
 }
 
-function classifyOne(source, evidenceBySignature, unresolvedReasons, provisionalRawIndex) {
+function classifyOne(source, evidenceBySignature, unresolvedProvenance, provisionalRawIndex) {
   const evidence = evidenceBySignature.get(source.signature);
   if (evidence === undefined) fail('source_transaction_mismatch');
   let classification;
@@ -216,20 +222,21 @@ function classifyOne(source, evidenceBySignature, unresolvedReasons, provisional
     throw sanitizeWalletAcquisitionErrorV1(error, 'transaction_disposition_failed');
   }
   if (classification.activity_findings.some(finding => finding.impact_scope === 'wallet_wide')) {
-    fail('wallet_wide_impact_unresolved', unresolvedReasons.get(source.signature));
+    const provenance = unresolvedProvenance.get(source.signature);
+    fail('wallet_wide_impact_unresolved', provenance?.unresolvedReason, provenance?.underlyingReasons);
   }
   return classification;
 }
 
-function classifyAll(sources, evidenceBySignature, unresolvedReasons) {
+function classifyAll(sources, evidenceBySignature, unresolvedProvenance) {
   const discovery = sources.map(source => ({
     source,
-    classification: classifyOne(source, evidenceBySignature, unresolvedReasons, 0),
+    classification: classifyOne(source, evidenceBySignature, unresolvedProvenance, 0),
   }));
   const canonicalSources = discovery.sort((left, right) => compareTransactionDispositionsV1(left.classification.disposition, right.classification.disposition)).map(item => item.source);
   let counter = 0;
   let classifications = canonicalSources.map(source => {
-    const classification = classifyOne(source, evidenceBySignature, unresolvedReasons, counter);
+    const classification = classifyOne(source, evidenceBySignature, unresolvedProvenance, counter);
     if (classification.disposition.disposition_type === 'supported_normalized_event') counter += 1;
     return classification;
   });
@@ -239,7 +246,7 @@ function classifyAll(sources, evidenceBySignature, unresolvedReasons) {
     classifications = canonicalSources.map(source => classifyOne(
       source,
       evidenceBySignature,
-      unresolvedReasons,
+      unresolvedProvenance,
       canonicalIndex.get(source.signature) ?? 0,
     ));
     events = classifications.flatMap(item => item.normalized_event_records).sort(compareNormalizedEventRecordsV1);
@@ -297,7 +304,7 @@ async function acquire(requestInput, dependencyInput, portVersion) {
   }
   const evidence = reconcileProjectedEvidence(request.wallet, pagination.authoritative, evidenceRecords);
   state = advancePaginationPhaseV1(state, 'classifying');
-  const assembled = classifyAll(pagination.authoritative, evidence.projected, evidence.unresolvedReasons);
+  const assembled = classifyAll(pagination.authoritative, evidence.projected, evidence.unresolvedProvenance);
   state = advancePaginationPhaseV1(state, 'reconciling');
   const boundary = buildFinalizedAcquisitionBoundaryV1({
     boundary_version: 'solana_finalized_acquisition_boundary_v1', chain: request.chain, network: request.network,

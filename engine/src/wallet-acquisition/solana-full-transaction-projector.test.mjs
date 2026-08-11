@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1,
   getSolanaFullTransactionUnresolvedReasonV1,
+  getSolanaFullTransactionUnresolvedReasonSetV1,
   projectSolanaFullTransactionV1,
 } from './solana-full-transaction-projector.mjs';
 import { buildWalletSourceTransactionFromSpotEvidenceV1 } from './solana-spot-evidence.mjs';
@@ -415,7 +416,42 @@ test('records fixed private reasons for missing wallet evidence, native overflow
     accounts: [WALLET],
     data: '3',
   });
-  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(project(multiple)), 'multiple_unresolved_classes');
+  const multipleEvidence = project(multiple);
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(multipleEvidence), 'multiple_unresolved_classes');
+  assert.deepEqual(getSolanaFullTransactionUnresolvedReasonSetV1(multipleEvidence), [
+    'native_balance_unreconciled',
+    'unmatched_wallet_instruction',
+  ]);
+
+  multiple.instructions.push({
+    instruction_index: 2,
+    program_id: SYSTEM_PROGRAM,
+    accounts: [WALLET],
+    data: '7',
+  });
+  assert.deepEqual(getSolanaFullTransactionUnresolvedReasonSetV1(project(multiple)), [
+    'native_balance_unreconciled',
+    'unmatched_wallet_instruction',
+  ]);
+
+  const three = transaction('reason-three', { tokenRows: [
+    { label: 'unknown', mint: JUP, owner: null, pre: '1', post: '2', decimals: 6 },
+  ] });
+  three.post_lamport_balances[1] += 1;
+  three.instructions.push({
+    instruction_index: 1,
+    program_id: TOKEN_PROGRAM,
+    accounts: [WALLET],
+    data: '3',
+  });
+  const threeEvidence = project(three);
+  assert.equal(getSolanaFullTransactionUnresolvedReasonV1(threeEvidence), 'multiple_unresolved_classes');
+  assert.deepEqual(getSolanaFullTransactionUnresolvedReasonSetV1(threeEvidence), [
+    'native_balance_unreconciled',
+    'unknown_token_scope',
+    'unmatched_wallet_instruction',
+  ]);
+  assert.equal(getSolanaFullTransactionUnresolvedReasonSetV1(overflowEvidence), null);
 });
 
 test('recognizes only actual top-level and inner Jupiter, Raydium, and Orca program IDs', () => {

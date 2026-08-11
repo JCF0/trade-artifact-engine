@@ -276,6 +276,7 @@ test('a separate wallet-wide blocker preserves the supported JUP target but refu
     accounts: [JUP_WALLET_V1],
     data: '7',
   });
+  blocker.post_lamport_balances[1] += 1;
   const value = fixture({ wallet: JUP_WALLET_V1, transactions: [...targets, blocker] });
   await assert.rejects(acquire(value), error => {
     assert.equal(error.code, 'wallet_wide_impact_unresolved');
@@ -283,7 +284,8 @@ test('a separate wallet-wide blocker preserves the supported JUP target but refu
       diagnostic_version: 'controlled_live_failure_diagnostic_v1',
       stage: 'wallet_wide_classification',
       operation: 'transaction_classification',
-      reason: 'unmatched_wallet_instruction',
+      reason: 'multiple_unresolved_classes',
+      underlying_reasons: ['native_balance_unreconciled', 'unmatched_wallet_instruction'],
     });
     return true;
   });

@@ -30,6 +30,10 @@ const TOKEN_TRANSFER_OPCODES = new Set([3, 12]);
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 export const SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1 = WALLET_ACQUISITION_WALLET_WIDE_REASONS_V1;
 const UNRESOLVED_REASON_SET = new Set(SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1);
+const MULTIPLE_UNRESOLVED_REASON = 'multiple_unresolved_classes';
+const ATOMIC_UNRESOLVED_REASON_SET = new Set(
+  SOLANA_FULL_TRANSACTION_UNRESOLVED_REASONS_V1.filter(reason => reason !== MULTIPLE_UNRESOLVED_REASON),
+);
 const PROJECTION_UNRESOLVED_REASONS = new WeakMap();
 
 function rejectProjection() {
@@ -442,16 +446,26 @@ function numberUnresolvedEffects(values) {
     .map((effect, index) => ({ effect_id: `full-transaction-unresolved-${index}`, mint: effect.mint }));
 }
 
-function unresolvedReason(values) {
-  const reasons = [...new Set(values.map(value => value.reason))];
-  if (reasons.length === 0) return null;
-  if (reasons.length > 1) return 'multiple_unresolved_classes';
-  return UNRESOLVED_REASON_SET.has(reasons[0]) ? reasons[0] : null;
+function unresolvedReasonProvenance(values) {
+  const reasons = [...new Set(values.map(value => value.reason).filter(reason => ATOMIC_UNRESOLVED_REASON_SET.has(reason)))]
+    .sort(compareCodeUnits);
+  if (reasons.length === 0 || reasons.length > UNRESOLVED_REASON_SET.size) return null;
+  if (reasons.length === 1) return Object.freeze({ reason: reasons[0], underlyingReasons: null });
+  return Object.freeze({
+    reason: MULTIPLE_UNRESOLVED_REASON,
+    underlyingReasons: Object.freeze(reasons),
+  });
 }
 
 export function getSolanaFullTransactionUnresolvedReasonV1(evidence) {
   if (evidence === null || typeof evidence !== 'object') return null;
-  return PROJECTION_UNRESOLVED_REASONS.get(evidence) ?? null;
+  return PROJECTION_UNRESOLVED_REASONS.get(evidence)?.reason ?? null;
+}
+
+export function getSolanaFullTransactionUnresolvedReasonSetV1(evidence) {
+  if (evidence === null || typeof evidence !== 'object') return null;
+  const reasons = PROJECTION_UNRESOLVED_REASONS.get(evidence)?.underlyingReasons;
+  return reasons === undefined || reasons === null ? null : Object.freeze([...reasons]);
 }
 
 export function projectSolanaFullTransactionV1(input) {
@@ -518,8 +532,8 @@ export function projectSolanaFullTransactionV1(input) {
       account_closures: closures,
       unresolved_wallet_effects: numberUnresolvedEffects(unresolved),
     });
-    const reason = unresolvedReason(unresolved);
-    if (reason !== null) PROJECTION_UNRESOLVED_REASONS.set(evidence, reason);
+    const provenance = unresolvedReasonProvenance(unresolved);
+    if (provenance !== null) PROJECTION_UNRESOLVED_REASONS.set(evidence, provenance);
     return evidence;
   } catch (error) {
     if (error?.name === 'WalletAcquisitionError') throw error;
