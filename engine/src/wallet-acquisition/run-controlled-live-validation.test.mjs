@@ -8,21 +8,19 @@ import test from 'node:test';
 import {
   CONTROLLED_LIVE_VALIDATION_VERSION_V1,
   CONTROLLED_LIVE_VALIDATION_VERSION_V2,
+  CONTROLLED_LIVE_VALIDATION_VERSION_V3,
   parseControlledLiveValidationArgsV1,
   runControlledLiveValidationV1,
 } from './run-controlled-live-validation.mjs';
-import { fakePort, providerPublicKey } from './fixtures/slice4-fixtures.mjs';
 import {
   contextualizeWalletAcquisitionErrorV1,
-  createWalletHistoryPortV1,
   failWalletAcquisitionOperationV1,
 } from './provider-port.mjs';
+import { createWalletHistoryPortV2 } from './provider-port-v2.mjs';
 import {
   JUP_WALLET_V1,
-  USDC_MINT_V1,
-  offlineWalletHistoryFixtureV1,
-  syntheticEnhancedBodyV1,
 } from './fixtures/retained-provider-fixtures.mjs';
+import { offlineFullTransactionHistoryFixtureV2 } from './fixtures/retained-full-transaction-fixtures.mjs';
 
 const KEY_CANARY = 'operator-secret-canary-never-retain';
 const EXACT_ARGS = Object.freeze({
@@ -33,15 +31,29 @@ const EXACT_ARGS = Object.freeze({
   maxAttempts: 2,
   requestTimeoutMs: 20000,
   overallTimeoutMs: 120000,
+  maxExactFallbackTransactions: 0,
 });
 
 function outputPath(root, name = 'report.json') { return join(root, name); }
 function dependencies(port, overrides = {}) {
   return {
-    walletHistoryPort: createWalletHistoryPortV1(port, { beginAcquisitionV1() {} }),
+    walletHistoryPort: createWalletHistoryPortV2(port, { beginAcquisitionV2() {} }),
     hasHeliusApiKey: () => true,
     apiKeyProvider: () => KEY_CANARY,
     ...overrides,
+  };
+}
+function fullFixture(names = ['jup_buy_full','jup_sell_full']) {
+  return offlineFullTransactionHistoryFixtureV2({ wallet: JUP_WALLET_V1, retainedBodyNames: names });
+}
+function emptyPort() {
+  return {
+    async getNetworkIdentityV1() { return { chain: 'solana', network: 'mainnet-beta', genesis_hash: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d' }; },
+    async getFinalizedSlotV1() { return 100; },
+    async getFinalizedBlockV1({ slot }) { return { slot, block_time: 2000000000, blockhash: '8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh', commitment: 'finalized' }; },
+    async getFinalizedWalletSignaturePageV1() { return []; },
+    async getFinalizedFullTransactionPageV1() { return { transactions: [], pagination_token: null }; },
+    async getFinalizedTransactionV1() { return null; },
   };
 }
 async function runFixture(root, fixture, overrides = {}, name) {
@@ -60,14 +72,16 @@ function withTemp(t, fn) {
 test('CLI parser requires the closed flag set and rejects unknown flags and historical end dates', () => {
   assert.equal(CONTROLLED_LIVE_VALIDATION_VERSION_V1, 'artifact_v1.14_controlled_live_validation_v1');
   assert.equal(CONTROLLED_LIVE_VALIDATION_VERSION_V2, 'artifact_v1.14_controlled_live_validation_v2');
+  assert.equal(CONTROLLED_LIVE_VALIDATION_VERSION_V3, 'artifact_v1.15_controlled_live_validation_v1');
   const argv = [
     '--wallet', JUP_WALLET_V1, '--lookback-profile', 'lookback_7d_v1', '--max-pages', '5',
     '--max-transactions', '500', '--max-attempts', '2', '--request-timeout-ms', '20000',
-    '--overall-timeout-ms', '120000', '--report-path', '/tmp/artifact-v114-live-validation-report.json',
+    '--overall-timeout-ms', '120000', '--max-exact-fallback-transactions', '0',
+    '--report-path', '/tmp/artifact-v115-live-validation-report.json',
   ];
   assert.deepEqual(parseControlledLiveValidationArgsV1(argv), {
     ...EXACT_ARGS,
-    reportPath: '/tmp/artifact-v114-live-validation-report.json',
+    reportPath: '/tmp/artifact-v115-live-validation-report.json',
   });
   assert.throws(() => parseControlledLiveValidationArgsV1([...argv, '--end-date', '2020-01-01']), error => error.code === 'invalid_validation_request');
   assert.throws(() => parseControlledLiveValidationArgsV1([...argv, '--unknown', 'x']), error => error.code === 'invalid_validation_request');
@@ -75,14 +89,14 @@ test('CLI parser requires the closed flag set and rejects unknown flags and hist
 });
 
 test('successful complete acquisition builds only in memory and emits one private sanitized report', t => withTemp(t, async root => {
-  const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy', 'jup_sell'] });
+  const fixture = fullFixture();
   const path = outputPath(root);
   const result = await runFixture(root, fixture);
   const report = readReport(path);
   assert.equal(result.status, 'pass');
   assert.equal(report.status, 'pass');
   assert.equal(report.in_window_transaction_count, 2);
-  assert.equal(report.enhanced_transactions_reconciled, 2);
+  assert.equal(report.full_transactions_reconciled, 2);
   assert.equal(report.normalized_event_count, 2);
   assert.match(report.acquisition_result_digest, /^[0-9a-f]{64}$/);
   assert.match(report.evidence_bundle_digest, /^[0-9a-f]{64}$/);
@@ -95,7 +109,7 @@ test('zero candidates is a passing validation without Slice 7', t => withTemp(t,
   let orchestrationCalls = 0;
   const result = await runControlledLiveValidationV1(
     { ...EXACT_ARGS, reportPath: outputPath(root) },
-    dependencies(fakePort({ pages: [[]] }), { orchestrateTargeted: async () => { orchestrationCalls += 1; } }),
+    dependencies(emptyPort(), { orchestrateTargeted: async () => { orchestrationCalls += 1; } }),
   );
   assert.equal(result.status, 'pass');
   assert.equal(result.report.candidate_count, 0);
@@ -104,7 +118,7 @@ test('zero candidates is a passing validation without Slice 7', t => withTemp(t,
 }));
 
 test('exactly one selectable clean closed candidate resolves and dry-runs with empty ports only', t => withTemp(t, async root => {
-  const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy', 'jup_sell'] });
+  const fixture = fullFixture();
   let portsSeen = null;
   const result = await runFixture(root, fixture, {
     orchestrateTargeted: async (request, ports) => {
@@ -119,19 +133,6 @@ test('exactly one selectable clean closed candidate resolves and dry-runs with e
   assert.equal(result.report.dry_run_package_digest, 'b'.repeat(64));
 }));
 
-test('multiple selectable candidates are reported without automatic selection', t => withTemp(t, async root => {
-  const secondToken = providerPublicKey('operator-second-candidate');
-  const bodies = [
-    syntheticEnhancedBodyV1({ label: 'operator-second-buy', wallet: JUP_WALLET_V1, slot: 428001220, timestamp: 1782068824, outputMint: secondToken, outputRaw: '5000000' }),
-    syntheticEnhancedBodyV1({ label: 'operator-second-sell', wallet: JUP_WALLET_V1, slot: 428001221, timestamp: 1782068825, inputMint: secondToken, inputRaw: '5000000', outputMint: USDC_MINT_V1, outputRaw: '12000000' }),
-  ];
-  const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy', 'jup_sell'], syntheticBodies: bodies });
-  let orchestrationCalls = 0;
-  const result = await runFixture(root, fixture, { orchestrateTargeted: async () => { orchestrationCalls += 1; } });
-  assert.equal(result.report.selectable_candidate_count, 2);
-  assert.equal(result.report.selectable_candidates.length, 2);
-  assert.equal(orchestrationCalls, 0);
-}));
 
 for (const [name, code, expected] of [
   ['capped acquisition', 'acquisition_capped', 'acquisition_capped'],
@@ -139,7 +140,7 @@ for (const [name, code, expected] of [
   ['provider uncertainty', 'provider_uncertain', 'provider_uncertain'],
 ]) {
   test(`${name} fails safely without canonical downstream output`, t => withTemp(t, async root => {
-    const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+    const fixture = fullFixture(['jup_buy_full']);
     fixture.port.getNetworkIdentityV1 = async () => { throw Object.assign(new Error('hostile provider prose'), { code }); };
     const result = await runFixture(root, fixture);
     assert.equal(result.status, 'safe_failure');
@@ -149,8 +150,7 @@ for (const [name, code, expected] of [
 }
 
 test('wallet-wide ambiguity fails before evidence and candidate construction', t => withTemp(t, async root => {
-  const body = syntheticEnhancedBodyV1({ label: 'operator-wallet-wide', wallet: JUP_WALLET_V1, slot: 428001220, timestamp: 1782068824, type: 'TRANSFER', selfTransfer: true, omitSelfTransferMint: true, recognizedProgram: false });
-  const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, syntheticBodies: [body] });
+  const fixture = fullFixture(['jupiter_close_account_full']);
   const result = await runFixture(root, fixture);
   assert.equal(result.status, 'safe_failure');
   assert.equal(result.report.error_code, 'wallet_wide_impact_unresolved');
@@ -182,8 +182,26 @@ test('key absence emits only a fixed sanitized failure and never invokes acquisi
   assert.equal(bytes.includes(KEY_CANARY), false);
 }));
 
+test('report creation is unique and exclusive and never overwrites an existing report', t => withTemp(t, async root => {
+  const reportPath = outputPath(root);
+  const options = { ...EXACT_ARGS, reportPath };
+  const first = await runControlledLiveValidationV1(options, { hasHeliusApiKey: () => false });
+  assert.equal(first.status, 'safe_failure');
+  const original = readFileSync(reportPath, 'utf8');
+  let credentialChecks = 0;
+  await assert.rejects(
+    runControlledLiveValidationV1(options, {
+      hasHeliusApiKey: () => { credentialChecks += 1; return false; },
+    }),
+    error => error.code === 'report_path_unavailable',
+  );
+  assert.equal(credentialChecks, 0);
+  assert.equal(readFileSync(reportPath, 'utf8'), original);
+  assert.equal(statSync(reportPath).mode & 0o777, 0o600);
+}));
+
 test('hostile thrown errors, key values, provider prose, URLs, paths, and stacks never enter output', t => withTemp(t, async root => {
-  const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+  const fixture = fullFixture(['jup_buy_full']);
   fixture.port.getNetworkIdentityV1 = async () => {
     const error = new Error(`${KEY_CANARY} https://provider.invalid/?api-key=x /root/private stack prose`);
     error.details = { raw: KEY_CANARY };
@@ -196,7 +214,7 @@ test('hostile thrown errors, key values, provider prose, URLs, paths, and stacks
 }));
 
 test('malformed safe failure emits only the exact report-v2 fixed-enum diagnostic', t => withTemp(t, async root => {
-  const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+  const fixture = fullFixture(['jup_buy_full']);
   fixture.port.getFinalizedSlotV1 = async () => {
     let malformed;
     try { failWalletAcquisitionOperationV1('malformed_provider_response', 'rpc_slot_result_invalid'); }
@@ -206,7 +224,7 @@ test('malformed safe failure emits only the exact report-v2 fixed-enum diagnosti
   const result = await runFixture(root, fixture);
   const report = readReport(outputPath(root));
   assert.equal(result.status, 'safe_failure');
-  assert.equal(report.validation_version, 'artifact_v1.14_controlled_live_validation_v2');
+  assert.equal(report.validation_version, 'artifact_v1.15_controlled_live_validation_v1');
   assert.equal(report.error_code, 'malformed_provider_response');
   assert.deepEqual(report.failure_diagnostic, {
     diagnostic_version: 'controlled_live_failure_diagnostic_v1',
@@ -214,7 +232,7 @@ test('malformed safe failure emits only the exact report-v2 fixed-enum diagnosti
   });
   assert.deepEqual(Object.keys(report.failure_diagnostic).sort(), ['diagnostic_version','operation','reason','stage']);
 
-  const unsafeFixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+  const unsafeFixture = fullFixture(['jup_buy_full']);
   const cyclic = {}; cyclic.self = cyclic;
   unsafeFixture.port.getFinalizedSlotV1 = async () => cyclic;
   const unsafe = await runFixture(root, unsafeFixture, {}, 'unsafe.json');
@@ -232,13 +250,13 @@ test('all remaining known malformed reason classes reach report v2 without the f
   const cases = [
     ['invalid_json', 'getNetworkIdentityV1', 'finalized_anchor', 'network_identity'],
     ['rpc_genesis_result_invalid', 'getNetworkIdentityV1', 'finalized_anchor', 'network_identity'],
-    ['enhanced_duplicate_signature', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
-    ['enhanced_order_invalid', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
-    ['enhanced_page_incomplete', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
-    ['enhanced_cursor_repeated', 'getEnhancedTransactionsBySignatureV1', 'enhanced_history', 'enhanced_address_history'],
+    ['full_transaction_page_invalid', 'getFinalizedFullTransactionPageV1', 'full_transaction_history', 'full_transaction_address_history'],
+    ['full_transaction_order_invalid', 'getFinalizedFullTransactionPageV1', 'full_transaction_history', 'full_transaction_address_history'],
+    ['full_transaction_page_incomplete', 'getFinalizedFullTransactionPageV1', 'full_transaction_history', 'full_transaction_address_history'],
+    ['full_transaction_pagination_token_repeated', 'getFinalizedFullTransactionPageV1', 'full_transaction_history', 'full_transaction_address_history'],
   ];
   for (const [reason, method, stage, operation] of cases) {
-    const fixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy'] });
+    const fixture = fullFixture(['jup_buy_full']);
     fixture.port[method] = async () => throwReason(reason);
     const result = await runFixture(root, fixture, {}, `${reason}.json`);
     assert.deepEqual(result.report.failure_diagnostic, {
@@ -249,22 +267,22 @@ test('all remaining known malformed reason classes reach report v2 without the f
 }));
 
 test('PASS and non-malformed failures use report v2 without failure diagnostics', t => withTemp(t, async root => {
-  const passFixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy','jup_sell'] });
+  const passFixture = fullFixture();
   const passed = await runFixture(root, passFixture, {}, 'pass.json');
-  assert.equal(passed.report.validation_version, 'artifact_v1.14_controlled_live_validation_v2');
+  assert.equal(passed.report.validation_version, 'artifact_v1.15_controlled_live_validation_v1');
   assert.equal(Object.hasOwn(passed.report, 'failure_diagnostic'), false);
 
-  const failureFixture = offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 });
+  const failureFixture = fullFixture(['jup_buy_full']);
   failureFixture.port.getNetworkIdentityV1 = async () => { throw { code: 'provider_timeout' }; };
   const failed = await runFixture(root, failureFixture, {}, 'failure.json');
-  assert.equal(failed.report.validation_version, 'artifact_v1.14_controlled_live_validation_v2');
+  assert.equal(failed.report.validation_version, 'artifact_v1.15_controlled_live_validation_v1');
   assert.equal(failed.report.error_code, 'provider_timeout');
   assert.equal(Object.hasOwn(failed.report, 'failure_diagnostic'), false);
 }));
 
 test('untrusted malformed metadata cannot enter the report and uses only the fixed fallback tuple', t => withTemp(t, async root => {
   const canary = 'secret-provider-body https://host.invalid /root/key';
-  const result = await runFixture(root, offlineWalletHistoryFixtureV1({ wallet: JUP_WALLET_V1 }), {
+  const result = await runFixture(root, fullFixture(['jup_buy_full']), {
     acquireWalletHistory: async () => { throw {
       code: 'malformed_provider_response',
       failure_diagnostic: { stage: canary, operation: canary, reason: canary },
