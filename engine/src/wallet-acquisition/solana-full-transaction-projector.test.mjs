@@ -11,6 +11,9 @@ import { providerPublicKey, providerSignature } from './fixtures/test-identities
 import { JUP, PROGRAMS, RAY, USDC, USDT, WALLET } from './fixtures/spot-normalizer-fixtures.mjs';
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const MANIFEST_ROUTE_PROGRAM = 'MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms';
+const MANIFEST_ROUTE_DATA = '3QDBF27AwRXDMN627wXRP6ACgg';
 const OTHER_PROGRAM = providerPublicKey('full-projector-other-program');
 const SPONSOR = providerPublicKey('full-projector-sponsor');
 
@@ -143,6 +146,105 @@ test('reconstructs separately identified same-mint wallet account legs and aggre
   const result = classify(value);
   assert.equal(result.disposition.disposition_type, 'supported_normalized_event');
   assert.equal(result.normalized_event_records[0].slice7_event.token_in_amount, 25000);
+});
+
+test('supports one recognized top-level route with nested recognized venues and an authority-only inner program', () => {
+  const value = transaction('nested-routed-swap');
+  const nestedVenue = PROGRAMS.raydium;
+  value.accounts.push(
+    { address: OTHER_PROGRAM, is_signer: false, is_writable: false, source: 'lookup_readonly' },
+    { address: MANIFEST_ROUTE_PROGRAM, is_signer: false, is_writable: false, source: 'lookup_readonly' },
+    { address: nestedVenue, is_signer: false, is_writable: false, source: 'lookup_readonly' },
+    { address: SYSTEM_PROGRAM, is_signer: false, is_writable: false, source: 'lookup_readonly' },
+    { address: USDT, is_signer: false, is_writable: false, source: 'lookup_readonly' },
+    { address: USDC, is_signer: false, is_writable: false, source: 'lookup_readonly' },
+  );
+  value.pre_lamport_balances.push(0, 0, 0, 0, 0, 0);
+  value.post_lamport_balances.push(0, 0, 0, 0, 0, 0);
+  value.inner_instruction_groups.push({
+    outer_instruction_index: 0,
+    instructions: [
+      { instruction_index: 0, program_id: nestedVenue, accounts: [], data: '' },
+      {
+        instruction_index: 1,
+        program_id: MANIFEST_ROUTE_PROGRAM,
+        accounts: [
+          WALLET, OTHER_PROGRAM, nestedVenue, SYSTEM_PROGRAM, OTHER_PROGRAM, nestedVenue, OTHER_PROGRAM,
+          nestedVenue, TOKEN_PROGRAM, USDT, TOKEN_PROGRAM, USDC, OTHER_PROGRAM, nestedVenue,
+        ],
+        data: MANIFEST_ROUTE_DATA,
+      },
+    ],
+  });
+  const evidence = project(value);
+  assert.deepEqual(evidence.recognized_programs, [
+    { program_id: nestedVenue },
+    { program_id: PROGRAMS.jupiter },
+  ]);
+  assert.deepEqual(evidence.unresolved_wallet_effects, []);
+  assert.equal(disposition(value), 'supported_normalized_event');
+
+  const repeatedTopLevelRoute = structuredClone(value);
+  repeatedTopLevelRoute.signature = providerSignature('repeated-top-level-route');
+  repeatedTopLevelRoute.instructions.push({
+    instruction_index: 1,
+    program_id: PROGRAMS.jupiter,
+    accounts: [],
+    data: '',
+  });
+  assert.equal(disposition(repeatedTopLevelRoute), 'unsupported_activity');
+
+  const recognizedInnerUnderUnrelatedOuter = structuredClone(value);
+  recognizedInnerUnderUnrelatedOuter.signature = providerSignature('recognized-inner-under-unrelated-outer');
+  recognizedInnerUnderUnrelatedOuter.instructions.push({
+    instruction_index: 1,
+    program_id: OTHER_PROGRAM,
+    accounts: [],
+    data: '',
+  });
+  recognizedInnerUnderUnrelatedOuter.inner_instruction_groups.push({
+    outer_instruction_index: 1,
+    instructions: [{ instruction_index: 0, program_id: nestedVenue, accounts: [], data: '' }],
+  });
+  assert.equal(disposition(recognizedInnerUnderUnrelatedOuter), 'unsupported_activity');
+
+  const arbitraryNestedProgram = structuredClone(value);
+  arbitraryNestedProgram.signature = providerSignature('arbitrary-nested-program');
+  arbitraryNestedProgram.inner_instruction_groups[0].instructions[1].program_id = OTHER_PROGRAM;
+  assert.equal(disposition(arbitraryNestedProgram), 'ambiguous_activity');
+
+  const unknownManifestInstruction = structuredClone(value);
+  unknownManifestInstruction.signature = providerSignature('unknown-manifest-instruction');
+  unknownManifestInstruction.inner_instruction_groups[0].instructions[1].data = '1';
+  assert.equal(disposition(unknownManifestInstruction), 'ambiguous_activity');
+
+  const topLevelAuthorityOnly = structuredClone(value);
+  topLevelAuthorityOnly.signature = providerSignature('top-level-authority-only');
+  topLevelAuthorityOnly.instructions.push({
+    instruction_index: 1,
+    program_id: MANIFEST_ROUTE_PROGRAM,
+    accounts: [WALLET],
+    data: '',
+  });
+  assert.equal(disposition(topLevelAuthorityOnly), 'ambiguous_activity');
+
+  const nestedWalletTokenEffect = structuredClone(value);
+  nestedWalletTokenEffect.signature = providerSignature('nested-wallet-token-effect');
+  nestedWalletTokenEffect.inner_instruction_groups[0].instructions[1].accounts.push(
+    nestedWalletTokenEffect.pre_token_balances[0].account,
+  );
+  assert.equal(disposition(nestedWalletTokenEffect), 'ambiguous_activity');
+
+  const nestedSystemEffect = structuredClone(value);
+  nestedSystemEffect.signature = providerSignature('nested-system-effect');
+  nestedSystemEffect.inner_instruction_groups[0].instructions.push({
+    instruction_index: 2,
+    program_id: SYSTEM_PROGRAM,
+    accounts: [WALLET],
+    data: '',
+  });
+  assert.equal(disposition(nestedSystemEffect), 'ambiguous_activity');
+
 });
 
 test('keeps unmatched wallet-relevant Token instructions unresolved both top-level and inside a recognized DEX instruction', () => {

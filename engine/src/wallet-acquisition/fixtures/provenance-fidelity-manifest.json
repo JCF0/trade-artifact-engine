@@ -1,0 +1,116 @@
+{
+  "authoritative": false,
+  "endpoint_identifier": "helius_mainnet_rpc_fixed_origin_v1",
+  "fixed_parameters_profile": "artifact_v1_15_full_transaction_fixture_capture_v1",
+  "fixture_protocol": "five_signature_bounded_full_transaction_capture_v1",
+  "fixtures": [
+    {
+      "block_time": 1769382291,
+      "execution_state": "succeeded",
+      "fixture": "ray_buy_full",
+      "individual_vs_bulk_canonical_equal": true,
+      "provider_requests": 2,
+      "retained_file": {
+        "file_name": "ray_buy_full.json",
+        "mode": "0600",
+        "sha256": "bd40910e576bd4f3845d1c492446f10c6a43d3d7d4058b934fa2e300fb014cb4",
+        "size_bytes": 40204
+      },
+      "retry_occurred": false,
+      "signature": "2SUoNBBTkQBBGVCinvLQbVZq5LDZS5M8ikx5PLH7QiCuLdf6GWCPSM7wLd6gJsNUbLSousAhbkSX9eXgt1dAeBKm",
+      "slot": 395930271,
+      "status": "PASS",
+      "timeout_occurred": false
+    },
+    {
+      "block_time": 1769632666,
+      "execution_state": "succeeded",
+      "fixture": "ray_sell_full",
+      "individual_vs_bulk_canonical_equal": true,
+      "provider_requests": 2,
+      "retained_file": {
+        "file_name": "ray_sell_full.json",
+        "mode": "0600",
+        "sha256": "24c89812d42c7f30509077a24b8cb03755480a3cade5798842f3cc8321268253",
+        "size_bytes": 40888
+      },
+      "retry_occurred": false,
+      "signature": "4TmWRpMxWRTpQqNM7iFCRyP1m9VEyRK54VZwKeQV4cYisYRjQRjuvocF8j7mNAomoQf6H2h4vfd5Qp6Y2LQxeEsB",
+      "slot": 396554229,
+      "status": "PASS",
+      "timeout_occurred": false
+    },
+    {
+      "block_time": 1781904268,
+      "execution_state": "succeeded",
+      "fixture": "jup_buy_full",
+      "individual_vs_bulk_canonical_equal": true,
+      "provider_requests": 2,
+      "retained_file": {
+        "file_name": "jup_buy_full.json",
+        "mode": "0600",
+        "sha256": "7a8d129a18d61d6547c4c4a69f2145005508079be88a1f2331262f2f152e437d",
+        "size_bytes": 36290
+      },
+      "retry_occurred": false,
+      "signature": "2ArLuJC2JEuWiavk1jYxLQ2E4xhq63BbeDV2kCWPcZ9zZNc4XyugUEFEryKrYfqcWnxkUvyacRmj2YNTfZGq17yV",
+      "slot": 427586968,
+      "status": "PASS",
+      "timeout_occurred": false
+    },
+    {
+      "block_time": 1782068814,
+      "execution_state": "succeeded",
+      "fixture": "jup_sell_full",
+      "individual_vs_bulk_canonical_equal": true,
+      "provider_requests": 2,
+      "retained_file": {
+        "file_name": "jup_sell_full.json",
+        "mode": "0600",
+        "sha256": "6a03aa49ca1f23f1b8230f53367211e7dcf66c6d5c92e027fd8d8acc8fe59e49",
+        "size_bytes": 30958
+      },
+      "retry_occurred": false,
+      "signature": "5YCdUYkJVx3kkZUpvz4ygs6QT8GZtYtru4kGkur3LJ8yrMmW2XJ8qXtgjspMpJqqyQA6WPDQxd4BcTpNNSr3Dctk",
+      "slot": 428001210,
+      "status": "PASS",
+      "timeout_occurred": false
+    },
+    {
+      "block_time": 1746123169,
+      "execution_state": "succeeded",
+      "fixture": "jupiter_close_account_full",
+      "individual_vs_bulk_canonical_equal": true,
+      "provider_requests": 2,
+      "retained_file": {
+        "file_name": "jupiter_close_account_full.json",
+        "mode": "0600",
+        "sha256": "98703d1bfeac685818f95634cddbbdb570e59450e1788da44335ce2898143294",
+        "size_bytes": 35964
+      },
+      "retry_occurred": false,
+      "signature": "4oyFe9ML9SvbYprTtwsvKzJdQjrgLSbCq38aQT5HU1EE9dA6vA7mfcrrMHK5DgZKmuitCbxheXqAYVmmjyL1TxBT",
+      "slot": 337167092,
+      "status": "PASS",
+      "timeout_occurred": false
+    }
+  ],
+  "manifest_version": "artifact_v1_15_slice7_fixture_capture_manifest_v1",
+  "methods": [
+    "getTransaction",
+    "getTransactionsForAddress"
+  ],
+  "overall_status": "PASS",
+  "plan_documented_schema_date": "2026-08-08",
+  "provider_call_budget": {
+    "actual": 10,
+    "maximum": 10,
+    "respected": true
+  },
+  "repository_head": "42e3e2fda9a116b466a00b2d60c8949c8b82f91b",
+  "retained_object_policy": "matching_getTransaction_result_only_after_bulk_canonical_equality",
+  "telemetry": {
+    "retry_count": 0,
+    "timeout_count": 0
+  }
+}

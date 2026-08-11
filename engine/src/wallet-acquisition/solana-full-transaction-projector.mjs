@@ -9,6 +9,18 @@ const TOKEN_PROGRAMS = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
 ]);
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const JUPITER_ROUTE_PROGRAMS = new Set([
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
+  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',
+]);
+const KNOWN_JUPITER_INNER_ROUTE_PROGRAMS = new Set([
+  'MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms',
+]);
+const KNOWN_MANIFEST_ROUTE_DATA = new Set([
+  '3QDBF27AwRXDMN627wXRP6ACgg',
+  '3RWhUfKKtYQV8dd4EeXoKgUW3J',
+]);
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const TOKEN_TRANSFER_OPCODES = new Set([3, 12]);
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
@@ -218,6 +230,20 @@ function recognizedPrograms(transaction) {
   return [...found].sort(compareCodeUnits).map(program_id => ({ program_id }));
 }
 
+function hasSingleRecognizedRoute(transaction) {
+  const topLevelRouteIndexes = transaction.instructions
+    .map((instruction, index) => (isRecognizedSpotProgramV1(instruction.program_id) ? index : null))
+    .filter(index => index !== null);
+  if (topLevelRouteIndexes.length > 1) return false;
+  const innerRouteOuterIndexes = new Set(transaction.inner_instruction_groups
+    .filter(group => group.instructions.some(instruction => isRecognizedSpotProgramV1(instruction.program_id)))
+    .map(group => group.outer_instruction_index));
+  if (topLevelRouteIndexes.length === 1) {
+    return [...innerRouteOuterIndexes].every(index => index === topLevelRouteIndexes[0]);
+  }
+  return innerRouteOuterIndexes.size === 1;
+}
+
 function tokenDeltas(transaction, wallet) {
   const pre = tokenRowsByIndex(transaction.pre_token_balances);
   const post = tokenRowsByIndex(transaction.post_token_balances);
@@ -280,11 +306,43 @@ function unresolvedWalletInstructions(transaction, wallet, consumedClosureInstru
   for (const row of [...transaction.pre_token_balances, ...transaction.post_token_balances]) {
     if (row.owner === wallet) walletTokenMints.set(row.account, row.mint);
   }
-  const effectsFor = instruction => {
+  const walletAccount = transaction.accounts.find(account => account.address === wallet);
+  const accountsByAddress = new Map(transaction.accounts.map(account => [account.address, account]));
+  const knownManifestRouteShape = instruction => {
+    if (instruction.accounts.length !== 14
+        || instruction.accounts[0] !== wallet
+        || instruction.accounts[3] !== SYSTEM_PROGRAM
+        || !TOKEN_PROGRAMS.has(instruction.accounts[8])
+        || instruction.accounts[10] !== instruction.accounts[8]
+        || !QUOTE_MINTS.has(instruction.accounts[9])
+        || !QUOTE_MINTS.has(instruction.accounts[11])
+        || instruction.accounts[9] === instruction.accounts[11]
+        || !KNOWN_MANIFEST_ROUTE_DATA.has(instruction.data)) return false;
+    return [instruction.accounts[3], instruction.accounts[8], instruction.accounts[9], instruction.accounts[11]]
+      .every(address => {
+        const account = accountsByAddress.get(address);
+        return account?.is_signer === false && account.is_writable === false;
+      });
+  };
+  const effectsFor = (instruction, outerProgram) => {
     if (isRecognizedSpotProgramV1(instruction.program_id)) return [];
+    const touchedMints = [...new Set(instruction.accounts
+      .map(account => walletTokenMints.get(account)).filter(Boolean))].sort(compareCodeUnits);
+    // This is an explicit program-specific Jupiter route integration, not a blanket inner-CPI
+    // exemption. System/Token CPIs and touches to wallet-owned token accounts remain unresolved.
+    const authorityOnlyNestedProgram = outerProgram !== null
+      && JUPITER_ROUTE_PROGRAMS.has(outerProgram)
+      && KNOWN_JUPITER_INNER_ROUTE_PROGRAMS.has(instruction.program_id)
+      && transaction.execution_state === 'succeeded'
+      && transaction.fee_payer === wallet
+      && walletAccount?.is_signer === true
+      && walletAccount.source === 'static'
+      && instruction.accounts.includes(wallet)
+      && knownManifestRouteShape(instruction)
+      && touchedMints.length === 0;
+    if (authorityOnlyNestedProgram) return [];
     if (instruction.accounts.includes(wallet)) return [{ mint: null }];
-    return [...new Set(instruction.accounts.map(account => walletTokenMints.get(account)).filter(Boolean))]
-      .sort(compareCodeUnits).map(mint => ({ mint }));
+    return touchedMints.map(mint => ({ mint }));
   };
   const unresolved = [];
   for (const { key, instruction, outerProgram } of instructionEntries(transaction)) {
@@ -293,7 +351,7 @@ function unresolvedWalletInstructions(transaction, wallet, consumedClosureInstru
       && TOKEN_PROGRAMS.has(instruction.program_id)
       && TOKEN_TRANSFER_OPCODES.has(tokenInstructionOpcode(instruction.data))
       && isRecognizedSpotProgramV1(outerProgram);
-    if (!tokenLegBoundToSpotOuter) unresolved.push(...effectsFor(instruction));
+    if (!tokenLegBoundToSpotOuter) unresolved.push(...effectsFor(instruction, outerProgram));
   }
   return unresolved;
 }
@@ -381,7 +439,7 @@ export function projectSolanaFullTransactionV1(input) {
 
       const groupable = unresolved.length === 0
         && transaction.fee_payer === detached.wallet
-        && programs.length === 1
+        && hasSingleRecognizedRoute(transaction)
         && hasExactSupportedShape(tokenLegs, nativeLegs);
       if (groupable) {
         tokenLegs = tokenLegs.map(leg => ({ ...leg, economic_group: 'swap-0' }));

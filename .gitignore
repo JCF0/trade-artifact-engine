@@ -23,6 +23,12 @@ artifact-v114-live-validation-report.json
 !engine/package.json
 !engine/package-lock.json
 !engine/src/acquisition/fixtures/retained-helius-real-shapes.json
+!engine/src/wallet-acquisition/fixtures/ray_buy_full.json
+!engine/src/wallet-acquisition/fixtures/ray_sell_full.json
+!engine/src/wallet-acquisition/fixtures/jup_buy_full.json
+!engine/src/wallet-acquisition/fixtures/jup_sell_full.json
+!engine/src/wallet-acquisition/fixtures/jupiter_close_account_full.json
+!engine/src/wallet-acquisition/fixtures/provenance-fidelity-manifest.json
 
 # Track reviewed static display metadata registries
 !engine/assets/
