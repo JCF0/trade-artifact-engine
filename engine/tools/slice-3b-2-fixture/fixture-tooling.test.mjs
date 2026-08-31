@@ -1,17 +1,23 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { ExtensionType } from '@solana/spl-token';
-import { Keypair, Transaction } from '@solana/web3.js';
+import {
+  Keypair,
+  SendTransactionError,
+  Transaction,
+  TransactionExpiredBlockheightExceededError,
+} from '@solana/web3.js';
 import bs58 from 'bs58';
 
 import {
   ASSOCIATED_TOKEN_PROGRAM,
   CLASSIC_MINT,
   CLASSIC_TOKEN_PROGRAM,
+  FixtureSetupError,
   MAINNET_GENESIS_HASH,
   MAX_SETUP_LAMPORTS,
   TOKEN_2022_MINT,
@@ -26,9 +32,14 @@ import {
   runFixtureSetupTool,
 } from './prepare-or-execute-setup.mjs';
 import {
+  buildFixtureFailureDiagnostic,
+  createIndependentMainnetConnection,
   executeAuthorizedMainnetSetup,
   loadFundingKeypair,
   parseSetupCliArguments,
+  persistReservedOutput,
+  reserveOutput,
+  runLocalFixtureCli,
   validateFinalizedAccount,
   validateFinalizedTransactionEvidence,
 } from './local-fixture-cli.mjs';
@@ -705,4 +716,476 @@ test('exact execution authorization delegates once to the closed execution capab
   });
   assert.equal(calls, 1);
   assert.deepEqual(result, { status: 'FINALIZED' });
+});
+
+function executionFailureScenario(overrides = {}) {
+  const payer = Keypair.fromSeed(Buffer.alloc(32, 3));
+  let accountCall = 0;
+  let sendCalls = 0;
+  let confirmCalls = 0;
+  let transactionCalls = 0;
+  let statusCalls = 0;
+  let submittedTransaction;
+  let submissionIntent;
+  let serializeCalls = 0;
+  const connection = {
+    async getGenesisHash() { return MAINNET_GENESIS_HASH; },
+    async getMultipleAccountsInfoAndContext() {
+      accountCall += 1;
+      if (accountCall === 1) {
+        return {
+          context: { slot: 400 },
+          value: [
+            { owner: { toBase58: () => CLASSIC_TOKEN_PROGRAM }, data: Buffer.alloc(82), executable: false },
+            { owner: { toBase58: () => TOKEN_2022_PROGRAM }, data: Buffer.alloc(82), executable: false },
+          ],
+        };
+      }
+      if (accountCall === 2) return { context: { slot: 401 }, value: [null, null] };
+      if (overrides.finalAccountsError !== undefined) throw overrides.finalAccountsError;
+      return { context: { slot: 501 }, value: [{ lane: 'classic' }, { lane: 'token2022' }] };
+    },
+    async getMinimumBalanceForRentExemption(length) { return length === 170 ? 2_074_080 : 2_039_280; },
+    async getLatestBlockhash() { return { blockhash: publicKey(9), lastValidBlockHeight: 123 }; },
+    async getFeeForMessage() { return { value: 5_000 }; },
+    async simulateTransaction() { return { context: { slot: 403 }, value: { err: null, logs: [] } }; },
+    async sendRawTransaction(raw, options) {
+      sendCalls += 1;
+      assert.deepEqual(options, { skipPreflight: false, preflightCommitment: 'finalized', maxRetries: 0 });
+      submittedTransaction = Transaction.from(raw);
+      if (overrides.sendError !== undefined) throw overrides.sendError;
+      if (overrides.returnedSignature !== undefined) return overrides.returnedSignature;
+      return bs58.encode(submittedTransaction.signature);
+    },
+    async confirmTransaction(strategy, commitment) {
+      confirmCalls += 1;
+      assert.equal(commitment, 'finalized');
+      assert.equal(strategy.signature, bs58.encode(submittedTransaction.signature));
+      assert.equal(strategy.blockhash, publicKey(9));
+      assert.equal(strategy.lastValidBlockHeight, 123);
+      if (overrides.confirmError !== undefined) throw overrides.confirmError;
+      return overrides.confirmation ?? { context: { slot: 500 }, value: { err: null } };
+    },
+    async getSignatureStatus(statusSignature, options) {
+      statusCalls += 1;
+      assert.equal(statusSignature, bs58.encode(submittedTransaction.signature));
+      assert.deepEqual(options, { searchTransactionHistory: true });
+      if (overrides.statusQueryError !== undefined) throw overrides.statusQueryError;
+      return overrides.confirmationStatus ?? { context: { slot: 500 }, value: null };
+    },
+    async getTransaction() {
+      transactionCalls += 1;
+      if (overrides.transactionQueryError !== undefined) throw overrides.transactionQueryError;
+      if (overrides.finalizedTransactionFactory !== undefined) {
+        return overrides.finalizedTransactionFactory(submittedTransaction);
+      }
+      if (overrides.finalizedTransaction !== undefined) return overrides.finalizedTransaction;
+      return {
+        slot: 500,
+        meta: { err: null },
+        transaction: {
+          signatures: [bs58.encode(submittedTransaction.signature)],
+          message: submittedTransaction.compileMessage(),
+        },
+      };
+    },
+  };
+  const promise = executeAuthorizedMainnetSetup({
+    execution_authorization: 'SLICE_3B_2_ONE_MAINNET_SETUP_TRANSACTION_APPROVED',
+    empty_control_wallet: EMPTY,
+    known_control_wallet: KNOWN,
+    fee_payer: PAYER,
+    funding_keypair: '/local/funder.json',
+    local_machine_attestation: LOCAL_ATTESTATION,
+  }, {
+    createConnection: () => connection,
+    loadFundingKeypair: async () => payer,
+    persistSubmissionIntent: async value => { submissionIntent = value; },
+    serializeTransaction: transaction => {
+      serializeCalls += 1;
+      if (overrides.serializationError !== undefined) throw overrides.serializationError;
+      return transaction.serialize();
+    },
+    inspectMintAccount: (_mint, accountInfo, tokenProgram) => ({
+      account_length: accountInfo.data.length,
+      required_token_account_length: tokenProgram === TOKEN_2022_PROGRAM ? 170 : 165,
+      required_account_extensions: tokenProgram === TOKEN_2022_PROGRAM ? ['ImmutableOwner'] : [],
+    }),
+    inspectFinalizedAccount: overrides.inspectFinalizedAccount ?? ((_account, item) => ({
+      outer_owner_program: item.token_program,
+      account_length: item.token_program === TOKEN_2022_PROGRAM ? 170 : 165,
+      is_native: item.token_program === TOKEN_2022_PROGRAM,
+      raw_account_data_sha256: item.token_program === CLASSIC_TOKEN_PROGRAM ? 'b'.repeat(64) : 'c'.repeat(64),
+      raw_amount: '0',
+    })),
+    buildManifest: overrides.buildManifest,
+  });
+  return {
+    promise,
+    state: () => ({
+      accountCall, confirmCalls, sendCalls, serializeCalls, statusCalls, submissionIntent, transactionCalls,
+    }),
+  };
+}
+
+async function assertExecutionFailure(overrides, expectedCode) {
+  const scenario = executionFailureScenario(overrides);
+  await assert.rejects(scenario.promise, error => error?.code === expectedCode);
+  return scenario.state();
+}
+
+test('signed transaction serialization fails before intent persistence or submission', async () => {
+  const canary = 'RAW_TRANSACTION_OR_SECRET_PATH_CANARY';
+  const state = await assertExecutionFailure({ serializationError: new Error(canary) }, 'signed_transaction_serialization_failed');
+  assert.equal(state.serializeCalls, 1);
+  assert.equal(state.submissionIntent, undefined);
+  assert.equal(state.sendCalls, 0);
+});
+
+test('typed RPC rejection is sanitized and never confirmed or resubmitted', async () => {
+  const canary = 'PROVIDER_PROSE_LOG_RPC_BODY_CANARY';
+  const state = await assertExecutionFailure({
+    sendError: new SendTransactionError({
+      action: 'simulate', signature: '', transactionMessage: canary, logs: [canary],
+    }),
+  }, 'submission_rpc_rejected');
+  assert.equal(state.serializeCalls, 1);
+  assert.notEqual(state.submissionIntent, undefined);
+  assert.equal(state.sendCalls, 1);
+  assert.equal(state.confirmCalls, 0);
+});
+
+test('ambiguous submission transport failure is sanitized and never retried', async () => {
+  const state = await assertExecutionFailure({
+    sendError: new Error('HTTPS_BODY_URL_CREDENTIAL_SECRET_PATH_CANARY'),
+  }, 'submission_outcome_unknown');
+  assert.equal(state.sendCalls, 1);
+  assert.equal(state.confirmCalls, 0);
+});
+
+test('returned signature mismatch remains exact and stops before confirmation', async () => {
+  const state = await assertExecutionFailure({ returnedSignature: publicKey(8) }, 'submitted_signature_mismatch');
+  assert.equal(state.sendCalls, 1);
+  assert.equal(state.confirmCalls, 0);
+});
+
+test('blockheight expiry after acknowledgement has a stable distinct code', async () => {
+  const state = await assertExecutionFailure({
+    confirmError: new TransactionExpiredBlockheightExceededError('4'.repeat(64)),
+  }, 'confirmation_blockheight_exceeded');
+  assert.equal(state.sendCalls, 1);
+  assert.equal(state.confirmCalls, 1);
+  assert.equal(state.transactionCalls, 0);
+});
+
+test('post-acknowledgement confirmation observation failure is distinct', async () => {
+  const state = await assertExecutionFailure({
+    confirmError: new Error('WEBSOCKET_RPC_PROVIDER_CANARY'),
+  }, 'confirmation_observation_failed');
+  assert.equal(state.sendCalls, 1);
+  assert.equal(state.confirmCalls, 1);
+  assert.equal(state.transactionCalls, 0);
+});
+
+test('returned and independently re-observed on-chain transaction errors preserve setup_transaction_failed', async () => {
+  const returned = await assertExecutionFailure({
+    confirmation: { context: { slot: 500 }, value: { err: { InstructionError: [0, 'Custom'] } } },
+  }, 'setup_transaction_failed');
+  assert.equal(returned.statusCalls, 0);
+  const direct = await assertExecutionFailure({
+    confirmError: { InstructionError: [0, 'Custom'] },
+    confirmationStatus: {
+      context: { slot: 500 },
+      value: { err: { InstructionError: [0, 'Custom'] }, confirmationStatus: 'finalized' },
+    },
+  }, 'setup_transaction_failed');
+  assert.equal(direct.statusCalls, 1);
+});
+
+test('unverified and hostile confirmation or submission error shapes remain sanitized observation failures', async () => {
+  const arbitrary = await assertExecutionFailure({
+    confirmError: { providerBody: 'NOT_ON_CHAIN_EVIDENCE' },
+  }, 'confirmation_observation_failed');
+  assert.equal(arbitrary.statusCalls, 1);
+
+  const confirmationRevocable = Proxy.revocable({}, {});
+  confirmationRevocable.revoke();
+  const hostileConfirmation = await assertExecutionFailure({
+    confirmError: confirmationRevocable.proxy,
+  }, 'confirmation_observation_failed');
+  assert.equal(hostileConfirmation.statusCalls, 1);
+
+  const submissionRevocable = Proxy.revocable({}, {});
+  submissionRevocable.revoke();
+  const hostileSubmission = await assertExecutionFailure({
+    sendError: submissionRevocable.proxy,
+  }, 'submission_outcome_unknown');
+  assert.equal(hostileSubmission.sendCalls, 1);
+  assert.equal(hostileSubmission.confirmCalls, 0);
+});
+
+test('malformed confirmation is observation failure rather than transaction failure', async () => {
+  await assertExecutionFailure({ confirmation: { context: { slot: 500 }, value: {} } }, 'confirmation_observation_failed');
+});
+
+test('finalized transaction and account query failures have stable phase codes', async () => {
+  let state = await assertExecutionFailure({
+    transactionQueryError: new Error('FINAL_TRANSACTION_RPC_BODY_CANARY'),
+  }, 'finalized_transaction_query_failed');
+  assert.equal(state.transactionCalls, 1);
+  assert.equal(state.accountCall, 2);
+
+  state = await assertExecutionFailure({
+    finalAccountsError: new Error('FINAL_ACCOUNTS_RPC_BODY_CANARY'),
+  }, 'finalized_accounts_query_failed');
+  assert.equal(state.transactionCalls, 1);
+  assert.equal(state.accountCall, 3);
+});
+
+test('finalized transaction metadata error is an observed setup_transaction_failed', async () => {
+  await assertExecutionFailure({
+    finalizedTransaction: { slot: 500, meta: { err: { InstructionError: [1, 'Custom'] } } },
+  }, 'setup_transaction_failed');
+});
+
+test('post-finalization exact evidence errors remain exact while unexpected decoding is phase-classified', async () => {
+  await assertExecutionFailure({ finalizedTransaction: null }, 'finalized_transaction_evidence_invalid');
+  await assertExecutionFailure({
+    finalizedTransactionFactory: submitted => ({
+      slot: 500,
+      meta: { err: null },
+      transaction: {
+        signatures: [publicKey(8)],
+        message: submitted.compileMessage(),
+      },
+    }),
+  }, 'finalized_transaction_signature_mismatch');
+  await assertExecutionFailure({
+    finalizedTransactionFactory: submitted => ({
+      slot: 500,
+      meta: { err: null },
+      transaction: {
+        signatures: [bs58.encode(submitted.signature)],
+        message: { serialize: () => Buffer.from('different-finalized-message') },
+      },
+    }),
+  }, 'finalized_transaction_message_mismatch');
+  const accountRevocable = Proxy.revocable({}, {});
+  accountRevocable.revoke();
+  await assertExecutionFailure({
+    inspectFinalizedAccount: () => { throw accountRevocable.proxy; },
+  }, 'finalized_accounts_query_failed');
+  await assertExecutionFailure({
+    inspectFinalizedAccount: () => { throw new Error('ACCOUNT_BYTES_CANARY'); },
+  }, 'finalized_accounts_query_failed');
+});
+
+test('unexpected and hostile manifest construction failures are sanitized as manifest output failure', async () => {
+  await assertExecutionFailure({
+    buildManifest: () => { throw new Error('MANIFEST_SECRET_PATH_PROVIDER_CANARY'); },
+  }, 'manifest_output_persistence_failed');
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  await assertExecutionFailure({
+    buildManifest: () => { throw revocable.proxy; },
+  }, 'manifest_output_persistence_failed');
+});
+
+test('failure diagnostic is a closed stable schema with no exception-derived content', () => {
+  const diagnostic = buildFixtureFailureDiagnostic('submission_outcome_unknown');
+  assert.deepEqual(diagnostic, {
+    fixture_setup_failure_version: 'artifact_slice_3b_2_failure_v1',
+    status: 'FAILED_DO_NOT_BLINDLY_RESUBMIT',
+    failure_class: 'submission_outcome_unknown',
+  });
+  const text = JSON.stringify(diagnostic);
+  for (const canary of [
+    'provider', 'rpc_url', 'raw', 'transaction', 'credential', 'secret', '/local/funder.json',
+  ]) assert.equal(text.toLowerCase().includes(canary), false);
+  assert.throws(() => buildFixtureFailureDiagnostic('fixture_setup_failed'));
+  assert.throws(() => buildFixtureFailureDiagnostic('output_persistence_failed'));
+});
+
+test('reserved failure output is exclusive mode-0600, fsynced through the maintained writer, and never rewrites intent', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'slice-3b-2-failure-output-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const intentPath = join(root, 'manifest.json.submission-intent.json');
+  const outputPath = join(root, 'manifest.json');
+  const intent = { status: 'SIGNED_NOT_YET_FINALIZED_DO_NOT_BLINDLY_RESUBMIT', signature: 'intent-canary' };
+  const intentHandle = await reserveOutput(intentPath);
+  await persistReservedOutput(intentHandle, intentPath, intent);
+  const outputHandle = await reserveOutput(outputPath);
+  await persistReservedOutput(
+    outputHandle, outputPath, buildFixtureFailureDiagnostic('submission_rpc_rejected'),
+  );
+  assert.equal((await stat(intentPath)).mode & 0o777, 0o600);
+  assert.equal((await stat(outputPath)).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(await readFile(intentPath, 'utf8')), intent);
+  assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), buildFixtureFailureDiagnostic('submission_rpc_rejected'));
+  await assert.rejects(reserveOutput(intentPath), error => error?.code === 'output_path_unavailable');
+  assert.deepEqual(JSON.parse(await readFile(intentPath, 'utf8')), intent);
+});
+
+test('configured mainnet connection disables HTTP-429 retry and sends exactly one request', async () => {
+  let fetchCalls = 0;
+  let requestBody;
+  const canary = 'HTTP_429_PROVIDER_BODY_CANARY';
+  const connection = createIndependentMainnetConnection(async (_url, init) => {
+    fetchCalls += 1;
+    requestBody = JSON.parse(init.body);
+    return {
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      async text() { return canary; },
+    };
+  });
+  assert.equal(connection.commitment, 'finalized');
+  await assert.rejects(
+    connection.sendRawTransaction(Buffer.alloc(1), {
+      skipPreflight: false, preflightCommitment: 'finalized', maxRetries: 0,
+    }),
+  );
+  assert.equal(fetchCalls, 1);
+  assert.equal(requestBody.method, 'sendTransaction');
+  assert.deepEqual(requestBody.params[1], {
+    encoding: 'base64',
+    maxRetries: 0,
+    preflightCommitment: 'finalized',
+  });
+});
+
+test('CLI treats an fsynced intent as durable even when its close fails and never reaches send', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'slice-3b-2-intent-close-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const controlsPath = join(root, 'controls.json');
+  const outputPath = join(root, 'manifest.json');
+  const sidecarPath = `${outputPath}.submission-intent.json`;
+  await writeFile(controlsPath, `${JSON.stringify({
+    fixture_controls_version: 'artifact_slice_3b_2_public_controls_v1',
+    empty_control_wallet: EMPTY,
+    known_control_wallet: KNOWN,
+  })}\n`, { mode: 0o600 });
+  const publicIntent = {
+    fixture_submission_intent_version: 'artifact_slice_3b_2_submission_intent_v1',
+    status: 'SIGNED_NOT_YET_FINALIZED_DO_NOT_BLINDLY_RESUBMIT',
+    signature: 'durable-before-close-canary',
+  };
+  let afterPersist = 0;
+  let stderr = '';
+  const exitCode = await runLocalFixtureCli([
+    '--execute-authorized-mainnet-setup',
+    '--authorization', 'SLICE_3B_2_ONE_MAINNET_SETUP_TRANSACTION_APPROVED',
+    '--controls-public', controlsPath,
+    '--fee-payer-pubkey', PAYER,
+    '--funding-keypair', '/PRIVATE/PATH/CANARY.json',
+    '--local-machine-attestation', LOCAL_ATTESTATION,
+    '--manifest-output', outputPath,
+  ], {
+    async reserveOutput(path) {
+      const handle = await reserveOutput(path);
+      if (path !== sidecarPath) return handle;
+      return {
+        truncate: (...args) => handle.truncate(...args),
+        write: (...args) => handle.write(...args),
+        sync: (...args) => handle.sync(...args),
+        async close() {
+          await handle.close();
+          throw new Error('SIDECAR_CLOSE_PROVIDER_CANARY');
+        },
+      };
+    },
+    async executeAuthorizedMainnetSetup(_value, dependencies) {
+      await dependencies.persistSubmissionIntent(publicIntent);
+      afterPersist += 1;
+      throw new Error('must not continue after close failure');
+    },
+    stdout: { write() {} },
+    stderr: { write(value) { stderr += value; } },
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(afterPersist, 0);
+  assert.equal(stderr, 'manifest_output_persistence_failed\n');
+  assert.deepEqual(JSON.parse(await readFile(sidecarPath, 'utf8')), publicIntent);
+  assert.deepEqual(
+    JSON.parse(await readFile(outputPath, 'utf8')),
+    buildFixtureFailureDiagnostic('manifest_output_persistence_failed'),
+  );
+});
+
+test('CLI persists only a stable diagnostic after a post-intent failure and leaves intent unchanged', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'slice-3b-2-cli-failure-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const controlsPath = join(root, 'controls.json');
+  const outputPath = join(root, 'manifest.json');
+  await writeFile(controlsPath, `${JSON.stringify({
+    fixture_controls_version: 'artifact_slice_3b_2_public_controls_v1',
+    empty_control_wallet: EMPTY,
+    known_control_wallet: KNOWN,
+  })}\n`, { mode: 0o600 });
+  const publicIntent = {
+    fixture_submission_intent_version: 'artifact_slice_3b_2_submission_intent_v1',
+    status: 'SIGNED_NOT_YET_FINALIZED_DO_NOT_BLINDLY_RESUBMIT',
+    signature: 'public-signature-canary',
+  };
+  let stdout = '';
+  let stderr = '';
+  const directorySyncPaths = [];
+  const exitCode = await runLocalFixtureCli([
+    '--execute-authorized-mainnet-setup',
+    '--authorization', 'SLICE_3B_2_ONE_MAINNET_SETUP_TRANSACTION_APPROVED',
+    '--controls-public', controlsPath,
+    '--fee-payer-pubkey', PAYER,
+    '--funding-keypair', '/PRIVATE/SECRET/PATH/CANARY.json',
+    '--local-machine-attestation', LOCAL_ATTESTATION,
+    '--manifest-output', outputPath,
+  ], {
+    async syncParentDirectory(path, onSynced) {
+      directorySyncPaths.push(path);
+      onSynced?.();
+    },
+    async executeAuthorizedMainnetSetup(_value, dependencies) {
+      await dependencies.persistSubmissionIntent(publicIntent);
+      throw new FixtureSetupError('submission_rpc_rejected');
+    },
+    stdout: { write(value) { stdout += value; } },
+    stderr: { write(value) { stderr += value; } },
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, '');
+  assert.equal(stderr, 'submission_rpc_rejected\n');
+  assert.deepEqual(directorySyncPaths, [`${outputPath}.submission-intent.json`, outputPath]);
+  assert.deepEqual(JSON.parse(await readFile(`${outputPath}.submission-intent.json`, 'utf8')), publicIntent);
+  assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), buildFixtureFailureDiagnostic('submission_rpc_rejected'));
+  const diagnosticText = await readFile(outputPath, 'utf8');
+  for (const canary of ['PRIVATE', 'SECRET', 'PATH', 'provider prose', 'raw body', 'stack trace', 'transaction bytes']) {
+    assert.equal(diagnosticText.includes(canary), false);
+  }
+
+  const hostileOutputPath = join(root, 'hostile-manifest.json');
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  let hostileStderr = '';
+  const hostileExitCode = await runLocalFixtureCli([
+    '--execute-authorized-mainnet-setup',
+    '--authorization', 'SLICE_3B_2_ONE_MAINNET_SETUP_TRANSACTION_APPROVED',
+    '--controls-public', controlsPath,
+    '--fee-payer-pubkey', PAYER,
+    '--funding-keypair', '/PRIVATE/SECRET/PATH/HOSTILE.json',
+    '--local-machine-attestation', LOCAL_ATTESTATION,
+    '--manifest-output', hostileOutputPath,
+  ], {
+    async executeAuthorizedMainnetSetup(_value, dependencies) {
+      await dependencies.persistSubmissionIntent(publicIntent);
+      throw revocable.proxy;
+    },
+    stdout: { write() {} },
+    stderr: { write(value) { hostileStderr += value; } },
+  });
+  assert.equal(hostileExitCode, 1);
+  assert.equal(hostileStderr, 'manifest_output_persistence_failed\n');
+  assert.deepEqual(
+    JSON.parse(await readFile(hostileOutputPath, 'utf8')),
+    buildFixtureFailureDiagnostic('manifest_output_persistence_failed'),
+  );
 });
