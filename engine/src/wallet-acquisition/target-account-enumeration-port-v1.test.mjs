@@ -113,6 +113,14 @@ test('rejects caller completeness and boundary assertions at the closed capture 
   }), error => error.code === 'unknown_field');
 });
 
+test('generic registered callbacks cannot self-label fabricated empty or nonempty responses as production evidence', async () => {
+  await assert.rejects(capture(capability({
+    [TOKEN_PROGRAM]: {
+      context: { slot: 500 }, accounts: [], source_evidence: {},
+    },
+  })), error => error.code === 'account_enumeration_response_invalid');
+});
+
 test('rejects mismatched response contexts rather than choosing a caller or later boundary', async () => {
   const harness = capability({
     [TOKEN_PROGRAM]: { context: { slot: 500 }, accounts: [] },

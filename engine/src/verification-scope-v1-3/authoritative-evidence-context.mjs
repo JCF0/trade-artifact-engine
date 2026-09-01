@@ -60,6 +60,8 @@ const CONTINUITY_FIELDS = ['status', 'reason', 'source_effect_references'];
 const BASIS_REFERENCE_FIELDS = ['basis_evidence_profile', 'basis_evidence_digest'];
 const DIGEST = /^[0-9a-f]{64}$/;
 const RAW_INTEGER = /^(?:0|[1-9][0-9]*)$/;
+const LEGACY_STATE_PROFILE = 'CAPABILITY_ATTESTED_TOKEN_ACCOUNT_STATE_V1';
+const LOCAL_STATE_PROFILE = 'LOCALLY_DECODED_SOLANA_TOKEN_ACCOUNT_STATE_V1';
 
 function validateCapabilityBearingInput(input, fields, context) {
   if (input === null || typeof input !== 'object' || Array.isArray(input) || utilTypes.isProxy(input)
@@ -162,9 +164,11 @@ function validateSnapshot(value, boundaryKind, wallet, targetMint) {
   });
   value.accounts.forEach((account, index) => {
     assertExactFields(account, ACCOUNT_FIELDS, `${boundaryKind.toLowerCase()}_snapshot.accounts.${index}`);
+    const profileValid = account.normalized_state_profile === LEGACY_STATE_PROFILE
+      || (account.normalized_state_profile === LOCAL_STATE_PROFILE && account.decimals === null);
     if (!RAW_INTEGER.test(account.raw_amount) || !DIGEST.test(account.normalized_state_evidence_digest)
         || !DIGEST.test(account.raw_account_evidence_digest)
-        || account.normalized_state_profile !== 'CAPABILITY_ATTESTED_TOKEN_ACCOUNT_STATE_V1') {
+        || !profileValid) {
       fail('snapshot_derivation_mismatch', 'snapshot account quantity or evidence digest is invalid');
     }
   });
