@@ -7,8 +7,10 @@ import test from 'node:test';
 import { ExtensionType } from '@solana/spl-token';
 import {
   Keypair,
+  PublicKey,
   SendTransactionError,
   Transaction,
+  TransactionInstruction,
   TransactionExpiredBlockheightExceededError,
 } from '@solana/web3.js';
 import bs58 from 'bs58';
@@ -327,6 +329,107 @@ test('funding keypair loader rejects relative paths before reading', async () =>
   );
 });
 
+function exactSyntheticTransaction(payer) {
+  const plan = createOfflineFixturePlan({
+    empty_control_wallet: EMPTY,
+    known_control_wallet: KNOWN,
+    fee_payer: payer.publicKey.toBase58(),
+  });
+  const transaction = new Transaction({
+    feePayer: payer.publicKey,
+    blockhash: publicKey(9),
+    lastValidBlockHeight: 123,
+  });
+  for (const descriptor of plan.instructions) {
+    transaction.add(new TransactionInstruction({
+      programId: new PublicKey(descriptor.program_id),
+      keys: descriptor.account_metas.map(item => ({
+        pubkey: new PublicKey(item.account),
+        isSigner: item.is_signer,
+        isWritable: item.is_writable,
+      })),
+      data: Buffer.from(descriptor.instruction_data_hex, 'hex'),
+    }));
+  }
+  return transaction;
+}
+
+test('real funding loader retains a usable synthetic signer until explicit cleanup', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'slice-3b-2-funding-loader-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, 'synthetic-funder.json');
+  const payer = Keypair.fromSeed(Buffer.alloc(32, 3));
+  await writeFile(path, `${JSON.stringify([...payer.secretKey])}\n`, { mode: 0o600 });
+
+  const ownedSigner = await loadFundingKeypair(path, LOCAL_ATTESTATION);
+  assert.equal(ownedSigner.signer.publicKey.toBase58(), payer.publicKey.toBase58());
+  const transaction = exactSyntheticTransaction(ownedSigner.signer);
+  transaction.sign(ownedSigner.signer);
+  assert.equal(transaction.verifySignatures(true), true);
+  assert.equal(transaction.serialize().length, 440);
+
+  ownedSigner.cleanup();
+  const afterCleanup = exactSyntheticTransaction(ownedSigner.signer);
+  afterCleanup.sign(ownedSigner.signer);
+  assert.equal(afterCleanup.verifySignatures(true), false);
+});
+
+test('authorized executor uses the real synthetic funding loader through mocked submission', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'slice-3b-2-executor-loader-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, 'synthetic-funder.json');
+  const payer = Keypair.fromSeed(Buffer.alloc(32, 3));
+  await writeFile(path, `${JSON.stringify([...payer.secretKey])}\n`, { mode: 0o600 });
+  let accountCall = 0;
+  let submissionIntent;
+  let sendCalls = 0;
+  const connection = {
+    async getGenesisHash() { return MAINNET_GENESIS_HASH; },
+    async getMultipleAccountsInfoAndContext() {
+      accountCall += 1;
+      if (accountCall === 1) {
+        return {
+          context: { slot: 400 },
+          value: [
+            { owner: { toBase58: () => CLASSIC_TOKEN_PROGRAM }, data: Buffer.alloc(82), executable: false },
+            { owner: { toBase58: () => TOKEN_2022_PROGRAM }, data: Buffer.alloc(82), executable: false },
+          ],
+        };
+      }
+      return { context: { slot: 401 }, value: [null, null] };
+    },
+    async getMinimumBalanceForRentExemption(length) { return length === 170 ? 2_074_080 : 2_039_280; },
+    async getLatestBlockhash() { return { blockhash: publicKey(9), lastValidBlockHeight: 123 }; },
+    async getFeeForMessage() { return { value: 5_000 }; },
+    async simulateTransaction() { return { context: { slot: 403 }, value: { err: null, logs: [] } }; },
+    async sendRawTransaction(raw) {
+      sendCalls += 1;
+      const submitted = Transaction.from(raw);
+      assert.equal(submitted.verifySignatures(true), true);
+      throw new SendTransactionError({ action: 'send', signature: '', transactionMessage: 'synthetic', logs: [] });
+    },
+  };
+
+  await assert.rejects(executeAuthorizedMainnetSetup({
+    execution_authorization: 'SLICE_3B_2_ONE_MAINNET_SETUP_TRANSACTION_APPROVED',
+    empty_control_wallet: EMPTY,
+    known_control_wallet: KNOWN,
+    fee_payer: payer.publicKey.toBase58(),
+    funding_keypair: path,
+    local_machine_attestation: LOCAL_ATTESTATION,
+  }, {
+    createConnection: () => connection,
+    persistSubmissionIntent: async value => { submissionIntent = value; },
+    inspectMintAccount: (_mint, accountInfo, tokenProgram) => ({
+      account_length: accountInfo.data.length,
+      required_token_account_length: tokenProgram === TOKEN_2022_PROGRAM ? 170 : 165,
+      required_account_extensions: tokenProgram === TOKEN_2022_PROGRAM ? ['ImmutableOwner'] : [],
+    }),
+  }), error => error?.code === 'submission_rpc_rejected');
+  assert.equal(sendCalls, 1);
+  assert.notEqual(submissionIntent, undefined);
+});
+
 test('read-only preflight independently verifies mints, absence, rent, fee, and simulation without signer capability', async () => {
   const plan = offlinePlan();
   const trace = [];
@@ -641,7 +744,7 @@ test('authorized executor performs one signed submit, finalized exact-key confir
     local_machine_attestation: LOCAL_ATTESTATION,
   }, {
     createConnection: () => connection,
-    loadFundingKeypair: async () => payer,
+    loadFundingKeypair: async () => ({ signer: payer, cleanup() {} }),
     persistSubmissionIntent: async value => { submissionIntent = value; },
     inspectMintAccount: (_mint, accountInfo, tokenProgram) => {
       assert.equal(accountInfo.owner.toBase58(), tokenProgram);
@@ -728,6 +831,7 @@ function executionFailureScenario(overrides = {}) {
   let submittedTransaction;
   let submissionIntent;
   let serializeCalls = 0;
+  let cleanupCalls = 0;
   const connection = {
     async getGenesisHash() { return MAINNET_GENESIS_HASH; },
     async getMultipleAccountsInfoAndContext() {
@@ -799,11 +903,28 @@ function executionFailureScenario(overrides = {}) {
     local_machine_attestation: LOCAL_ATTESTATION,
   }, {
     createConnection: () => connection,
-    loadFundingKeypair: async () => payer,
+    loadFundingKeypair: async () => ({
+      signer: payer,
+      cleanup() { cleanupCalls += 1; },
+    }),
     persistSubmissionIntent: async value => { submissionIntent = value; },
     serializeTransaction: transaction => {
       serializeCalls += 1;
       if (overrides.serializationError !== undefined) throw overrides.serializationError;
+      if (overrides.serializationFailureKind === 'missing') {
+        transaction.signatures[0].signature = null;
+      }
+      if (overrides.serializationFailureKind === 'invalid') {
+        transaction.signatures[0].signature[0] ^= 1;
+      }
+      if (overrides.serializationFailureKind === 'oversized') {
+        transaction.add(new TransactionInstruction({
+          programId: transaction.instructions[0].programId,
+          keys: [],
+          data: Buffer.alloc(1_000),
+        }));
+        transaction.sign(payer);
+      }
       return transaction.serialize();
     },
     inspectMintAccount: (_mint, accountInfo, tokenProgram) => ({
@@ -823,7 +944,8 @@ function executionFailureScenario(overrides = {}) {
   return {
     promise,
     state: () => ({
-      accountCall, confirmCalls, sendCalls, serializeCalls, statusCalls, submissionIntent, transactionCalls,
+      accountCall, cleanupCalls, confirmCalls, sendCalls, serializeCalls, statusCalls,
+      submissionIntent, transactionCalls,
     }),
   };
 }
@@ -840,6 +962,27 @@ test('signed transaction serialization fails before intent persistence or submis
   assert.equal(state.serializeCalls, 1);
   assert.equal(state.submissionIntent, undefined);
   assert.equal(state.sendCalls, 0);
+});
+
+test('natural missing, invalid, and oversized serialization failures stay local and sanitized', async () => {
+  for (const serializationFailureKind of ['missing', 'invalid', 'oversized']) {
+    const scenario = executionFailureScenario({ serializationFailureKind });
+    await assert.rejects(scenario.promise, error => {
+      assert.equal(error?.code, 'signed_transaction_serialization_failed');
+      assert.equal(error?.message, 'signed transaction serialization failed');
+      assert.deepEqual(Object.keys(error), ['name', 'code']);
+      const publicError = JSON.stringify({ name: error.name, code: error.code, message: error.message });
+      for (const forbidden of ['signature', 'transaction bytes', 'secret', 'private', '[', ']']) {
+        assert.equal(publicError.toLowerCase().includes(forbidden), false);
+      }
+      return true;
+    });
+    const state = scenario.state();
+    assert.equal(state.serializeCalls, 1);
+    assert.equal(state.submissionIntent, undefined);
+    assert.equal(state.sendCalls, 0);
+    assert.equal(state.cleanupCalls, 1);
+  }
 });
 
 test('typed RPC rejection is sanitized and never confirmed or resubmitted', async () => {

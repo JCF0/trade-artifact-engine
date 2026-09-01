@@ -255,8 +255,19 @@ export async function loadFundingKeypair(path, localMachineAttestation) {
   }
   const secret = Uint8Array.from(array);
   array.fill(0);
+  let retainedSecret;
   try {
-    return Keypair.fromSecretKey(secret);
+    retainedSecret = Uint8Array.from(secret);
+    const signer = Keypair.fromSecretKey(retainedSecret);
+    return Object.freeze({
+      signer,
+      cleanup() {
+        retainedSecret.fill(0);
+      },
+    });
+  } catch (error) {
+    retainedSecret?.fill(0);
+    throw error;
   } finally {
     secret.fill(0);
   }
@@ -344,10 +355,11 @@ export async function executeAuthorizedMainnetSetup(input, dependencies = {}) {
     fee_payer: input.fee_payer,
   });
   const collected = await collectReadOnlyPreflight(plan, connection, dependencies);
-  const fundingKeypair = await (dependencies.loadFundingKeypair ?? loadFundingKeypair)(
+  const ownedFundingSigner = await (dependencies.loadFundingKeypair ?? loadFundingKeypair)(
     input.funding_keypair, input.local_machine_attestation,
   );
   try {
+    const fundingKeypair = ownedFundingSigner?.signer;
     if (!(fundingKeypair instanceof Keypair) || fundingKeypair.publicKey.toBase58() !== plan.controls.fee_payer) {
       fail('funding_keypair_public_key_mismatch');
     }
@@ -477,7 +489,7 @@ export async function executeAuthorizedMainnetSetup(input, dependencies = {}) {
       }),
     });
   } finally {
-    if (fundingKeypair instanceof Keypair) fundingKeypair.secretKey.fill(0);
+    ownedFundingSigner?.cleanup?.();
   }
 }
 
