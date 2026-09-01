@@ -54,9 +54,10 @@ test('canonical semantic constants and policy profiles are exact and deeply froz
 });
 
 test('reason, exclusion, and NI orders are frozen identity-relevant ordinals', () => {
-  assert.equal(REASON_CODES.length, 22);
+  assert.equal(REASON_CODES.length, 23);
   assert.equal(REASON_CODES[0], 'ACQUISITION_AUTHORITY_UNRESOLVED');
   assert.equal(REASON_CODES[21], 'NO_LIMITED_PROJECTION');
+  assert.equal(REASON_CODES[22], 'TRANSFER_IN_BASIS_UNRESOLVED');
   assert.deepEqual(EXCLUSION_CODES, [
     'EXCLUDED_AFTER_CLOSED_BOUNDARY',
     'EXCLUDED_BEFORE_ZERO_OPEN_BOUNDARY',

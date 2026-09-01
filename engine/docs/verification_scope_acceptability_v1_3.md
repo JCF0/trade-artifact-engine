@@ -6,6 +6,8 @@
 **Applies to:** Current Solana spot architecture downstream of Artifact v1.15 acquisition
 **Objective:** Define deterministically which transaction, position, and wallet-window claims Artifact may verify, limit, refuse, and turn into receipts.
 
+**Canonical correction note:** The prior canonical SHA-256 was `6124f24f429bc6f90dd4dfd373f3b6f0e24935f2ac7142079a04b4ce68f603cf`. The only normative correction recorded by this note adds `TRANSFER_IN_BASIS_UNRESOLVED` as claim-impact reason code 23 with the fixed final ordinal and the semantics in §27.1. No other v1.3 semantics are changed.
+
 ---
 
 ## 1. Purpose
@@ -1200,7 +1202,12 @@ Free-form diagnostics MAY accompany them but MUST NOT determine authoritative ou
 20 WALLET_EFFECT_UNRESOLVED
 21 CANDIDATE_POPULATION_INCOMPLETE
 22 NO_LIMITED_PROJECTION
+23 TRANSFER_IN_BASIS_UNRESOLVED
 ```
+
+`TRANSFER_IN_BASIS_UNRESOLVED` means that target inventory entered through an admitted transfer-in, but attributable economic basis for that inventory was not established. Any Position Economics field whose value depends on that basis remains unavailable for the affected economic interval.
+
+The exact code MUST be preserved from the Slice 4 unresolved dependency into canonical claim reasons. It is not unknown opening basis; it MUST NOT fabricate zero basis, reclassify a transfer as a purchase or sale, or determine `position_state`. Independently established inventory and continuity may still support any state derived by the Position Episode engine. A later genuine economic zero MAY reset basis for subsequent inventory, but MUST NOT retroactively establish historical basis, realized basis, PnL, or return from the contaminated interval. The reason remains attached to every requested Position Economics claim spanning that interval. A complete limited result is `LIMITED`; otherwise the ordinary `BLOCKED` and `NO_LIMITED_PROJECTION` rules apply.
 
 ## 27.2 `NO_LIMITED_PROJECTION`
 
