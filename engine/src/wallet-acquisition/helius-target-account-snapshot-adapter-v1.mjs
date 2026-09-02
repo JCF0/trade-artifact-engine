@@ -8,10 +8,11 @@ import {
   decodeSolanaTokenAccountDataV1,
   decodeToken2022MintDataV1,
 } from './solana-token-account-decoder-v1.mjs';
-import { computeHeliusOwnerEnumerationAttemptIdentityV1 } from './target-account-enumeration-port-v1.mjs';
+import { computeHeliusOwnerEnumerationAttemptIdentityV2 } from './target-account-enumeration-port-v1.mjs';
 
-export const HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1 = 'HELIUS_STANDARD_FINALIZED_OWNER_ENUMERATION_V1';
-export const HELIUS_FINALIZED_ENUMERATION_TRUST_STATEMENT_V1 = 'Both enumerations were reported from the same finalized Helius account-indexed state, identified by equal context.slot values.';
+export const HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2 = 'HELIUS_STANDARD_FINALIZED_OWNER_ENUMERATION_WATERMARK_V2';
+export const HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2 = 'ARTIFACT_CONTROLLED_HELIUS_OWNER_CAPTURE_V2';
+export const HELIUS_FINALIZED_ENUMERATION_TRUST_STATEMENT_V2 = "Both owner enumerations independently completed under Helius's provider-attested completeness semantics and reported the same finalized commitment watermark through equal context.slot values. Equal slots are a cross-call consistency check and do not establish atomic execution or one indexed snapshot.";
 export const HELIUS_TARGET_ACCOUNT_SNAPSHOT_BOUNDS_V1 = Object.freeze({
   max_pair_attempts: 8,
   capture_deadline_ms: 30_000,
@@ -238,7 +239,7 @@ function parseMintRpc(value, id, slot, scope) {
   catch { fail('helius_mint_evidence_invalid'); }
   return true;
 }
-function frozenReplayCapability(scope, slot, lanes, acceptedAttempt) {
+function frozenReplayCapability(scope, slot, lanes, acceptedAttempt, sourceProfile) {
   const byProgram = new Map(PROGRAMS.map((program, index) => [program, lanes[index].target]));
   const summaries = PROGRAMS.map((program, index) => {
     const accounts = [...lanes[index].all].sort((left, right) => left.account.localeCompare(right.account));
@@ -253,13 +254,25 @@ function frozenReplayCapability(scope, slot, lanes, acceptedAttempt) {
       bounds_profile: 'HELIUS_OWNER_ENUMERATION_BOUNDS_V1',
     };
   });
-  const attemptIdentity = computeHeliusOwnerEnumerationAttemptIdentityV1({
+  const controlled = sourceProfile === HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2;
+  const contextSlots = { classic: lanes[0].slot, token_2022: lanes[1].slot };
+  const combinedBoundaryAuthority = controlled
+    ? 'CONTROLLED_CAPTURE_ASSUMPTION_ADMITTED' : 'NOT_ADMITTED_FROM_STANDARD_RPC';
+  const controlledTransactionStatus = controlled
+    ? (scope.boundary_kind === 'OPENING'
+      ? 'NO_CONTROLLED_SUBMISSION_DURING_OPENING_CAPTURE'
+      : 'CONTROLLED_SUBMISSIONS_STOPPED_AND_FINALIZED_DRAINED_BEFORE_ENDING_CAPTURE')
+    : 'NOT_ADMITTED';
+  const attemptIdentity = computeHeliusOwnerEnumerationAttemptIdentityV2({
+    source_profile: sourceProfile,
     analyzed_wallet: scope.wallet,
     target_mint: scope.target_mint,
     boundary_kind: scope.boundary_kind,
     minimum_context_slot: scope.minimum_context_slot,
     accepted_attempt: acceptedAttempt,
-    context_slot: slot,
+    observed_context_slots: contextSlots,
+    atomic_snapshot: false,
+    combined_boundary_authority: combinedBoundaryAuthority,
     populations: summaries,
   });
   return Object.freeze({
@@ -274,7 +287,7 @@ function frozenReplayCapability(scope, slot, lanes, acceptedAttempt) {
         context: { slot },
         accounts: byProgram.get(request.token_program),
         source_evidence: {
-          source_profile: HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1,
+          source_profile: sourceProfile,
           provider: 'HELIUS_STANDARD_MAINNET',
           method: 'getTokenAccountsByOwner',
           commitment: 'finalized',
@@ -284,7 +297,19 @@ function frozenReplayCapability(scope, slot, lanes, acceptedAttempt) {
           attempt_identity: attemptIdentity,
           boundary_kind: scope.boundary_kind,
           token_program: request.token_program,
-          context_semantics: HELIUS_FINALIZED_ENUMERATION_TRUST_STATEMENT_V1,
+          context_semantics: HELIUS_FINALIZED_ENUMERATION_TRUST_STATEMENT_V2,
+          lane_completeness_semantics: 'HELIUS_PROVIDER_ATTESTED_INDIVIDUAL_LANE_ALL_OR_ERROR_V1',
+          observed_context_slots: contextSlots,
+          watermark_consistency: 'EQUAL_CONTEXT_SLOT',
+          minimum_context_slot_semantics: 'FRESHNESS_LOWER_BOUND_ONLY',
+          dispatch_profile: 'CONCURRENT_WHOLE_PAIR_V1',
+          atomic_snapshot: false,
+          combined_boundary_authority: combinedBoundaryAuthority,
+          controlled_capture_assumption_profile: controlled
+            ? 'ARTIFACT_CONTROLLED_CROSS_CALL_QUIESCENCE_ASSUMPTION_V1' : 'NONE',
+          controlled_signing_status: controlled ? 'DISABLED_DURING_CAPTURE' : 'NOT_ADMITTED',
+          controlled_transaction_status: controlledTransactionStatus,
+          third_party_non_interference: 'NOT_CRYPTOGRAPHICALLY_EXCLUDED_BY_STANDARD_RPC',
           ...summaries[PROGRAMS.indexOf(request.token_program)],
         },
       });
@@ -292,7 +317,7 @@ function frozenReplayCapability(scope, slot, lanes, acceptedAttempt) {
   });
 }
 
-export async function captureFrozenHeliusTargetAccountEnumerationCapabilityV1(input, dependencyInput) {
+async function captureFrozenHeliusTargetAccountEnumerationCapability(input, dependencyInput, sourceProfile) {
   const scope = validateInput(input);
   const dependencies = validateDependencies(dependencyInput);
   const started = dependencies.clock();
@@ -328,7 +353,7 @@ export async function captureFrozenHeliusTargetAccountEnumerationCapabilityV1(in
         if (lanes[1].target.length > 0) {
           mintRequired = true;
         } else {
-          return frozenReplayCapability(scope, ownerSlot, lanes, attempt);
+          return frozenReplayCapability(scope, ownerSlot, lanes, attempt, sourceProfile);
         }
       }
     }
@@ -348,4 +373,22 @@ export async function captureFrozenHeliusTargetAccountEnumerationCapabilityV1(in
     }
   }
   fail('helius_snapshot_attempts_exhausted');
+}
+
+export async function captureFrozenHeliusTargetAccountEnumerationCapabilityV1(input, dependencyInput) {
+  void input;
+  void dependencyInput;
+  fail('retired_helius_enumeration_profile');
+}
+
+export async function captureFrozenHeliusTargetAccountEnumerationCapabilityV2(input, dependencyInput) {
+  return captureFrozenHeliusTargetAccountEnumerationCapability(
+    input, dependencyInput, HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2,
+  );
+}
+
+export async function captureFrozenControlledHeliusTargetAccountEnumerationCapabilityV2(input, dependencyInput) {
+  return captureFrozenHeliusTargetAccountEnumerationCapability(
+    input, dependencyInput, HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2,
+  );
 }

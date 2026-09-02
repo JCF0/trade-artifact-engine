@@ -13,6 +13,8 @@ import { decodeSolanaTokenAccountDataV1 } from './solana-token-account-decoder-v
 export const TARGET_ACCOUNT_ENUMERATION_VERSION_V1 = 'artifact_target_account_enumeration_v1';
 export const TARGET_ACCOUNT_ENUMERATION_PROFILE_V1 = 'ARTIFACT_TARGET_ACCOUNT_ENUMERATION_V1';
 export const HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1 = 'HELIUS_STANDARD_FINALIZED_OWNER_ENUMERATION_V1';
+export const HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2 = 'HELIUS_STANDARD_FINALIZED_OWNER_ENUMERATION_WATERMARK_V2';
+export const HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2 = 'ARTIFACT_CONTROLLED_HELIUS_OWNER_CAPTURE_V2';
 export const TARGET_ACCOUNT_ENUMERATION_REQUIRED_PROGRAMS_V1 = Object.freeze([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
@@ -31,11 +33,16 @@ const RESULT_FIELDS = [
 ];
 const LEGACY_PROGRAM_RESULT_FIELDS = ['token_program', 'response_status', 'context', 'accounts'];
 const PRODUCTION_PROGRAM_RESULT_FIELDS = [...LEGACY_PROGRAM_RESULT_FIELDS, 'source_evidence'];
-const SOURCE_EVIDENCE_FIELDS = [
+const SOURCE_EVIDENCE_FIELDS_V2 = [
   'source_profile', 'provider', 'method', 'commitment', 'encoding', 'minimum_context_slot',
   'accepted_attempt', 'attempt_identity', 'boundary_kind', 'token_program', 'context_semantics',
+  'lane_completeness_semantics', 'observed_context_slots', 'watermark_consistency',
+  'minimum_context_slot_semantics', 'dispatch_profile', 'atomic_snapshot',
+  'combined_boundary_authority', 'controlled_capture_assumption_profile',
+  'controlled_signing_status', 'controlled_transaction_status', 'third_party_non_interference',
   'full_population_digest', 'full_account_count', 'full_decoded_bytes', 'bounds_profile',
 ];
+const OBSERVED_CONTEXT_SLOT_FIELDS = ['classic', 'token_2022'];
 const ACCOUNT_FIELDS = [
   'account', 'account_program', 'lamports', 'executable', 'rent_epoch', 'raw_account_data',
   'normalized_state_profile', 'token_state',
@@ -51,7 +58,7 @@ const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
 const DIGEST = /^[0-9a-f]{64}$/;
 const LEGACY_STATE_PROFILE = 'CAPABILITY_ATTESTED_TOKEN_ACCOUNT_STATE_V1';
 const LOCAL_STATE_PROFILE = 'LOCALLY_DECODED_SOLANA_TOKEN_ACCOUNT_STATE_V1';
-const HELIUS_CONTEXT_SEMANTICS = 'Both enumerations were reported from the same finalized Helius account-indexed state, identified by equal context.slot values.';
+const HELIUS_CONTEXT_SEMANTICS_V2 = "Both owner enumerations independently completed under Helius's provider-attested completeness semantics and reported the same finalized commitment watermark through equal context.slot values. Equal slots are a cross-call consistency check and do not establish atomic execution or one indexed snapshot.";
 
 function safeNonnegative(value) {
   return Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0);
@@ -152,21 +159,45 @@ function validateAccount(value, { wallet, targetMint, tokenProgram, production }
     }
   }
 }
-function validateSourceEvidence(value, tokenProgram, accounts, context) {
-  assertExactFields(value, SOURCE_EVIDENCE_FIELDS, context);
-  if (value.source_profile !== HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1
+function validateSourceEvidenceV2(value, tokenProgram, accounts, context) {
+  assertExactFields(value, SOURCE_EVIDENCE_FIELDS_V2, context);
+  const controlled = value.source_profile === HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2;
+  if (![HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2, HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2]
+    .includes(value.source_profile)
       || value.provider !== 'HELIUS_STANDARD_MAINNET' || value.method !== 'getTokenAccountsByOwner'
       || value.commitment !== 'finalized' || value.encoding !== 'base64'
       || !safeNonnegative(value.minimum_context_slot) || !safeNonnegative(value.accepted_attempt)
       || value.accepted_attempt < 1 || value.accepted_attempt > 8 || !DIGEST.test(value.attempt_identity)
       || !BOUNDARY_KINDS.has(value.boundary_kind)
       || value.token_program !== tokenProgram
-      || value.context_semantics !== HELIUS_CONTEXT_SEMANTICS
+      || value.context_semantics !== HELIUS_CONTEXT_SEMANTICS_V2
+      || value.lane_completeness_semantics !== 'HELIUS_PROVIDER_ATTESTED_INDIVIDUAL_LANE_ALL_OR_ERROR_V1'
+      || value.watermark_consistency !== 'EQUAL_CONTEXT_SLOT'
+      || value.minimum_context_slot_semantics !== 'FRESHNESS_LOWER_BOUND_ONLY'
+      || value.dispatch_profile !== 'CONCURRENT_WHOLE_PAIR_V1'
+      || value.atomic_snapshot !== false
+      || value.combined_boundary_authority !== (controlled
+        ? 'CONTROLLED_CAPTURE_ASSUMPTION_ADMITTED' : 'NOT_ADMITTED_FROM_STANDARD_RPC')
+      || value.controlled_capture_assumption_profile !== (controlled
+        ? 'ARTIFACT_CONTROLLED_CROSS_CALL_QUIESCENCE_ASSUMPTION_V1' : 'NONE')
+      || value.controlled_signing_status !== (controlled ? 'DISABLED_DURING_CAPTURE' : 'NOT_ADMITTED')
+      || value.controlled_transaction_status !== (controlled
+        ? (value.boundary_kind === 'OPENING'
+          ? 'NO_CONTROLLED_SUBMISSION_DURING_OPENING_CAPTURE'
+          : 'CONTROLLED_SUBMISSIONS_STOPPED_AND_FINALIZED_DRAINED_BEFORE_ENDING_CAPTURE')
+        : 'NOT_ADMITTED')
+      || value.third_party_non_interference !== 'NOT_CRYPTOGRAPHICALLY_EXCLUDED_BY_STANDARD_RPC'
       || !DIGEST.test(value.full_population_digest)
       || !safeNonnegative(value.full_account_count) || value.full_account_count < accounts.length
       || !safeNonnegative(value.full_decoded_bytes)
       || value.bounds_profile !== 'HELIUS_OWNER_ENUMERATION_BOUNDS_V1') {
     fail('account_enumeration_response_invalid', `${context} is invalid`);
+  }
+  assertExactFields(value.observed_context_slots, OBSERVED_CONTEXT_SLOT_FIELDS, `${context}.observed_context_slots`);
+  if (!safeNonnegative(value.observed_context_slots.classic)
+      || !safeNonnegative(value.observed_context_slots.token_2022)
+      || value.observed_context_slots.classic !== value.observed_context_slots.token_2022) {
+    fail('account_enumeration_response_invalid', `${context} observed context slots are invalid`);
   }
   const retainedBytes = accounts.reduce(
     (total, account) => total + Buffer.from(account.raw_account_data.bytes, 'base64').length,
@@ -186,6 +217,21 @@ export function computeHeliusOwnerEnumerationAttemptIdentityV1(input) {
     minimum_context_slot: input.minimum_context_slot,
     accepted_attempt: input.accepted_attempt,
     context_slot: input.context_slot,
+    populations: input.populations,
+  });
+}
+export function computeHeliusOwnerEnumerationAttemptIdentityV2(input) {
+  return sha256CanonicalJson({
+    identity_profile: 'HELIUS_OWNER_ENUMERATION_PAIR_IDENTITY_V2',
+    source_profile: input.source_profile,
+    analyzed_wallet: input.analyzed_wallet,
+    target_mint: input.target_mint,
+    boundary_kind: input.boundary_kind,
+    minimum_context_slot: input.minimum_context_slot,
+    accepted_attempt: input.accepted_attempt,
+    observed_context_slots: input.observed_context_slots,
+    atomic_snapshot: input.atomic_snapshot,
+    combined_boundary_authority: input.combined_boundary_authority,
     populations: input.populations,
   });
 }
@@ -227,7 +273,7 @@ function validateCaptureInput(input) {
   }
 }
 
-function registerTargetAccountEnumerationPortV1(capability, productionAllowed) {
+function registerTargetAccountEnumerationPortV1(capability, authorizedSourceProfile) {
   const enumerate = validateCapability(capability);
   const port = Object.freeze({
     async enumerateTargetAccountsByProgramV1(request) {
@@ -244,20 +290,36 @@ function registerTargetAccountEnumerationPortV1(capability, productionAllowed) {
       }
     },
   });
-  PORTS.set(port, productionAllowed);
+  PORTS.set(port, authorizedSourceProfile);
   return port;
 }
 
 export function createTargetAccountEnumerationPortV1(capability) {
-  return registerTargetAccountEnumerationPortV1(capability, false);
+  return registerTargetAccountEnumerationPortV1(capability, null);
 }
 
 export async function createFrozenHeliusTargetAccountEnumerationPortV1(input, dependencies) {
-  const { captureFrozenHeliusTargetAccountEnumerationCapabilityV1 } = await import(
+  void input;
+  void dependencies;
+  fail('retired_production_enumeration_profile', 'the prior production enumeration factory is retired');
+}
+
+export async function createFrozenHeliusTargetAccountEnumerationPortV2(input, dependencies) {
+  const { captureFrozenHeliusTargetAccountEnumerationCapabilityV2 } = await import(
     './helius-target-account-snapshot-adapter-v1.mjs'
   );
-  const capability = await captureFrozenHeliusTargetAccountEnumerationCapabilityV1(input, dependencies);
-  return registerTargetAccountEnumerationPortV1(capability, true);
+  const capability = await captureFrozenHeliusTargetAccountEnumerationCapabilityV2(input, dependencies);
+  return registerTargetAccountEnumerationPortV1(
+    capability, HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2,
+  );
+}
+
+export async function createFrozenControlledHeliusTargetAccountEnumerationPortV2(input, dependencies) {
+  const { captureFrozenControlledHeliusTargetAccountEnumerationCapabilityV2 } = await import(
+    './helius-target-account-snapshot-adapter-v1.mjs'
+  );
+  const capability = await captureFrozenControlledHeliusTargetAccountEnumerationCapabilityV2(input, dependencies);
+  return registerTargetAccountEnumerationPortV1(capability, HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2);
 }
 
 function digestPreimage(value) {
@@ -270,8 +332,15 @@ function digestPreimage(value) {
 
 export function validateTargetAccountEnumerationStructureV1(value) {
   assertExactFields(value, RESULT_FIELDS, 'target_account_enumeration');
+  if (value.enumeration_profile === HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1) {
+    fail('retired_production_enumeration_profile', 'the prior production enumeration profile is retired');
+  }
   if (value.target_account_enumeration_version !== TARGET_ACCOUNT_ENUMERATION_VERSION_V1
-      || ![TARGET_ACCOUNT_ENUMERATION_PROFILE_V1, HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1]
+      || ![
+        TARGET_ACCOUNT_ENUMERATION_PROFILE_V1,
+        HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2,
+        HELIUS_CONTROLLED_OWNER_CAPTURE_PROFILE_V2,
+      ]
         .includes(value.enumeration_profile)) {
     fail('unsupported_enumeration_version', 'target account enumeration version is unsupported');
   }
@@ -286,7 +355,7 @@ export function validateTargetAccountEnumerationStructureV1(value) {
     fail('required_program_coverage_missing', 'every required token program needs one result');
   }
   const seenAccounts = new Set();
-  const production = value.enumeration_profile === HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1;
+  const production = value.enumeration_profile !== TARGET_ACCOUNT_ENUMERATION_PROFILE_V1;
   let attemptIdentity = null;
   let acceptedAttempt = null;
   let minimumContextSlot = null;
@@ -300,7 +369,7 @@ export function validateTargetAccountEnumerationStructureV1(value) {
     }
     validateContext(result.context, `program_results.${index}.context`);
     if (result.context.slot !== value.enumeration_context.slot) {
-      fail('enumeration_context_mismatch', 'program results do not share one response-derived context');
+      fail('enumeration_context_mismatch', 'program results do not report one equal context.slot watermark');
     }
     if (!Array.isArray(result.accounts)) fail('account_enumeration_response_invalid', 'accounts must be an array');
     result.accounts.forEach((account, accountIndex) => {
@@ -317,7 +386,7 @@ export function validateTargetAccountEnumerationStructureV1(value) {
       }
     });
     if (production) {
-      validateSourceEvidence(
+      validateSourceEvidenceV2(
         result.source_evidence,
         expectedProgram,
         result.accounts,
@@ -325,6 +394,11 @@ export function validateTargetAccountEnumerationStructureV1(value) {
       );
       if (result.source_evidence.minimum_context_slot > result.context.slot) {
         fail('enumeration_context_mismatch', 'production context does not satisfy its retained freshness floor');
+      }
+      if (result.source_evidence.source_profile !== value.enumeration_profile
+          || result.source_evidence.observed_context_slots.classic !== value.enumeration_context.slot
+          || result.source_evidence.observed_context_slots.token_2022 !== value.enumeration_context.slot) {
+        fail('enumeration_context_mismatch', 'production profile or observed watermark does not match the pair');
       }
       if (attemptIdentity === null) attemptIdentity = result.source_evidence.attempt_identity;
       else if (attemptIdentity !== result.source_evidence.attempt_identity) {
@@ -346,13 +420,16 @@ export function validateTargetAccountEnumerationStructureV1(value) {
   });
   if (production) {
     const source = value.program_results[0].source_evidence;
-    const expectedAttemptIdentity = computeHeliusOwnerEnumerationAttemptIdentityV1({
+    const expectedAttemptIdentity = computeHeliusOwnerEnumerationAttemptIdentityV2({
+      source_profile: value.enumeration_profile,
       analyzed_wallet: value.analyzed_wallet,
       target_mint: value.target_mint,
       boundary_kind: source.boundary_kind,
       minimum_context_slot: source.minimum_context_slot,
       accepted_attempt: source.accepted_attempt,
-      context_slot: value.enumeration_context.slot,
+      observed_context_slots: source.observed_context_slots,
+      atomic_snapshot: source.atomic_snapshot,
+      combined_boundary_authority: source.combined_boundary_authority,
       populations: value.program_results.map(result => ({
         token_program: result.token_program,
         full_population_digest: result.source_evidence.full_population_digest,
@@ -375,7 +452,7 @@ export function validateTargetAccountEnumerationStructureV1(value) {
 export async function captureTargetAccountEnumerationV1(input) {
   validateCaptureInput(input);
   if (!PORTS.has(input.port)) fail('account_enumeration_capability_denied', 'validated account enumeration port is required');
-  const productionAllowed = PORTS.get(input.port);
+  const authorizedSourceProfile = PORTS.get(input.port);
   if (!isSolanaPublicKeyV1(input.wallet) || !isSolanaPublicKeyV1(input.target_mint)) {
     fail('account_enumeration_request_invalid', 'wallet and target mint must be Solana public keys');
   }
@@ -396,7 +473,7 @@ export async function captureTargetAccountEnumerationV1(input) {
     try {
       const responseProduction = response !== null && typeof response === 'object'
         && Object.hasOwn(response, 'source_evidence');
-      if (responseProduction && !productionAllowed) {
+      if (responseProduction && authorizedSourceProfile === null) {
         fail('account_enumeration_response_invalid', 'generic enumeration capabilities cannot issue production evidence');
       }
       assertExactFields(response, responseProduction ? PRODUCTION_RESPONSE_FIELDS : LEGACY_RESPONSE_FIELDS,
@@ -414,7 +491,7 @@ export async function captureTargetAccountEnumerationV1(input) {
         return account;
       }).sort((left, right) => left.account < right.account ? -1 : left.account > right.account ? 1 : 0);
       if (responseProduction) {
-        validateSourceEvidence(
+        validateSourceEvidenceV2(
           response.source_evidence,
           tokenProgram,
           accounts,
@@ -422,6 +499,9 @@ export async function captureTargetAccountEnumerationV1(input) {
         );
         if (response.source_evidence.boundary_kind !== input.boundary_kind) {
           fail('account_enumeration_response_invalid', 'production evidence boundary is not request-bound');
+        }
+        if (response.source_evidence.source_profile !== authorizedSourceProfile) {
+          fail('account_enumeration_response_invalid', 'production evidence profile is not privately authorized');
         }
       }
       if (new Set(accounts.map(account => account.account)).size !== accounts.length) {
@@ -444,7 +524,7 @@ export async function captureTargetAccountEnumerationV1(input) {
   const result = {
     target_account_enumeration_version: TARGET_ACCOUNT_ENUMERATION_VERSION_V1,
     enumeration_profile: production
-      ? HELIUS_FINALIZED_OWNER_ENUMERATION_PROFILE_V1 : TARGET_ACCOUNT_ENUMERATION_PROFILE_V1,
+      ? programResults[0].source_evidence.source_profile : TARGET_ACCOUNT_ENUMERATION_PROFILE_V1,
     analyzed_wallet: input.wallet,
     target_mint: input.target_mint,
     required_token_programs: [...TARGET_ACCOUNT_ENUMERATION_REQUIRED_PROGRAMS_V1],

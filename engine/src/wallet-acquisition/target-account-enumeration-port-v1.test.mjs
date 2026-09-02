@@ -66,7 +66,7 @@ async function capture(harness) {
   });
 }
 
-test('captures separate successful canonical Token and Token-2022 coverages at one response-derived context', async () => {
+test('captures separate successful canonical Token and Token-2022 coverages at one equal slot watermark', async () => {
   const harness = capability({
     [TOKEN_PROGRAM]: { context: { slot: 500 }, accounts: [rawAccount()] },
     [TOKEN_2022_PROGRAM]: { context: { slot: 500 }, accounts: [] },

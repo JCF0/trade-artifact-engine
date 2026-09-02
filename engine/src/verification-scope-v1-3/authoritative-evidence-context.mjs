@@ -9,6 +9,7 @@ import {
 } from './contract.mjs';
 import { SOLANA_MAINNET_GENESIS_HASH } from '../wallet-acquisition/request-contract.mjs';
 import {
+  HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2,
   TARGET_ACCOUNT_ENUMERATION_REQUIRED_PROGRAMS_V1,
   captureTargetAccountEnumerationV1,
   validateTargetAccountEnumerationStructureV1,
@@ -100,6 +101,12 @@ function flattenedAccounts(enumeration) {
 }
 function snapshotFromEnumeration(boundaryKind, enumeration) {
   validateTargetAccountEnumerationStructureV1(enumeration);
+  if (enumeration.enumeration_profile === HELIUS_FINALIZED_OWNER_ENUMERATION_WATERMARK_PROFILE_V2) {
+    fail(
+      'combined_boundary_authority_not_admitted',
+      'equal finalized watermarks do not independently establish combined boundary authority',
+    );
+  }
   const flattened = flattenedAccounts(enumeration);
   const decimals = new Set(flattened.map(item => item.source.token_state.decimals));
   if (decimals.size > 1) fail('target_decimals_mismatch', 'one target mint cannot have conflicting decimals');

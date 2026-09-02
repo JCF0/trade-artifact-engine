@@ -18,7 +18,8 @@ import { sha256CanonicalJson } from './contract.mjs';
 import {
   TARGET_ACCOUNT_ENUMERATION_REQUIRED_PROGRAMS_V1,
   captureTargetAccountEnumerationV1,
-  createFrozenHeliusTargetAccountEnumerationPortV1,
+  createFrozenControlledHeliusTargetAccountEnumerationPortV2,
+  createFrozenHeliusTargetAccountEnumerationPortV2,
   createTargetAccountEnumerationPortV1,
 } from '../wallet-acquisition/target-account-enumeration-port-v1.mjs';
 import {
@@ -82,8 +83,11 @@ function enumerationPort(slot, accountsByProgram = {}) {
   };
 }
 
-async function productionEnumerationPort(slot, localAccount) {
-  const port = await createFrozenHeliusTargetAccountEnumerationPortV1({
+async function productionEnumerationPort(slot, localAccount, { controlled = true } = {}) {
+  const factory = controlled
+    ? createFrozenControlledHeliusTargetAccountEnumerationPortV2
+    : createFrozenHeliusTargetAccountEnumerationPortV2;
+  const port = await factory({
     wallet: JUP_WALLET_V1,
     target_mint: JUP_MINT_V1,
     boundary_kind: 'ENDING_AS_OF',
@@ -249,6 +253,43 @@ test('production locally decoded rows retain null decimals through the authorita
   assert.equal(context.ending_snapshot.accounts[0].normalized_state_profile,
     'LOCALLY_DECODED_SOLANA_TOKEN_ACCOUNT_STATE_V1');
   assert.equal(context.ending_snapshot.aggregate_raw_quantity, '1');
+  assert.equal(context.ending_snapshot.enumeration_evidence.enumeration_profile,
+    'ARTIFACT_CONTROLLED_HELIUS_OWNER_CAPTURE_V2');
+  assert.ok(context.ending_snapshot.enumeration_evidence.program_results
+    .every(result => result.source_evidence.atomic_snapshot === false));
+  assert.doesNotMatch(JSON.stringify(context), /"atomic_snapshot":true/);
+});
+
+test('equal Helius watermarks without controlled-capture admission cannot issue combined COMPLETE or EXACT authority', async () => {
+  const value = await fixture();
+  const local = account('1');
+  local.normalized_state_profile = 'LOCALLY_DECODED_SOLANA_TOKEN_ACCOUNT_STATE_V1';
+  local.token_state.decimals = null;
+  const bytes = Buffer.alloc(165);
+  new PublicKey(JUP_MINT_V1).toBuffer().copy(bytes, 0);
+  new PublicKey(JUP_WALLET_V1).toBuffer().copy(bytes, 32);
+  bytes.writeBigUInt64LE(1n, 64);
+  bytes[108] = 1;
+  local.raw_account_data.bytes = bytes.toString('base64');
+  const standard = await productionEnumerationPort(value.fullTransactions[0].slot + 1, local, {
+    controlled: false,
+  });
+  const retained = await captureTargetAccountEnumerationV1({
+    port: standard.port,
+    wallet: JUP_WALLET_V1,
+    target_mint: JUP_MINT_V1,
+    boundary_kind: 'ENDING_AS_OF',
+  });
+  assert.equal(retained.program_results[0].source_evidence.atomic_snapshot, false);
+  assert.ok(retained.program_results.every(result => result.source_evidence.lane_completeness_semantics
+    === 'HELIUS_PROVIDER_ATTESTED_INDIVIDUAL_LANE_ALL_OR_ERROR_V1'));
+  assert.ok(retained.program_results.every(result => result.source_evidence.minimum_context_slot_semantics
+    === 'FRESHNESS_LOWER_BOUND_ONLY'));
+  assert.equal(retained.program_results[0].source_evidence.combined_boundary_authority,
+    'NOT_ADMITTED_FROM_STANDARD_RPC');
+  await assert.rejects(buildSourceBoundAuthoritativeEvidenceContextV13(buildInput(value, {
+    ending_enumeration_port: standard.port,
+  })), error => error.code === 'combined_boundary_authority_not_admitted');
 });
 
 test('builds one immutable source-bound carrier with exact empty opening and one-unit ending populations', async () => {

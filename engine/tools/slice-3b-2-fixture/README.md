@@ -198,7 +198,7 @@ Only after the transaction is finalized and the public manifest is frozen:
 2. Verify `manifest_sha256` before extracting public inputs.
 3. Populate the existing compatibility probe's empty wallet, known wallet, classic expected-account array, and Token-2022 expected-account array from the manifest.
 4. Reserve a unique report path and run the already-built Helius compatibility probe once under its separate live authorization.
-5. Interpret equal slots as the same finalized Helius indexed state, not proof of one exact Agave bank snapshot.
+5. Interpret equal slots only as the same finalized commitment watermark. They are a cross-call consistency check, not proof of atomic execution, one indexed snapshot, or one exact Agave bank snapshot; `minContextSlot` is only a freshness lower bound.
 
 ## 9. Decimals boundary
 
