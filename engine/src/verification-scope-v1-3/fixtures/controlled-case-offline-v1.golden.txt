@@ -1,0 +1,210 @@
+{
+  "assertions": [
+    {
+      "assertion_id": "opening_exact_zero",
+      "expected": "0",
+      "observed": "0",
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "ending_exact_zero",
+      "expected": "0",
+      "observed": "0",
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "source_transaction_count",
+      "expected": 2,
+      "observed": 2,
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "source_episode_count",
+      "expected": 1,
+      "observed": 1,
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "verified_count",
+      "expected": 1,
+      "observed": 1,
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "limited_count",
+      "expected": 0,
+      "observed": 0,
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "blocked_count",
+      "expected": 0,
+      "observed": 0,
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "position_state",
+      "expected": "CLOSED",
+      "observed": "CLOSED",
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "claim_outcome",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "aggregate_acquisition_basis",
+      "expected": {
+        "denominator": "1",
+        "numerator": "25000000"
+      },
+      "observed": {
+        "denominator": "1",
+        "numerator": "25000000"
+      },
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "recognized_disposal_proceeds",
+      "expected": {
+        "denominator": "1",
+        "numerator": "32500000"
+      },
+      "observed": {
+        "denominator": "1",
+        "numerator": "32500000"
+      },
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "realized_basis_consumed",
+      "expected": {
+        "denominator": "1",
+        "numerator": "25000000"
+      },
+      "observed": {
+        "denominator": "1",
+        "numerator": "25000000"
+      },
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "realized_pnl",
+      "expected": {
+        "denominator": "1",
+        "numerator": "7500000"
+      },
+      "observed": {
+        "denominator": "1",
+        "numerator": "7500000"
+      },
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "realized_return",
+      "expected": {
+        "denominator": "10",
+        "numerator": "3"
+      },
+      "observed": {
+        "denominator": "10",
+        "numerator": "3"
+      },
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "remaining_attributable_basis",
+      "expected": {
+        "denominator": "1",
+        "numerator": "0"
+      },
+      "observed": {
+        "denominator": "1",
+        "numerator": "0"
+      },
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "explicit_selection_status",
+      "expected": "SELECTED_VERIFIED",
+      "observed": "SELECTED_VERIFIED",
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "selection_policy",
+      "expected": "EXPLICIT_DIGEST_NO_FALLBACK_V1",
+      "observed": "EXPLICIT_DIGEST_NO_FALLBACK_V1",
+      "status": "PASS"
+    },
+    {
+      "assertion_id": "immutable_claim_byte_reconstruction",
+      "expected": true,
+      "observed": true,
+      "status": "PASS"
+    }
+  ],
+  "authoritative_source_identities": {
+    "economic_evidence_digest": "122efec833ab1f9a1fad28611624e76cf29e509b9dd23de483dc8e1b9bf036ff",
+    "ending_enumeration_digest": "28bd5b53ec6bad70c74c5c20e9d281d15a3d6506c339117162a633943fd48b5c",
+    "legacy_acquisition_result_digest": "ccf4be96f5b83593665e241f3e40e3ca2bb0acde28119da4e838f28009480a2c",
+    "opening_enumeration_digest": "32d2305b79e5f65683e5844ab5356ce66afd314c4e0bfdb033c0439ad464e72f",
+    "transaction_population_digest": "40d08892a50032e2dc7f7f6e56f452b1447ee58d24066e5e85eff0af775023a0"
+  },
+  "claim_evaluation_identities": [
+    {
+      "digest": "df660c19620649ee91e503c307fbd1b7d7dd295e00336ab6369a941ff60ae3e4",
+      "id": "claim-evaluation-df660c19620649ee91e503c307fbd1b7d7dd295e00336ab6369a941ff60ae3e4"
+    }
+  ],
+  "episode_identities": [
+    {
+      "digest": "b3be2bbffc66acba5985e0187a66184792de59366952c0eaeb4a68b82c011ff7",
+      "id": "position-episode-b3be2bbffc66acba5985e0187a66184792de59366952c0eaeb4a68b82c011ff7"
+    }
+  ],
+  "evidence_context_identity": {
+    "digest": "d005b4886326dc165286e4cfa32c726dc0bb07f94a3921aa93cb755975611d2d",
+    "id": "evidence-context-d005b4886326dc165286e4cfa32c726dc0bb07f94a3921aa93cb755975611d2d"
+  },
+  "fixture_identity": {
+    "fixture_manifest_digest": "e0d87f2b9c4dbb77188979fa14b6f627fcf72d446e466cf852b6349d79debe09",
+    "fixture_version": "artifact_verification_scope_v1_3_controlled_case_fixture_v1"
+  },
+  "gate_profile": "ARTIFACT_VERIFICATION_SCOPE_V1_3_CONTROLLED_CASE_OFFLINE_E2E_V1",
+  "gate_result_version": "artifact_verification_scope_v1_3_controlled_case_gate_result_v1",
+  "immutable_claim_identity": {
+    "digest": "9008527c103449ce2c4ad9d571f8b9105c34cf78264f4db7e64e4c48899ca4f5",
+    "id": "immutable-claim-9008527c103449ce2c4ad9d571f8b9105c34cf78264f4db7e64e4c48899ca4f5"
+  },
+  "overall_status": "PASS",
+  "population_identity": {
+    "digest": "47a359b66bd42f6e6782c488c7af1c08b601d3fe03d54beaeddfef5af3a84271",
+    "id": "episode-population-47a359b66bd42f6e6782c488c7af1c08b601d3fe03d54beaeddfef5af3a84271"
+  },
+  "requested_candidate_identity": {
+    "digest": "d4d53d83c4e7a38a8af6b2abbcc193fbf5607cc2d97ae8001b201ed3ec4c97a4",
+    "id": "candidate-d4d53d83c4e7a38a8af6b2abbcc193fbf5607cc2d97ae8001b201ed3ec4c97a4"
+  },
+  "selection_identity": {
+    "digest": "4eaee6cbb2bc1fedcd684987d11af1f7379b3e783e1b1a33458f76c9f85875f9",
+    "id": "selection-4eaee6cbb2bc1fedcd684987d11af1f7379b3e783e1b1a33458f76c9f85875f9"
+  },
+  "specification_identity": {
+    "sha256": "2535bd51cbda5b638b486f85ded6808a43d9928c1049e73a1f73cdbe2e3cef0e",
+    "specification_profile": "ARTIFACT_VERIFICATION_SCOPE_ACCEPTABILITY_V1_3"
+  },
+  "transaction_effect_identities": [
+    {
+      "canonical_transaction_coordinate": 0,
+      "effect_digest": "25ff1e8a883b5212d2c4f235a5ac69214f51cf42ae6be3855c0700c9a6557021",
+      "signature": "3NBwuiJWHperYS8uPbdn1XpaTWApYpta9GaRbmQ6YY92rrviUJn2scxB32qph7v3PZ7mqpaSvdh7wg5mEAWdokd9"
+    },
+    {
+      "canonical_transaction_coordinate": 1,
+      "effect_digest": "f940495908840ada8a73014ef5d7e4c9830f70899b0f28d5ff6357a95e3413e6",
+      "signature": "3NBwuiJWHperYS8uSoRdwc5psqcxJtMp152m4ViDVqGL79f4xu5Q174EmJYCRK4zLr3BZng9PYkpUUxQfaPss4d9"
+    }
+  ]
+}
