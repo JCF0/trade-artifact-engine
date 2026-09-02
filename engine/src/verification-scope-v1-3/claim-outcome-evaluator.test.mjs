@@ -55,17 +55,18 @@ function enumerationPort(slot, rawAmount) {
     },
   });
 }
-async function authorityFixture(openingRaw = '0', endingRaw = '0') {
+async function authorityFixture(openingRaw = '0', endingRaw = '0', mutateFullTransactions = null) {
   const offline = offlineFullTransactionHistoryFixtureV2({
     wallet: JUP_WALLET_V1, retainedBodyNames: ['jup_buy_full', 'jup_sell_full'],
   });
   const legacyAcquisitionResult = await acquireWalletHistoryV2(offline.request, {
     walletHistoryPort: createWalletHistoryPortV2(offline.port, { beginAcquisitionV2() {} }),
   });
-  const fullTransactions = [
+  const fullTransactions = structuredClone([
     DETACHED_RETAINED_FULL_TRANSACTIONS_V1.jup_buy_full,
     DETACHED_RETAINED_FULL_TRANSACTIONS_V1.jup_sell_full,
-  ].sort((left, right) => right.slot - left.slot || right.block_time - left.block_time);
+  ]).sort((left, right) => right.slot - left.slot || right.block_time - left.block_time);
+  if (mutateFullTransactions !== null) mutateFullTransactions(fullTransactions);
   const transactionTranscriptPort = createEvidenceContextTranscriptPortV1({
     async getAuthoritativeTransactionTranscriptV1() {
       return {
@@ -191,7 +192,7 @@ test('transaction evaluation reconstructs source effects and never localizes its
   assert.equal(await validateSourceBoundClaimEvaluationV13({ evaluation, request, source }), true);
 });
 
-test('closed Position Episode remains LIMITED when Slice 2 residuals received only Slice 4 NON_ECONOMIC dispositions', async () => {
+test('claim-affecting target residuals make Position state unavailable despite a closed admitted-event ledger', async () => {
   const fixture = await authorityFixture('0', '0');
   const source = await positionSource(fixture, [
     trade(fixture, 0, 'TARGET_ACQUISITION', '10', '20', true),
@@ -199,13 +200,14 @@ test('closed Position Episode remains LIMITED when Slice 2 residuals received on
   ]);
   const { request, evaluation } = await evaluateRequested('POSITION_EPISODE', source);
   assert.equal(evaluation.claim_outcome, 'LIMITED');
-  assert.equal(evaluation.position_state, 'CLOSED');
+  assert.equal(evaluation.position_state, null);
   assert.ok(evaluation.non_interference_decisions.some(item => item.decision === 'CLAIM_AFFECTING'));
+  assert.equal(evaluation.field_availability.find(item => item.field === 'position_state').availability, 'UNAVAILABLE');
   assert.equal(evaluation.field_availability.find(item => item.field === 'realized_return').availability, 'UNAVAILABLE');
   assert.equal(await validateSourceBoundClaimEvaluationV13({ evaluation, request, source }), true);
 });
 
-test('limited Position projection never promotes a residual-backed event as an established target effect', async () => {
+test('residual-backed target events BLOCK when the limited projection cannot establish every target effect', async () => {
   const fixture = await authorityFixture('0', '10');
   const residualId = fixture.effects.get(0).residual_unresolved_effects[0].residual_id;
   const source = await positionSource(fixture, [sourceAt(fixture, 0, {
@@ -215,12 +217,70 @@ test('limited Position projection never promotes a residual-backed event as an e
     payload: { target_raw_quantity: '10', quote_status: 'EXACT', quote_mint: USDC_MINT_V1, quote_raw_amount: '20' },
   })]);
   const evaluation = (await evaluateRequested('POSITION_EPISODE', source)).evaluation;
-  assert.equal(evaluation.claim_outcome, 'LIMITED');
-  assert.deepEqual(evaluation.established_fields.find(item => item.field === 'established_target_effects').value, []);
-  assert.equal(evaluation.established_fields.find(item => item.field === 'verified_subordinate_effect_references').value.includes(residualId), false);
+  assert.equal(evaluation.claim_outcome, 'BLOCKED');
+  assert.equal(evaluation.position_state, null);
+  assert.deepEqual(evaluation.established_fields, []);
+  assert.ok(evaluation.reason_codes.includes('TRANSACTION_EFFECT_UNRESOLVED'));
+  assert.ok(evaluation.reason_codes.includes('NO_LIMITED_PROJECTION'));
 });
 
-test('OPEN and OPEN_REALIZED_PARTIAL state remains independent from residual-limited outcomes', async () => {
+test('NI-03 exclusion of a residual original shape cannot leave its residual-backed target event without a substantive BLOCKED reason', async () => {
+  const otherMint = providerPublicKey('slice5-ni03-other-mint');
+  const fixture = await authorityFixture('0', '0', fullTransactions => {
+    for (const transaction of fullTransactions) {
+      transaction.pre_token_balances = [];
+      transaction.post_token_balances = [];
+      transaction.instructions = [];
+      transaction.inner_instruction_groups = [];
+    }
+    const transaction = fullTransactions[0];
+    transaction.post_token_balances = [{
+      account_index: 4,
+      account: transaction.accounts[4].address,
+      mint: otherMint,
+      owner: transaction.accounts[0].address,
+      raw_amount: '1',
+      decimals: 6,
+      token_program: TOKEN_PROGRAM,
+    }];
+  });
+  const candidates = [...fixture.effects.entries()].flatMap(([coordinate, effect]) => (
+    effect.residual_unresolved_effects
+      .filter(residual => ['TOKEN_BALANCE_SIDE_MISSING', 'FAILED_TOKEN_BALANCE_OBSERVATION'].includes(residual.reason_code)
+        && residual.mint !== null && residual.mint !== JUP_MINT_V1 && residual.mint !== USDC_MINT_V1
+        && [...new Set([...(residual.accounts ?? []), residual.account].filter(item => item !== null))].length > 0
+        && ![...new Set([...(residual.accounts ?? []), residual.account].filter(item => item !== null))].includes(TARGET_ACCOUNT))
+      .map(residual => ({ coordinate, effect, residual }))
+  ));
+  assert.ok(candidates.length > 0);
+
+  let ni03Evaluation = null;
+  for (const { coordinate, effect, residual } of candidates) {
+    const otherCoordinate = [...fixture.effects.keys()].find(item => item !== coordinate);
+    const orderedCoordinates = [coordinate, otherCoordinate].sort((left, right) => left - right);
+    const source = await positionSource(fixture, orderedCoordinates.map((item, index) => sourceAt(fixture, item, {
+      coordinate: 0,
+      kind: index === 0 ? 'TARGET_ACQUISITION' : 'TARGET_DISPOSAL',
+      sourceEffectIds: [
+        ...allEstablishedRefs(fixture.effects.get(item)),
+        ...(item === coordinate ? [residual.residual_id] : []),
+      ].sort(),
+      payload: { target_raw_quantity: '10', quote_status: 'EXACT', quote_mint: USDC_MINT_V1, quote_raw_amount: '20' },
+    })));
+    const evaluation = (await evaluateRequested('POSITION_EPISODE', source)).evaluation;
+    if (evaluation.non_interference_decisions.some(item => item.applied_rule === 'NI-03')) {
+      ni03Evaluation = evaluation;
+      break;
+    }
+  }
+
+  assert.notEqual(ni03Evaluation, null);
+  assert.equal(ni03Evaluation.claim_outcome, 'BLOCKED');
+  assert.ok(ni03Evaluation.reason_codes.includes('TRANSACTION_EFFECT_UNRESOLVED'));
+  assert.ok(ni03Evaluation.reason_codes.includes('NO_LIMITED_PROJECTION'));
+});
+
+test('claim-affecting residuals make admitted-ledger OPEN states and affected disposal fields unavailable', async () => {
   const fixture = await authorityFixture('0', '11');
   const openSource = await positionSource(fixture, [
     trade(fixture, 0, 'TARGET_ACQUISITION', '10', '20', true),
@@ -228,9 +288,9 @@ test('OPEN and OPEN_REALIZED_PARTIAL state remains independent from residual-lim
   ]);
   const open = (await evaluateRequested('POSITION_EPISODE', openSource)).evaluation;
   assert.equal(open.claim_outcome, 'LIMITED');
-  assert.equal(open.position_state, 'OPEN');
+  assert.equal(open.position_state, null);
   for (const field of ['disposal_proceeds', 'realized_basis_consumed', 'realized_pnl', 'realized_return']) {
-    assert.equal(open.field_availability.find(item => item.field === field).availability, 'NOT_APPLICABLE');
+    assert.equal(open.field_availability.find(item => item.field === field).availability, 'UNAVAILABLE');
   }
 
   const partialFixture = await authorityFixture('0', '6');
@@ -240,23 +300,23 @@ test('OPEN and OPEN_REALIZED_PARTIAL state remains independent from residual-lim
   ]);
   const partial = (await evaluateRequested('POSITION_EPISODE', partialSource)).evaluation;
   assert.equal(partial.claim_outcome, 'LIMITED');
-  assert.equal(partial.position_state, 'OPEN_REALIZED_PARTIAL');
+  assert.equal(partial.position_state, null);
 });
 
-test('CLOSED does not imply VERIFIED when source residuals remain claim-affecting', async () => {
+test('an admitted-ledger CLOSED state is unavailable when source residuals remain claim-affecting', async () => {
   const fixture = await authorityFixture('0', '0');
   const source = await positionSource(fixture, [
     trade(fixture, 0, 'TARGET_ACQUISITION', '10', '20'),
     trade(fixture, 1, 'TARGET_DISPOSAL', '10', '30'),
   ]);
   const evaluation = (await evaluateRequested('POSITION_EPISODE', source)).evaluation;
-  assert.equal(evaluation.position_state, 'CLOSED');
+  assert.equal(evaluation.position_state, null);
   assert.equal(evaluation.claim_outcome, 'LIMITED');
   assert.ok(evaluation.unresolved_dependencies.length > 0);
   assert.ok(evaluation.non_interference_decisions.some(item => item.source_kind === 'TRANSACTION_EFFECT_RESIDUAL'));
 });
 
-test('unknown transfer-in basis remains LIMITED without changing independently derived OPEN state', async () => {
+test('unknown transfer-in basis does not affect state but independent source residuals still make state unavailable', async () => {
   const fixture = await authorityFixture('0', '5');
   const transfer = sourceAt(fixture, 0, {
     coordinate: 0,
@@ -267,14 +327,17 @@ test('unknown transfer-in basis remains LIMITED without changing independently d
   const source = await positionSource(fixture, [transfer]);
   const { evaluation } = await evaluateRequested('POSITION_EPISODE', source);
   assert.equal(evaluation.claim_outcome, 'LIMITED');
-  assert.equal(evaluation.position_state, 'OPEN');
+  assert.equal(evaluation.position_state, null);
   assert.ok(evaluation.reason_codes.includes('TRANSFER_IN_BASIS_UNRESOLVED'));
-  assert.equal(evaluation.field_availability.find(item => item.field === 'position_state').availability, 'AVAILABLE');
+  assert.equal(evaluation.field_availability.find(item => item.field === 'position_state').availability, 'UNAVAILABLE');
+  assert.equal(evaluation.non_interference_decisions.filter(
+    item => item.source_kind === 'POSITION_ECONOMIC_DEPENDENCY',
+  ).every(item => !item.affected_fields.includes('position_state')), true);
   assert.equal(evaluation.field_availability.find(item => item.field === 'remaining_attributable_basis').availability, 'UNAVAILABLE');
-  assert.equal(evaluation.field_availability.find(item => item.field === 'realized_pnl').availability, 'NOT_APPLICABLE');
+  assert.equal(evaluation.field_availability.find(item => item.field === 'realized_pnl').availability, 'UNAVAILABLE');
 });
 
-test('genuine later economic zero restores subsequent basis only, never historical PnL', async () => {
+test('genuine later economic zero restores subsequent basis only while source residuals keep state unavailable', async () => {
   const fixture = await authorityFixture('0', '0');
   const transfer = sourceAt(fixture, 0, {
     coordinate: 0,
@@ -289,7 +352,7 @@ test('genuine later economic zero restores subsequent basis only, never historic
   ]);
   const evaluation = (await evaluateRequested('POSITION_EPISODE', source)).evaluation;
   assert.equal(evaluation.claim_outcome, 'LIMITED');
-  assert.equal(evaluation.position_state, 'CLOSED');
+  assert.equal(evaluation.position_state, null);
   assert.ok(evaluation.reason_codes.includes('TRANSFER_IN_BASIS_UNRESOLVED'));
   assert.equal(evaluation.field_availability.find(item => item.field === 'remaining_attributable_basis').availability, 'UNAVAILABLE');
   for (const field of ['realized_basis_consumed', 'realized_pnl', 'realized_return']) {

@@ -196,6 +196,8 @@ test('exact WAC closes a clean buy and sell with immutable exact economics', asy
   assert.deepEqual(built.remaining_attributable_basis, makeRational('0'));
   assert.equal(built.ending_economic_inventory, '0');
   assert.equal(validatePositionEpisodeStructureV13(built), true);
+  assert.equal(built.position_episode_digest, 'd61e10cb7b66f364a21d3af89e22e7761ab26965dad41b0fa10019ddb1f77291');
+  assert.equal(sha256CanonicalJson(built), '7481f677874e5cddf66f4d2d5953222168c3968c4c17e640f603bf0aa5af7ad9');
   assert.ok(Object.isFrozen(built.ordered_admitted_economic_events[0].basis_after));
 });
 

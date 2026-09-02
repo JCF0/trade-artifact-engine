@@ -189,7 +189,7 @@ function established(field, value, sourceReferences = []) {
     source_references: [...new Set(sourceReferences)].sort(),
   };
 }
-function normalizedResidualReference(effect, residual) {
+export function normalizedResidualReferenceV13(effect, residual) {
   return sha256CanonicalJson({
     evidence_kind: 'TRANSACTION_EFFECT_RESIDUAL',
     transaction_identity: effect.transaction_identity,
@@ -207,7 +207,7 @@ function allProjectedTransactions(context) {
 function residualItem(projected, residual) {
   const transactionResidualReasons = [...new Set(projected.effect.residual_unresolved_effects.map(item => item.reason_code))].sort();
   return {
-    reference_digest: normalizedResidualReference(projected.effect, residual),
+    reference_digest: normalizedResidualReferenceV13(projected.effect, residual),
     source_kind: 'TRANSACTION_EFFECT_RESIDUAL',
     transaction_coordinate: projected.row.canonical_transaction_coordinate,
     transaction_status: projected.effect.finalized_execution_status,
@@ -248,9 +248,12 @@ function dependencyItem(dependency, episode) {
   const eventById = new Map(episode.ordered_admitted_economic_events.map(event => [event.event_id, event]));
   const dependencyEvents = dependency.event_ids.map(id => eventById.get(id)).filter(Boolean);
   const coordinate = dependencyEvents.map(event => event.canonical_transaction_coordinate).sort((a, b) => a - b)[0] ?? null;
-  const dependencyLastEventOrdinal = Math.max(...dependencyEvents.map(event => event.episode_event_ordinal));
+  const dependencyEventOrdinals = dependencyEvents.map(event => event.episode_event_ordinal);
+  const dependencyLastEventOrdinal = dependencyEventOrdinals.length
+    ? Math.max(...dependencyEventOrdinals) : null;
   const basisResetEventOrdinal = episode.ordered_admitted_economic_events
-    .filter(event => event.episode_event_ordinal > dependencyLastEventOrdinal && event.genuine_economic_zero_after)
+    .filter(event => dependencyLastEventOrdinal !== null
+      && event.episode_event_ordinal > dependencyLastEventOrdinal && event.genuine_economic_zero_after)
     .map(event => event.episode_event_ordinal).sort((a, b) => a - b)[0] ?? null;
   return {
     reference_digest: sha256CanonicalJson({ evidence_kind: 'POSITION_ECONOMIC_DEPENDENCY', dependency }),
@@ -299,6 +302,19 @@ function positionClosedCoordinate(episode) {
     .map(event => event.canonical_transaction_coordinate);
   return candidates.length ? Math.max(...candidates) : null;
 }
+function positionZeroOpenCoordinate(episode, items) {
+  const boundary = episode.opening_boundary;
+  if (boundary.zero_status !== 'EXACT_ZERO' || boundary.aggregate_raw_quantity !== '0') return null;
+  if (boundary.boundary_kind === 'TRANSACTION_PRE') {
+    const coordinate = boundary.canonical_transaction_coordinate;
+    if (items.some(item => item.residual_reason !== null
+        && Number.isSafeInteger(item.transaction_coordinate)
+        && item.transaction_coordinate < coordinate)) return null;
+    return coordinate;
+  }
+  if (Object.hasOwn(boundary, 'enumeration_digest')) return 0;
+  return null;
+}
 function deriveDecisions(claimType, profile, source, projected, episode = null) {
   let items = projected.flatMap(item => item.effect.residual_unresolved_effects.map(residual => residualItem(item, residual)));
   if (claimType === 'POSITION_EPISODE') {
@@ -322,7 +338,8 @@ function deriveDecisions(claimType, profile, source, projected, episode = null) 
         exact_quote_mint: claimType === 'POSITION_EPISODE' ? episode.exact_quote_mint : null,
         target_accounts: claimType === 'POSITION_EPISODE' ? targetAccounts(source.context) : [],
         closed_boundary_coordinate: claimType === 'POSITION_EPISODE' ? positionClosedCoordinate(episode) : null,
-        zero_open_boundary_coordinate: null,
+        zero_open_boundary_coordinate: claimType === 'POSITION_EPISODE'
+          ? positionZeroOpenCoordinate(episode, items) : null,
       },
       evidence_items: items,
     }),
@@ -401,11 +418,14 @@ function positionAvailability(episode, values, decisions) {
   const notApplicable = new Set();
   if (episode.position_state === 'OPEN') for (const field of ['disposal_proceeds', 'realized_basis_consumed', 'realized_pnl', 'realized_return']) notApplicable.add(field);
   for (const field of POSITION_FIELD_ORDER) {
-    if (['exclusion_references', 'unresolved_claim_affecting_findings', 'position_state'].includes(field) || notApplicable.has(field)) continue;
+    if (['exclusion_references', 'unresolved_claim_affecting_findings'].includes(field) || notApplicable.has(field)) continue;
     if (values[field] === null) unavailable.add(field);
   }
   for (const decision of decisions) if (decision.decision === 'CLAIM_AFFECTING') for (const field of decision.affected_fields) {
-    if (!notApplicable.has(field) && field !== 'unresolved_claim_affecting_findings' && field !== 'position_state') unavailable.add(field);
+    if (field !== 'unresolved_claim_affecting_findings') {
+      unavailable.add(field);
+      notApplicable.delete(field);
+    }
   }
   if (episode.position_state === null) {
     for (const field of ['ending_target_inventory', 'remaining_attributable_basis']) unavailable.add(field);
@@ -542,20 +562,23 @@ export async function evaluateClaimOutcomeV13(input) {
     value.unresolved_dependencies = unresolvedRows(items, decisions, request.claim_type);
     value.exclusions = exclusions(decisions);
     value.reason_codes = reasons;
-    value.position_state = episode.position_state;
     value.field_availability = positionAvailability(episode, values, decisions);
+    value.position_state = value.field_availability.find(
+      item => item.field === 'position_state',
+    ).availability === 'AVAILABLE' ? episode.position_state : null;
     const unavailable = value.field_availability.some(item => item.availability === 'UNAVAILABLE');
-    if (!unavailable && episode.position_state !== null && reasons.length === 0) {
+    const establishedEffectIds = new Set(projected.flatMap(item => item.effect.established_effects.map(effect => effect.effect_id)));
+    const establishedTargetEffects = episode.ordered_admitted_economic_events.filter(event => (
+      [...event.source_effect_ids, ...event.corroborating_effect_ids].every(effectId => establishedEffectIds.has(effectId))
+    ));
+    const everyTargetEffectEstablished = establishedTargetEffects.length === episode.ordered_admitted_economic_events.length;
+    if (!unavailable && episode.position_state !== null && reasons.length === 0 && everyTargetEffectEstablished) {
       value.claim_outcome = 'VERIFIED';
       value.result_profile = request.claim_profile;
       value.established_fields = POSITION_FIELD_ORDER.filter(field => value.field_availability.find(item => item.field === field).availability !== 'NOT_APPLICABLE').map(field => established(field, values[field], refs));
     } else {
       value.claim_outcome = 'LIMITED';
       value.result_profile = LIMITED_PROFILE_BY_CLAIM_PROFILE[request.claim_profile];
-      const establishedEffectIds = new Set(projected.flatMap(item => item.effect.established_effects.map(effect => effect.effect_id)));
-      const establishedTargetEffects = episode.ordered_admitted_economic_events.filter(event => (
-        [...event.source_effect_ids, ...event.corroborating_effect_ids].every(effectId => establishedEffectIds.has(effectId))
-      ));
       const limitedValues = {
         scope_identity: request.scope_digest,
         acquisition_evidence_identity: source.context.evidence_context_digest,
@@ -566,13 +589,32 @@ export async function evaluateClaimOutcomeV13(input) {
         established_target_effects: establishedTargetEffects,
         verified_subordinate_effect_references: [...new Set(establishedTargetEffects.flatMap(event => [...event.source_effect_ids, ...event.corroborating_effect_ids]))].sort(),
         unresolved_finding_references: value.unresolved_dependencies.map(item => item.reference_digest),
-        position_state: episode.position_state,
+        position_state: value.position_state,
       };
-      const limitedEstablished = new Map(POSITION_LIMITED_FIELDS.map(field => [field, established(field, limitedValues[field], refs)]));
-      for (const field of POSITION_FIELD_ORDER.filter(field => value.field_availability.find(item => item.field === field).availability === 'AVAILABLE')) {
-        if (!limitedEstablished.has(field)) limitedEstablished.set(field, established(field, values[field], refs));
+      const limitedProjectionComplete = POSITION_LIMITED_FIELDS.every(field => (
+        Object.hasOwn(limitedValues, field) && limitedValues[field] !== undefined
+          && (field === 'position_state' || limitedValues[field] !== null)
+      )) && everyTargetEffectEstablished;
+      if (!limitedProjectionComplete) {
+        value.claim_outcome = 'BLOCKED';
+        value.result_profile = null;
+        value.authoritative_evidence_identities = [];
+        value.derived_boundary_identities = [];
+        value.field_availability = [];
+        value.established_fields = [];
+        value.reason_codes = normalizeReasonCodes([
+          ...reasons,
+          ...(!everyTargetEffectEstablished ? ['TRANSACTION_EFFECT_UNRESOLVED'] : []),
+          'NO_LIMITED_PROJECTION',
+        ]);
+        value.position_state = null;
+      } else {
+        const limitedEstablished = new Map(POSITION_LIMITED_FIELDS.map(field => [field, established(field, limitedValues[field], refs)]));
+        for (const field of POSITION_FIELD_ORDER.filter(field => value.field_availability.find(item => item.field === field).availability === 'AVAILABLE')) {
+          if (!limitedEstablished.has(field)) limitedEstablished.set(field, established(field, values[field], refs));
+        }
+        value.established_fields = [...limitedEstablished.values()].sort((a, b) => a.field.localeCompare(b.field));
       }
-      value.established_fields = [...limitedEstablished.values()].sort((a, b) => a.field.localeCompare(b.field));
     }
   } else {
     const { items, decisions } = deriveDecisions(request.claim_type, request.claim_profile, source, projected);

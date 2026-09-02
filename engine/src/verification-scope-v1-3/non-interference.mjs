@@ -143,8 +143,14 @@ function normalizeItem(value) {
     if (item.residual_reason !== null && !item.transaction_residual_reasons.includes(item.residual_reason)) fail('residual_item_semantics_invalid', 'transaction residual population omits the current residual reason');
   } else if (item.source_kind === 'POSITION_ECONOMIC_DEPENDENCY') {
     if (item.dependency_code === null || item.residual_reason !== null || item.transaction_status !== null || item.established_effect_kinds.length !== 0 || item.transaction_residual_reasons.length !== 0) fail('dependency_item_semantics_invalid', 'position dependency fields are incomplete or contradictory');
-    if (item.dependency_last_event_ordinal === null
-        || (item.basis_reset_event_ordinal !== null && item.basis_reset_event_ordinal <= item.dependency_last_event_ordinal)) fail('dependency_interval_invalid', 'position dependency interval is invalid');
+    const unresolvedOpeningBasis = item.dependency_code === 'OPENING_BASIS_UNRESOLVED'
+      && item.transaction_coordinate === null && item.dependency_last_event_ordinal === null
+      && item.basis_reset_event_ordinal === null;
+    if (!unresolvedOpeningBasis && (item.dependency_last_event_ordinal === null
+        || (item.basis_reset_event_ordinal !== null
+          && item.basis_reset_event_ordinal <= item.dependency_last_event_ordinal))) {
+      fail('dependency_interval_invalid', 'position dependency interval is invalid');
+    }
   } else if (item.dependency_last_event_ordinal !== null || item.basis_reset_event_ordinal !== null || item.transaction_residual_reasons.length !== 0) {
     fail('dependency_interval_invalid', 'only position dependencies may carry economic interval ordinals');
   }

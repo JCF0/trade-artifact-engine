@@ -12,7 +12,7 @@ import { projectSolanaFullTransactionEffectV13 } from './solana-full-transaction
 import {
   buildStructuralPositionEconomicEventsV13, validateCanonicalPositionEconomicEventsStructureV13,
 } from './position-economic-event.mjs';
-import { isSolanaPublicKeyV1 } from '../wallet-acquisition/solana-identities.mjs';
+import { isSolanaPublicKeyV1, isSolanaSignatureV1 } from '../wallet-acquisition/solana-identities.mjs';
 
 export const POSITION_EPISODE_VERSION_V1_3 = 'artifact_position_episode_v1_3';
 export const POSITION_EPISODE_PROFILE_V1_3 = 'ARTIFACT_POSITION_EPISODE_V1';
@@ -48,7 +48,11 @@ const TOP_FIELDS = [
 const CONTEXT_IDENTITY_FIELDS = [
   'evidence_context_profile', 'evidence_context_digest', 'transaction_population_digest',
 ];
-const BOUNDARY_FIELDS = ['slot', 'enumeration_digest', 'aggregate_raw_quantity', 'zero_status'];
+const SNAPSHOT_BOUNDARY_FIELDS = ['slot', 'enumeration_digest', 'aggregate_raw_quantity', 'zero_status'];
+const DERIVED_BOUNDARY_FIELDS = [
+  'boundary_kind', 'canonical_transaction_coordinate', 'transaction_identity',
+  'aggregate_raw_quantity', 'zero_status', 'boundary_digest',
+];
 const PROJECTED_EVENT_FIELDS = [
   'event_id', 'episode_event_ordinal', 'transaction_identity', 'canonical_transaction_coordinate',
   'authoritative_intra_transaction_coordinate', 'event_kind', 'payload', 'source_effect_ids',
@@ -193,13 +197,34 @@ function episodeDigestPreimage(value) {
   for (const field of TOP_FIELDS) if (!['episode_id', 'position_episode_digest'].includes(field)) result[field] = value[field];
   return result;
 }
-function boundary(snapshot) {
+function snapshotBoundary(snapshot) {
   return {
     slot: snapshot.boundary.slot,
     enumeration_digest: snapshot.enumeration_digest,
     aggregate_raw_quantity: snapshot.aggregate_raw_quantity,
     zero_status: snapshot.zero_status,
   };
+}
+function derivedEpisodeBoundary(kind, context, transactionRow, zeroStatus = 'EXACT_ZERO') {
+  const value = {
+    boundary_kind: kind,
+    canonical_transaction_coordinate: transactionRow.canonical_transaction_coordinate,
+    transaction_identity: {
+      signature: transactionRow.source_identity.signature,
+      slot: transactionRow.source_identity.slot,
+      block_time: transactionRow.source_identity.block_time,
+      transaction_version: transactionRow.full_transaction.transaction_version,
+    },
+    aggregate_raw_quantity: '0',
+    zero_status: zeroStatus,
+    boundary_digest: null,
+  };
+  value.boundary_digest = sha256CanonicalJson({
+    boundary_identity_profile: 'ARTIFACT_DERIVED_EPISODE_BOUNDARY_V1',
+    evidence_context_digest: context.evidence_context_digest,
+    boundary: withoutDigest(value, 'boundary_digest'),
+  });
+  return value;
 }
 function eventTransactions(context) {
   return [...context.transaction_population.transactions]
@@ -282,7 +307,7 @@ function validateBuildInput(input, fields = INPUT_FIELDS) {
   return descriptors;
 }
 
-export async function buildPositionEpisodeV13(input) {
+async function buildPositionEpisodeFromLedgerV13(input, options = null) {
   validateBuildInput(input);
   validateAuthoritativeEvidenceContextStructureV13(input.evidence_context);
   if (!isSolanaPublicKeyV1(input.exact_quote_mint)) {
@@ -301,11 +326,34 @@ export async function buildPositionEpisodeV13(input) {
     exact_quote_mint: input.exact_quote_mint,
   });
   validateEconomicEvidence(evidence, { context, exactQuoteMint: input.exact_quote_mint, transactions });
-  const canonicalEvents = buildStructuralPositionEconomicEventsV13({
+  const allCanonicalEvents = buildStructuralPositionEconomicEventsV13({
     transactions,
     source_events: evidence.source_events,
   });
-  const opening = validateOpeningBasis(context, evidence.opening_basis_evidence, input.exact_quote_mint);
+  const capturedOpening = validateOpeningBasis(context, evidence.opening_basis_evidence, input.exact_quote_mint);
+  const canonicalEvents = options === null || options.sourceEvents === null ? allCanonicalEvents : {
+    position_economic_event_version: allCanonicalEvents.position_economic_event_version,
+    events: options.sourceEvents.map((event, index) => ({ ...event, episode_event_ordinal: index })),
+  };
+  validateCanonicalPositionEconomicEventsStructureV13(canonicalEvents);
+  const canonicalEconomicEvidenceDigest = sha256CanonicalJson({
+    economic_evidence_profile: evidence.economic_evidence_profile,
+    evidence_context_digest: evidence.evidence_context_digest,
+    exact_quote_mint: evidence.exact_quote_mint,
+    opening_basis_evidence: evidence.opening_basis_evidence,
+    ordered_source_events: allCanonicalEvents.events,
+    effect_dispositions: [...evidence.effect_dispositions]
+      .sort((left, right) => left.effect_id < right.effect_id ? -1 : left.effect_id > right.effect_id ? 1 : 0),
+  });
+  if (options?.expectedCanonicalEvidenceDigest !== undefined
+      && options.expectedCanonicalEvidenceDigest !== canonicalEconomicEvidenceDigest) {
+    fail('position_economic_evidence_changed', 'economic evidence changed during exhaustive episode reconstruction');
+  }
+  const opening = options?.opening ?? capturedOpening;
+  const openingInventory = options?.openingInventory ?? context.opening_snapshot.aggregate_raw_quantity;
+  const openingBoundary = options?.openingBoundary ?? snapshotBoundary(context.opening_snapshot);
+  const endingBoundary = options?.endingBoundary ?? snapshotBoundary(context.ending_snapshot);
+  const expectedEndingCustody = options?.expectedEndingCustody ?? context.ending_snapshot.aggregate_raw_quantity;
   const dependencies = new Map();
   if (opening.dependency !== null) dependencies.set(dependencyKey(opening.dependency), opening.dependency);
   for (const event of canonicalEvents.events) {
@@ -338,9 +386,9 @@ export async function buildPositionEpisodeV13(input) {
   }
 
   const state = {
-    inventory: BigInt(context.opening_snapshot.aggregate_raw_quantity),
+    inventory: BigInt(openingInventory),
     inventoryKnown: true,
-    custody: BigInt(context.opening_snapshot.aggregate_raw_quantity),
+    custody: BigInt(openingInventory),
     basis: opening.basis,
   };
   const openingBasis = state.basis;
@@ -437,7 +485,7 @@ export async function buildPositionEpisodeV13(input) {
     }));
   }
 
-  if (state.custody.toString() !== context.ending_snapshot.aggregate_raw_quantity) {
+  if (state.custody.toString() !== expectedEndingCustody) {
     fail('ending_inventory_mismatch', 'economic events do not reconcile authoritative ending wallet custody');
   }
   if (mixedQuote) {
@@ -477,14 +525,15 @@ export async function buildPositionEpisodeV13(input) {
     },
     economic_evidence_identity: {
       economic_evidence_profile: evidence.economic_evidence_profile,
-      economic_evidence_digest: evidence.economic_evidence_digest,
+      economic_evidence_digest: options?.canonicalEvidenceIdentity
+        ? canonicalEconomicEvidenceDigest : evidence.economic_evidence_digest,
     },
     analyzed_wallet: context.analyzed_wallet,
     target_mint: context.target_mint,
     exact_quote_mint: input.exact_quote_mint,
-    opening_boundary: boundary(context.opening_snapshot),
-    ending_boundary: boundary(context.ending_snapshot),
-    opening_inventory: context.opening_snapshot.aggregate_raw_quantity,
+    opening_boundary: openingBoundary,
+    ending_boundary: endingBoundary,
+    opening_inventory: openingInventory,
     opening_attributable_basis: openingBasis,
     ordered_admitted_economic_events: projected,
     acquisition_event_ids: canonicalEvents.events.filter(event => event.event_kind === 'TARGET_ACQUISITION').map(event => event.event_id),
@@ -510,6 +559,157 @@ export async function buildPositionEpisodeV13(input) {
   return result;
 }
 
+export async function buildPositionEpisodeV13(input) {
+  return buildPositionEpisodeFromLedgerV13(input);
+}
+
+function canonicalEventCore(event) {
+  return Object.fromEntries(PROJECTED_EVENT_FIELDS.slice(0, 11).map(field => [field, event[field]]));
+}
+function transactionEstablishesPositiveInventory(events) {
+  return events.some(event => event.economic_inventory_after !== null
+    && BigInt(event.economic_inventory_after) > 0n);
+}
+
+export async function buildEnumeratedPositionEpisodesV13(input) {
+  const fullProjection = await buildPositionEpisodeFromLedgerV13(input, {
+    sourceEvents: null,
+    canonicalEvidenceIdentity: true,
+  });
+  const context = input.evidence_context;
+  const rows = [...context.transaction_population.transactions]
+    .sort((left, right) => left.canonical_transaction_coordinate - right.canonical_transaction_coordinate);
+  const residualCoordinates = new Set(rows.filter(row => projectSolanaFullTransactionEffectV13({
+    wallet: context.analyzed_wallet,
+    transaction: row.full_transaction,
+  }).residual_unresolved_effects.length > 0).map(row => row.canonical_transaction_coordinate));
+  const eventsByCoordinate = new Map(rows.map(row => [
+    row.canonical_transaction_coordinate,
+    fullProjection.ordered_admitted_economic_events.filter(
+      event => event.canonical_transaction_coordinate === row.canonical_transaction_coordinate,
+    ),
+  ]));
+  const spans = [];
+  const transactionPartition = [];
+  let lastGenuineZeroCoordinate = null;
+  let active = BigInt(context.opening_snapshot.aggregate_raw_quantity) > 0n
+    ? {
+      start: rows.length === 0 ? null : 0,
+      opening_from_scope: true,
+      opening_zero_exact: false,
+      unresolved_since_open: false,
+    } : null;
+
+  for (const row of rows) {
+    const coordinate = row.canonical_transaction_coordinate;
+    const events = eventsByCoordinate.get(coordinate);
+    if (active === null && transactionEstablishesPositiveInventory(events)) {
+      active = {
+        start: coordinate,
+        opening_from_scope: coordinate === 0,
+        opening_zero_exact: coordinate === 0 || lastGenuineZeroCoordinate === coordinate - 1,
+        unresolved_since_open: residualCoordinates.has(coordinate),
+      };
+    }
+    if (active === null) {
+      transactionPartition.push({
+        canonical_transaction_coordinate: coordinate,
+        transaction_disposition: 'OUTSIDE_EPISODE',
+        episode_ordinal: null,
+      });
+      continue;
+    }
+    if (residualCoordinates.has(coordinate)) active.unresolved_since_open = true;
+    transactionPartition.push({
+      canonical_transaction_coordinate: coordinate,
+      transaction_disposition: 'EPISODE_SPAN_MEMBER',
+      episode_ordinal: spans.length,
+    });
+    if (events.some(event => event.genuine_economic_zero_after)) {
+      spans.push({
+        ...active,
+        end: coordinate,
+        closed: true,
+        closing_zero_exact: !active.unresolved_since_open,
+      });
+      lastGenuineZeroCoordinate = active.unresolved_since_open ? null : coordinate;
+      active = null;
+    }
+  }
+  if (active !== null) spans.push({
+    ...active,
+    end: rows.length === 0 ? null : rows.at(-1).canonical_transaction_coordinate,
+    closed: false,
+  });
+
+  const episodes = [];
+  for (const span of spans) {
+    const sourceEvents = fullProjection.ordered_admitted_economic_events
+      .filter(event => (span.start === null || event.canonical_transaction_coordinate >= span.start)
+        && (span.end === null || event.canonical_transaction_coordinate <= span.end))
+      .map(canonicalEventCore);
+    const openingRow = span.start === null ? null : rows[span.start];
+    const endingRow = span.end === null ? null : rows[span.end];
+    const openingDependency = fullProjection.unresolved_economic_dependencies.find(
+      dependency => dependency.dependency_code === 'OPENING_BASIS_UNRESOLVED',
+    ) ?? null;
+    episodes.push(await buildPositionEpisodeFromLedgerV13(input, {
+      sourceEvents,
+      canonicalEvidenceIdentity: true,
+      expectedCanonicalEvidenceDigest: fullProjection.economic_evidence_identity.economic_evidence_digest,
+      opening: span.opening_from_scope
+        ? { basis: fullProjection.opening_attributable_basis, dependency: openingDependency }
+        : { basis: ZERO, dependency: null },
+      openingInventory: span.opening_from_scope ? context.opening_snapshot.aggregate_raw_quantity : '0',
+      openingBoundary: span.opening_from_scope
+        ? snapshotBoundary(context.opening_snapshot)
+        : derivedEpisodeBoundary('TRANSACTION_PRE', context, openingRow,
+          span.opening_zero_exact ? 'EXACT_ZERO' : 'ECONOMIC_ZERO_UNRESOLVED'),
+      endingBoundary: span.closed
+        ? derivedEpisodeBoundary('TRANSACTION_POST', context, endingRow,
+          span.closing_zero_exact ? 'EXACT_ZERO' : 'ECONOMIC_ZERO_UNRESOLVED')
+        : snapshotBoundary(context.ending_snapshot),
+      expectedEndingCustody: span.closed ? '0' : context.ending_snapshot.aggregate_raw_quantity,
+    }));
+  }
+  return cloneAndFreeze({
+    economic_evidence_identity: fullProjection.economic_evidence_identity,
+    transaction_partition: transactionPartition,
+    episodes,
+  });
+}
+
+function validatePositionBoundary(value, context, evidenceContextDigest) {
+  const fields = Object.keys(Object.getOwnPropertyDescriptors(value));
+  if (fields.length === SNAPSHOT_BOUNDARY_FIELDS.length
+      && fields.every(field => SNAPSHOT_BOUNDARY_FIELDS.includes(field))) {
+    assertExactFields(value, SNAPSHOT_BOUNDARY_FIELDS, context);
+    raw(value.aggregate_raw_quantity, `${context}.aggregate_raw_quantity`);
+    return;
+  }
+  assertExactFields(value, DERIVED_BOUNDARY_FIELDS, context);
+  if (!['TRANSACTION_PRE', 'TRANSACTION_POST'].includes(value.boundary_kind)
+      || !Number.isSafeInteger(value.canonical_transaction_coordinate)
+      || value.canonical_transaction_coordinate < 0 || Object.is(value.canonical_transaction_coordinate, -0)) {
+    fail('invalid_derived_episode_boundary', `${context} coordinate is invalid`);
+  }
+  assertExactFields(value.transaction_identity, ['signature', 'slot', 'block_time', 'transaction_version'], `${context}.transaction_identity`);
+  if (!isSolanaSignatureV1(value.transaction_identity.signature)
+      || !Number.isSafeInteger(value.transaction_identity.slot) || value.transaction_identity.slot < 0
+      || !Number.isSafeInteger(value.transaction_identity.block_time) || value.transaction_identity.block_time < 0
+      || !['legacy', 0].includes(value.transaction_identity.transaction_version)
+      || value.aggregate_raw_quantity !== '0'
+      || !['EXACT_ZERO', 'ECONOMIC_ZERO_UNRESOLVED'].includes(value.zero_status)) {
+    fail('invalid_derived_episode_boundary', `${context} is not a valid derived episode boundary`);
+  }
+  const expected = sha256CanonicalJson({
+    boundary_identity_profile: 'ARTIFACT_DERIVED_EPISODE_BOUNDARY_V1',
+    evidence_context_digest: evidenceContextDigest,
+    boundary: withoutDigest(value, 'boundary_digest'),
+  });
+  if (value.boundary_digest !== expected) fail('invalid_derived_episode_boundary', `${context} identity is invalid`);
+}
+
 export function validatePositionEpisodeStructureV13(value) {
   assertExactFields(value, TOP_FIELDS, 'position_episode');
   if (value.position_episode_version !== POSITION_EPISODE_VERSION_V1_3
@@ -524,10 +724,8 @@ export function validatePositionEpisodeStructureV13(value) {
       || !DIGEST.test(value.economic_evidence_identity.economic_evidence_digest)) {
     fail('invalid_position_economic_evidence_identity', 'position economic evidence identity is invalid');
   }
-  for (const boundaryValue of [value.opening_boundary, value.ending_boundary]) {
-    assertExactFields(boundaryValue, BOUNDARY_FIELDS, 'position_boundary');
-    raw(boundaryValue.aggregate_raw_quantity, 'position_boundary.aggregate_raw_quantity');
-  }
+  validatePositionBoundary(value.opening_boundary, 'opening_boundary', value.evidence_context_identity.evidence_context_digest);
+  validatePositionBoundary(value.ending_boundary, 'ending_boundary', value.evidence_context_identity.evidence_context_digest);
   raw(value.opening_inventory, 'opening_inventory');
   raw(value.ending_wallet_custody, 'ending_wallet_custody');
   if (value.ending_economic_inventory !== null) raw(value.ending_economic_inventory, 'ending_economic_inventory');
@@ -574,8 +772,13 @@ export async function validateSourceBoundPositionEpisodeV13(input) {
     exact_quote_mint: input.exact_quote_mint,
     economic_evidence_port: input.economic_evidence_port,
   });
-  if (canonicalJson(expected) !== canonicalJson(input.episode)) {
-    fail('position_episode_source_mismatch', 'position episode does not match authoritative dependencies');
-  }
+  if (canonicalJson(expected) === canonicalJson(input.episode)) return true;
+  const enumerated = await buildEnumeratedPositionEpisodesV13({
+    evidence_context: input.evidence_context,
+    exact_quote_mint: input.exact_quote_mint,
+    economic_evidence_port: input.economic_evidence_port,
+  });
+  const matches = enumerated.episodes.filter(episode => canonicalJson(episode) === canonicalJson(input.episode));
+  if (matches.length !== 1) fail('position_episode_source_mismatch', 'position episode does not match authoritative dependencies');
   return true;
 }
