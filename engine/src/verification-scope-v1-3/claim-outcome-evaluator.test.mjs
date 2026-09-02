@@ -94,6 +94,12 @@ async function authorityFixture(openingRaw = '0', endingRaw = '0', mutateFullTra
 }
 function refs(effect, count = 1) { return effect.established_effects.slice(0, count).map(item => item.effect_id).sort(); }
 function allEstablishedRefs(effect) { return effect.established_effects.map(item => item.effect_id).sort(); }
+function positionEconomicRefs(effect) {
+  return effect.established_effects
+    .filter(item => item.effect_kind === 'token_balance_observation'
+      && [JUP_MINT_V1, USDC_MINT_V1].includes(item.mint))
+    .map(item => item.effect_id).sort();
+}
 function sourceAt(fixture, txCoordinate, { coordinate, kind, payload, sourceEffectIds = refs(fixture.effects.get(txCoordinate)), dependencies = [] }) {
   const effect = fixture.effects.get(txCoordinate);
   return {
@@ -189,6 +195,39 @@ test('transaction evaluation reconstructs source effects and never localizes its
   assert.equal(evaluation.position_state, null);
   assert.ok(evaluation.established_fields.some(item => item.field === (evaluation.claim_outcome === 'VERIFIED' ? 'committed_effects' : 'established_effects')));
   assert.equal(evaluation.non_interference_decisions.every(item => item.decision === 'CLAIM_AFFECTING'), true);
+  assert.equal(await validateSourceBoundClaimEvaluationV13({ evaluation, request, source }), true);
+});
+
+test('source-bound NON_ECONOMIC fee/native dispositions resolve Position completeness without promoting Transaction claims or becoming NI exclusions', async () => {
+  const fixture = await authorityFixture('0', '0', fullTransactions => {
+    for (const transaction of fullTransactions) {
+      transaction.instructions = [];
+      transaction.inner_instruction_groups = [];
+    }
+  });
+  const source = await positionSource(fixture, [
+    trade(fixture, 0, 'TARGET_ACQUISITION', '10', '20'),
+    trade(fixture, 1, 'TARGET_DISPOSAL', '10', '30'),
+  ].map((event, coordinate) => ({
+    ...event,
+    source_effect_ids: positionEconomicRefs(fixture.effects.get(coordinate)),
+  })));
+  const transactionRow = fixture.evidenceContext.transaction_population.transactions[0];
+  const transactionSource = {
+    context: fixture.evidenceContext,
+    context_authority: fixture.contextAuthority,
+    transaction_signature: transactionRow.source_identity.signature,
+  };
+  const transactionBefore = (await evaluateRequested('TRANSACTION_EFFECT', transactionSource)).evaluation;
+  const { request, evaluation } = await evaluateRequested('POSITION_EPISODE', source);
+
+  assert.equal(evaluation.claim_outcome, 'VERIFIED');
+  assert.equal(evaluation.position_state, 'CLOSED');
+  assert.deepEqual(evaluation.unresolved_dependencies, []);
+  assert.deepEqual(evaluation.non_interference_decisions, []);
+  assert.deepEqual(evaluation.exclusions, []);
+  assert.equal((await evaluateRequested('TRANSACTION_EFFECT', transactionSource)).evaluation.evaluation_digest,
+    transactionBefore.evaluation_digest);
   assert.equal(await validateSourceBoundClaimEvaluationV13({ evaluation, request, source }), true);
 });
 

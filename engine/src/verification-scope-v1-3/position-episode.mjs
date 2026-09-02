@@ -307,7 +307,7 @@ function validateBuildInput(input, fields = INPUT_FIELDS) {
   return descriptors;
 }
 
-async function buildPositionEpisodeFromLedgerV13(input, options = null) {
+async function captureValidatedPositionEconomicEvidence(input) {
   validateBuildInput(input);
   validateAuthoritativeEvidenceContextStructureV13(input.evidence_context);
   if (!isSolanaPublicKeyV1(input.exact_quote_mint)) {
@@ -331,11 +331,6 @@ async function buildPositionEpisodeFromLedgerV13(input, options = null) {
     source_events: evidence.source_events,
   });
   const capturedOpening = validateOpeningBasis(context, evidence.opening_basis_evidence, input.exact_quote_mint);
-  const canonicalEvents = options === null || options.sourceEvents === null ? allCanonicalEvents : {
-    position_economic_event_version: allCanonicalEvents.position_economic_event_version,
-    events: options.sourceEvents.map((event, index) => ({ ...event, episode_event_ordinal: index })),
-  };
-  validateCanonicalPositionEconomicEventsStructureV13(canonicalEvents);
   const canonicalEconomicEvidenceDigest = sha256CanonicalJson({
     economic_evidence_profile: evidence.economic_evidence_profile,
     evidence_context_digest: evidence.evidence_context_digest,
@@ -345,6 +340,27 @@ async function buildPositionEpisodeFromLedgerV13(input, options = null) {
     effect_dispositions: [...evidence.effect_dispositions]
       .sort((left, right) => left.effect_id < right.effect_id ? -1 : left.effect_id > right.effect_id ? 1 : 0),
   });
+  return { context, evidence, allCanonicalEvents, capturedOpening, canonicalEconomicEvidenceDigest };
+}
+
+export async function recaptureValidatedPositionEconomicEvidenceV13(input) {
+  const captured = await captureValidatedPositionEconomicEvidence(input);
+  return cloneAndFreeze({
+    economic_evidence: captured.evidence,
+    canonical_economic_evidence_digest: captured.canonicalEconomicEvidenceDigest,
+  });
+}
+
+async function buildPositionEpisodeFromLedgerV13(input, options = null) {
+  const captured = await captureValidatedPositionEconomicEvidence(input);
+  const {
+    context, evidence, allCanonicalEvents, capturedOpening, canonicalEconomicEvidenceDigest,
+  } = captured;
+  const canonicalEvents = options === null || options.sourceEvents === null ? allCanonicalEvents : {
+    position_economic_event_version: allCanonicalEvents.position_economic_event_version,
+    events: options.sourceEvents.map((event, index) => ({ ...event, episode_event_ordinal: index })),
+  };
+  validateCanonicalPositionEconomicEventsStructureV13(canonicalEvents);
   if (options?.expectedCanonicalEvidenceDigest !== undefined
       && options.expectedCanonicalEvidenceDigest !== canonicalEconomicEvidenceDigest) {
     fail('position_economic_evidence_changed', 'economic evidence changed during exhaustive episode reconstruction');

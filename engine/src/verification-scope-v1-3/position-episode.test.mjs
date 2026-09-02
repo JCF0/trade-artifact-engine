@@ -459,6 +459,21 @@ test('authority response must exhaust every effect and opening basis digest must
     })),
     error => error.code === 'incomplete_effect_disposition',
   );
+  await assert.rejects(
+    () => buildPositionEpisodeV13(buildInput(zeroFixture, [], null, USDC_MINT_V1, evidence => {
+      evidence.effect_dispositions[1].effect_id = evidence.effect_dispositions[0].effect_id;
+      return rehashEconomicEvidence(evidence);
+    })),
+    error => error.code === 'noncanonical_effect_disposition',
+  );
+  await assert.rejects(
+    () => buildPositionEpisodeV13(buildInput(zeroFixture, [], null, USDC_MINT_V1, evidence => {
+      evidence.effect_dispositions[0].effect_id = `effect-${'f'.repeat(64)}`;
+      evidence.effect_dispositions.sort((left, right) => left.effect_id.localeCompare(right.effect_id));
+      return rehashEconomicEvidence(evidence);
+    })),
+    error => error.code === 'noncanonical_effect_disposition',
+  );
 
   const basisEvidence = openingBasis('20');
   const positiveFixture = await authorityFixture('10', '0', basisEvidence);
@@ -492,5 +507,17 @@ test('source-bound validation reconstructs economics and rejects a self-rehashed
   await assert.rejects(
     () => validateSourceBoundPositionEpisodeV13({ episode: forged, ...input }),
     error => error.code === 'position_episode_source_mismatch',
+  );
+
+  const forgedDispositionInput = buildInput(fixture, [trade(fixture, 0, 'TARGET_ACQUISITION', '1', '2')], null, USDC_MINT_V1, evidence => {
+    const primary = evidence.effect_dispositions.find(item => item.disposition === 'PRIMARY');
+    primary.disposition = 'NON_ECONOMIC';
+    primary.event_locator = null;
+    primary.reason_code = 'NO_POSITION_ECONOMIC_EFFECT';
+    return rehashEconomicEvidence(evidence);
+  });
+  await assert.rejects(
+    () => validateSourceBoundPositionEpisodeV13({ episode: built, ...forgedDispositionInput }),
+    error => error.code === 'invalid_object',
   );
 });

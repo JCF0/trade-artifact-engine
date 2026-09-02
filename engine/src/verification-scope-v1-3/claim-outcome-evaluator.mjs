@@ -30,7 +30,10 @@ import {
   validateAuthoritativeEvidenceContextStructureV13,
 } from './authoritative-evidence-context.mjs';
 import { projectSolanaFullTransactionEffectV13 } from './solana-full-transaction-effect-projector.mjs';
-import { validateSourceBoundPositionEpisodeV13 } from './position-episode.mjs';
+import {
+  recaptureValidatedPositionEconomicEvidenceV13,
+  validateSourceBoundPositionEpisodeV13,
+} from './position-episode.mjs';
 import { validateWalletAcquisitionResultV1 } from '../candidate-set/acquisition-result.mjs';
 
 export const CLAIM_EVALUATION_VERSION = 'artifact_claim_evaluation_v1_3';
@@ -315,10 +318,13 @@ function positionZeroOpenCoordinate(episode, items) {
   if (Object.hasOwn(boundary, 'enumeration_digest')) return 0;
   return null;
 }
-function deriveDecisions(claimType, profile, source, projected, episode = null) {
+function deriveDecisions(claimType, profile, source, projected, episode = null, nonEconomicEffectIds = new Set()) {
   let items = projected.flatMap(item => item.effect.residual_unresolved_effects.map(residual => residualItem(item, residual)));
   if (claimType === 'POSITION_EPISODE') {
-    const resolvedEffectIds = new Set(episode.ordered_admitted_economic_events.flatMap(event => [...event.source_effect_ids, ...event.corroborating_effect_ids]));
+    const resolvedEffectIds = new Set([
+      ...episode.ordered_admitted_economic_events.flatMap(event => [...event.source_effect_ids, ...event.corroborating_effect_ids]),
+      ...nonEconomicEffectIds,
+    ]);
     items = projected.flatMap(item => [
       ...item.effect.established_effects.filter(effect => !resolvedEffectIds.has(effect.effect_id)).map(effect => unclassifiedEffectItem(item, effect)),
       ...item.effect.residual_unresolved_effects.map(residual => residualItem(item, residual)),
@@ -492,6 +498,7 @@ async function reconstructSource(request, source) {
   validateWalletAcquisitionResultV1(source.context_authority.legacy_acquisition_result);
   if (sha256CanonicalJson(source.context_authority.legacy_acquisition_result) !== source.context.transaction_population.legacy_acquisition_result_digest) fail('legacy_acquisition_source_mismatch', 'legacy acquisition result does not match evidence context');
   const projected = allProjectedTransactions(source.context);
+  let positionEvidence = null;
   if (request.claim_type === 'POSITION_EPISODE') {
     await validateSourceBoundPositionEpisodeV13({
       episode: source.episode,
@@ -499,8 +506,18 @@ async function reconstructSource(request, source) {
       exact_quote_mint: source.exact_quote_mint,
       economic_evidence_port: source.economic_evidence_port,
     });
+    positionEvidence = await recaptureValidatedPositionEconomicEvidenceV13({
+      evidence_context: source.context,
+      exact_quote_mint: source.exact_quote_mint,
+      economic_evidence_port: source.economic_evidence_port,
+    });
+    const episodeEvidenceDigest = source.episode.economic_evidence_identity.economic_evidence_digest;
+    if (![positionEvidence.economic_evidence.economic_evidence_digest,
+      positionEvidence.canonical_economic_evidence_digest].includes(episodeEvidenceDigest)) {
+      fail('position_economic_evidence_changed', 'recaptured economic evidence does not match the validated episode identity');
+    }
   }
-  return projected;
+  return { projected, positionEvidence };
 }
 
 export async function evaluateClaimOutcomeV13(input) {
@@ -512,7 +529,7 @@ export async function evaluateClaimOutcomeV13(input) {
   }
   if (top.source === null) fail('scope_source_required', 'requested claims require authoritative source binding');
   const source = validateSourceShape(top.source, request.claim_type);
-  const projected = await reconstructSource(request, source);
+  const { projected, positionEvidence } = await reconstructSource(request, source);
   const value = buildBase(request);
   const refs = sourceRefs(source, projected, request.claim_type === 'POSITION_EPISODE' ? source.episode : null);
   value.authoritative_evidence_identities = evidenceIdentities(source, projected, request.claim_type === 'POSITION_EPISODE' ? source.episode : null);
@@ -551,7 +568,13 @@ export async function evaluateClaimOutcomeV13(input) {
     }
   } else if (request.claim_type === 'POSITION_EPISODE') {
     const episode = source.episode;
-    const { items, decisions } = deriveDecisions(request.claim_type, request.claim_profile, source, projected, episode);
+    const establishedEffectIds = new Set(projected.flatMap(item => item.effect.established_effects.map(effect => effect.effect_id)));
+    const nonEconomicEffectIds = new Set(positionEvidence.economic_evidence.effect_dispositions
+      .filter(item => item.disposition === 'NON_ECONOMIC' && establishedEffectIds.has(item.effect_id))
+      .map(item => item.effect_id));
+    const { items, decisions } = deriveDecisions(
+      request.claim_type, request.claim_profile, source, projected, episode, nonEconomicEffectIds,
+    );
     const reasons = reasonsFor(items, decisions, request.claim_type);
     const values = positionValues(request.scope_digest, episode, decisions);
     value.derived_boundary_identities = [
@@ -567,7 +590,6 @@ export async function evaluateClaimOutcomeV13(input) {
       item => item.field === 'position_state',
     ).availability === 'AVAILABLE' ? episode.position_state : null;
     const unavailable = value.field_availability.some(item => item.availability === 'UNAVAILABLE');
-    const establishedEffectIds = new Set(projected.flatMap(item => item.effect.established_effects.map(effect => effect.effect_id)));
     const establishedTargetEffects = episode.ordered_admitted_economic_events.filter(event => (
       [...event.source_effect_ids, ...event.corroborating_effect_ids].every(effectId => establishedEffectIds.has(effectId))
     ));
