@@ -80,8 +80,78 @@ test('v1.14 TAP parser accepts one complete dense passing stream', () => {
   });
 });
 
+const COMPATIBILITY_PROBE_NESTED_TAP_SHAPE = `TAP version 13
+ok 1 - first
+ok 2 - second
+ok 3 - third
+ok 4 - fourth
+ok 5 - fifth
+ok 6 - sixth
+ok 7 - seventh
+ok 8 - eighth
+ok 9 - ninth
+ok 10 - tenth
+ok 11 - eleventh
+ok 12 - twelfth
+ok 13 - thirteenth
+# Subtest: rejects one-element array responses for every singleton RPC request class
+    # Subtest: standard Token
+    ok 1 - standard Token
+    # Subtest: standard Token-2022
+    ok 2 - standard Token-2022
+    # Subtest: future-floor
+    ok 3 - future-floor
+    # Subtest: V2
+    ok 4 - V2
+    1..4
+ok 14 - rejects one-element array responses for every singleton RPC request class
+ok 15 - fifteenth
+ok 16 - sixteenth
+ok 17 - seventeenth
+1..17
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+`;
+
+test('v1.14 TAP parser accepts the maintained compatibility-probe nested TAP shape', () => {
+  assert.deepEqual(parseTopLevelTapV1(COMPATIBILITY_PROBE_NESTED_TAP_SHAPE), {
+    tests: 21, pass: 21, fail: 0, skipped: 0, todo: 0, cancelled: 0,
+  });
+});
+
+test('v1.14 TAP parser validates multiple nested subtest plans without confusing their local ordinals with top-level ordinals', () => {
+  const nested = `TAP version 13
+# Subtest: parent one
+    ok 1 - child one
+    ok 2 - child two
+    1..2
+ok 1 - parent one
+# Subtest: parent two
+    ok 1 - child one
+    1..1
+ok 2 - parent two
+1..2
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+`;
+  assert.deepEqual(parseTopLevelTapV1(nested), {
+    tests: 5, pass: 5, fail: 0, skipped: 0, todo: 0, cancelled: 0,
+  });
+});
+
 test('v1.14 TAP parser fails closed against ordinal, plan, status, directive, summary, and truncation attacks', () => {
   const valid = tap(['ok 1 - first', 'ok 2 - second']);
+  const nestedSummary = '# tests 2\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n';
   for (const attack of [
     tap(['ok 1 - first', 'ok 1 - duplicate']),
     tap(['ok 1 - first'], 2),
@@ -94,9 +164,38 @@ test('v1.14 TAP parser fails closed against ordinal, plan, status, directive, su
     tap(['ok 1 - skipped # SKIP']),
     tap(['ok 1 - todo # TODO']),
     tap(['not ok 1 - cancelled # CANCELLED']),
+    COMPATIBILITY_PROBE_NESTED_TAP_SHAPE.replace('    1..4\n', ''),
+    COMPATIBILITY_PROBE_NESTED_TAP_SHAPE.replace('    ok 4 - V2\n', '    ok 5 - V2\n'),
+    COMPATIBILITY_PROBE_NESTED_TAP_SHAPE.replace('    1..4\n', '    1..3\n'),
+    COMPATIBILITY_PROBE_NESTED_TAP_SHAPE.replace('# pass 21\n', '# pass 21\n# pass 20\n'),
+    COMPATIBILITY_PROBE_NESTED_TAP_SHAPE.replace('    ok 2 - standard Token-2022\n', '    ok 2 - standard Token-2022\n    oops 3 - malformed nested result\n'),
+    COMPATIBILITY_PROBE_NESTED_TAP_SHAPE.replace('    ok 2 - standard Token-2022\n', '    ok 2 - standard Token-2022\n    Bail out! child aborted\n'),
+    `TAP version 13\nok 1 - parent\n1..1\n    ok 1 - late child\n    1..1\n${nestedSummary}`,
+    `TAP version 13\n${nestedSummary}ok 1 - first\nok 2 - second\n1..2\n`,
+    `TAP version 13\n# Subtest: parent one\n    ok 1 - child one\nok 1 - parent one\n# Subtest: parent two\n    ok 2 - child two\n    1..2\nok 2 - parent two\n1..2\n# tests 4\n# pass 4\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`,
+    `TAP version 13\n# Subtest: parent\n    # Subtest: nested parent\n        ok 1 - deep child\n    ok 1 - nested parent\n    1..1\n        1..1\nok 1 - parent\n1..1\n# tests 3\n# pass 3\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`,
+    `TAP version 13\n    1..0\n    1..0\nok 1 - parent\n1..1\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`,
+    `TAP version 13\nok 1 - pass\n1..1\n# Subtest: unattached late group\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`,
+    `TAP version 13\nok 1 - pass\n  ---\n  [definitely invalid yaml\n  ...\n1..1\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`,
+    `TAP version 13\nok 1 - pass\n  ---\n  ...\n1..1\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`,
+    `TAP version 13\nok 1 - pass\n  ---\n  arbitrary: field\n  ...\n1..1\n# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`,
     valid.slice(0, -1),
     `${valid}garbage\n`,
   ]) assert.throws(() => parseTopLevelTapV1(attack));
+});
+
+test('v1.14 strict child result requires both a zero exit and internally consistent passing TAP', async () => {
+  const { validateStrictTapChildResultV1 } = await import('./run-v114-regression.mjs');
+  assert.equal(typeof validateStrictTapChildResultV1, 'function');
+  const greenOutput = tap(['ok 1 - passing']);
+  const greenResult = { status: 0, signal: null, error: undefined, stdout: greenOutput, stderr: '' };
+  assert.equal(validateStrictTapChildResultV1(greenResult, 'synthetic child').ok, true);
+  assert.equal(validateStrictTapChildResultV1({ ...greenResult, status: 1 }, 'synthetic child').ok, false);
+
+  const contradictoryOutput = greenOutput.replace('# pass 1\n', '# pass 0\n').replace('# fail 0\n', '# fail 1\n');
+  const contradictory = validateStrictTapChildResultV1({ ...greenResult, stdout: contradictoryOutput }, 'synthetic child');
+  assert.equal(contradictory.ok, false);
+  assert.match(contradictory.details, /inconsistent TAP pass summary/);
 });
 
 test('wallet-acquisition discovery rejects alternate roots and returns every current file exactly once', () => {

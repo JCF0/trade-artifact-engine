@@ -116,39 +116,113 @@ function failureDetails(result) {
 export function parseTopLevelTapV1(output, label = 'TAP stream') {
   if (typeof output !== 'string' || !output.endsWith('\n')) throw new Error(`${label}: truncated TAP`);
   const lines = output.replace(/\r/g, '').split('\n');
-  const plans = [];
   const records = [];
   const summaries = new Map();
-  let planLine = -1;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const plan = /^1\.\.(\d+)$/.exec(line);
-    if (plan) { plans.push(Number(plan[1])); planLine = index; continue; }
-    const record = /^(ok|not ok)\s+(\d+)(?:\s+-\s+.*)?$/.exec(line);
-    if (record) {
-      if (planLine !== -1) throw new Error(`${label}: result after TAP plan`);
-      const directive = /\s+#\s*(SKIP|TODO|CANCELLED)\b/i.exec(line)?.[1]?.toLowerCase() ?? null;
-      records.push({ ok: record[1] === 'ok', ordinal: Number(record[2]), directive });
-      continue;
+  let cursor = 0;
+  const validateRecordSequence = (items, planned, context) => {
+    if (items.length !== planned) throw new Error(`${label}: ${context} TAP plan/result count mismatch`);
+    const ordinals = items.map(record => record.ordinal);
+    if (new Set(ordinals).size !== ordinals.length) throw new Error(`${label}: duplicate ${context} TAP result ordinal`);
+    if (!ordinals.every((ordinal, index) => ordinal === index + 1)) throw new Error(`${label}: ${context} TAP result ordinals are not dense and sequential`);
+  };
+  const consumeDiagnostics = indent => {
+    const diagnosticIndent = `${indent}  `;
+    if (lines[cursor] !== `${diagnosticIndent}---`) throw new Error(`${label}: malformed TAP diagnostics`);
+    cursor += 1;
+    const body = [];
+    while (cursor < lines.length && lines[cursor] !== `${diagnosticIndent}...`) {
+      if (!lines[cursor].startsWith(diagnosticIndent)) throw new Error(`${label}: truncated TAP diagnostics`);
+      body.push(lines[cursor].slice(diagnosticIndent.length));
+      cursor += 1;
     }
+    if (cursor >= lines.length) throw new Error(`${label}: truncated TAP diagnostics`);
+    if (body.length !== 2 || !/^duration_ms: \d+(?:\.\d+)?$/.test(body[0]) || body[1] !== "type: 'test'") {
+      throw new Error(`${label}: malformed TAP diagnostics`);
+    }
+    cursor += 1;
+  };
+  const parseLevel = (indent, context) => {
+    const localRecords = [];
+    let pendingSubtest = false;
+    let parsedChild = false;
+    let mayHaveDiagnostics = false;
+    while (cursor < lines.length) {
+      const line = lines[cursor];
+      if (line === `${indent}  ---`) {
+        if (!mayHaveDiagnostics) throw new Error(`${label}: unattached TAP diagnostics`);
+        consumeDiagnostics(indent);
+        mayHaveDiagnostics = false;
+        continue;
+      }
+      if (line.startsWith(`${indent}    `)) {
+        if (!pendingSubtest || parsedChild || mayHaveDiagnostics) throw new Error(`${label}: malformed nested TAP structure`);
+        parseLevel(`${indent}    `, 'nested');
+        parsedChild = true;
+        continue;
+      }
+      if (!line.startsWith(indent)) throw new Error(`${label}: nested TAP results missing plan`);
+      const content = line.slice(indent.length);
+      if (/^\s/.test(content)) throw new Error(`${label}: malformed nested TAP indentation`);
+      const plan = /^1\.\.(\d+)$/.exec(content);
+      if (plan) {
+        if (pendingSubtest) throw new Error(`${label}: TAP subtest missing parent result`);
+        validateRecordSequence(localRecords, Number(plan[1]), context);
+        cursor += 1;
+        return;
+      }
+      const record = /^(ok|not ok)\s+(\d+)(?:\s+-\s+.*)?$/.exec(content);
+      if (record) {
+        const directive = /\s+#\s*(SKIP|TODO|CANCELLED)\b/i.exec(content)?.[1]?.toLowerCase() ?? null;
+        const item = { ok: record[1] === 'ok', ordinal: Number(record[2]), directive };
+        localRecords.push(item);
+        records.push(item);
+        pendingSubtest = false;
+        parsedChild = false;
+        mayHaveDiagnostics = true;
+        cursor += 1;
+        continue;
+      }
+      if (content.startsWith('# Subtest:')) {
+        if (pendingSubtest) throw new Error(`${label}: TAP subtest missing parent result`);
+        pendingSubtest = true;
+        parsedChild = false;
+        mayHaveDiagnostics = false;
+        cursor += 1;
+        continue;
+      }
+      if (/^# (tests|pass|fail|cancelled|skipped|todo) \d+$/.test(content)) {
+        throw new Error(`${label}: TAP summary before plan`);
+      }
+      if (content.startsWith('#')) {
+        mayHaveDiagnostics = false;
+        cursor += 1;
+        continue;
+      }
+      throw new Error(`${label}: malformed ${context} TAP record`);
+    }
+    throw new Error(`${label}: expected ${context} TAP plan`);
+  };
+  if (lines[cursor] !== 'TAP version 13') throw new Error(`${label}: missing TAP version`);
+  cursor += 1;
+  parseLevel('', 'top-level');
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+    if (line === '') { cursor += 1; continue; }
+    if (/^\s/.test(line)) throw new Error(`${label}: nested TAP content after top-level plan`);
     const summary = /^# (tests|pass|fail|cancelled|skipped|todo) (\d+)$/.exec(line);
     if (summary) {
       if (summaries.has(summary[1])) throw new Error(`${label}: duplicate TAP ${summary[1]} summary`);
       summaries.set(summary[1], Number(summary[2]));
+      cursor += 1;
       continue;
     }
-    if (line === '' || line === 'TAP version 13' || /^\s/.test(line) || line.startsWith('#')) continue;
-    throw new Error(`${label}: malformed top-level TAP record`);
+    if (line.startsWith('# Subtest:')) throw new Error(`${label}: TAP subtest after top-level plan`);
+    if (line.startsWith('#')) { cursor += 1; continue; }
+    throw new Error(`${label}: malformed terminal TAP record`);
   }
-  if (plans.length !== 1) throw new Error(`${label}: expected exactly one TAP plan`);
   for (const name of ['tests','pass','fail','cancelled','skipped','todo']) {
     if (!summaries.has(name)) throw new Error(`${label}: missing TAP ${name} summary`);
   }
-  const planned = plans[0];
-  if (records.length !== planned) throw new Error(`${label}: TAP plan/result count mismatch`);
-  const ordinals = records.map(record => record.ordinal);
-  if (new Set(ordinals).size !== ordinals.length) throw new Error(`${label}: duplicate TAP result ordinal`);
-  if (!ordinals.every((ordinal, index) => ordinal === index + 1)) throw new Error(`${label}: TAP result ordinals are not dense and sequential`);
   const actual = {
     tests: records.length,
     pass: records.filter(record => record.ok && record.directive === null).length,
@@ -169,8 +243,7 @@ export function parseTopLevelTapV1(output, label = 'TAP stream') {
   return Object.freeze(actual);
 }
 
-function strictTapChild(file, label, timeout = 600000) {
-  const result = runNode(['--test', file], timeout);
+export function validateStrictTapChildResultV1(result, label) {
   let tap = null;
   let parseError = null;
   try { tap = parseTopLevelTapV1(outputOf(result), label); } catch (error) { parseError = error; }
@@ -178,6 +251,9 @@ function strictTapChild(file, label, timeout = 600000) {
     && tap.skipped === 0 && tap.todo === 0 && tap.pass === tap.tests;
   const ok = childSucceeded(result) && cleanTap;
   return { ok, tap, details: ok ? '' : [parseError?.stack || parseError?.message, failureDetails(result)].filter(Boolean).join('\n') };
+}
+function strictTapChild(file, label, timeout = 600000) {
+  return validateStrictTapChildResultV1(runNode(['--test', file], timeout), label);
 }
 
 function runBaselineGate() {
