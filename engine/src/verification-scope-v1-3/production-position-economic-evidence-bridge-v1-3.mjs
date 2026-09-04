@@ -6,7 +6,8 @@ import {
   validateAuthoritativeEvidenceContextStructureV13,
   validateSourceBoundAuthoritativeEvidenceContextV13,
 } from './authoritative-evidence-context.mjs';
-import { fail } from './contract.mjs';
+import { canonicalJson, fail, sha256CanonicalJson } from './contract.mjs';
+import { createPositionEconomicEvidencePortV13 } from './position-episode.mjs';
 import { projectSolanaFullTransactionEffectV13 } from './solana-full-transaction-effect-projector.mjs';
 
 export const CONTROLLED_CLASSIC_SPL_USDC_POSITION_ECONOMIC_BRIDGE_PROFILE_V1 =
@@ -128,6 +129,7 @@ function requireNarrowEffectPopulation(reconstructed, context, exactQuoteMint) {
 }
 
 function requireSameOperationAuthority(reconstructed, targetMint, quoteMint) {
+  const sourceEvents = [];
   for (const { effect } of reconstructed) {
     const transfers = effect.established_effects.filter(item => item.effect_kind === 'token_transfer');
     const byMint = new Map(transfers.map(item => [item.mint, item]));
@@ -149,14 +151,85 @@ function requireSameOperationAuthority(reconstructed, targetMint, quoteMint) {
         'instruction-bound target and quote effects do not share one admitted route root',
       );
     }
+    if ((BigInt(target.signed_raw_quantity) > 0n) === (BigInt(quote.signed_raw_quantity) > 0n)
+        || target.signed_raw_quantity === '0' || quote.signed_raw_quantity === '0') {
+      fail('position_economic_same_operation_unestablished', 'target and quote transfer directions must oppose');
+    }
+    const observations = new Map(effect.established_effects
+      .filter(item => item.effect_kind === 'token_balance_observation')
+      .map(item => [item.effect_id, item]));
+    for (const transfer of [target, quote]) {
+      const observation = transfer.corroborating_effect_ids.length === 1
+        ? observations.get(transfer.corroborating_effect_ids[0]) : null;
+      if (observation === null || observation === undefined
+          || observation.account !== transfer.account || observation.owner !== transfer.owner
+          || observation.mint !== transfer.mint || observation.token_program !== transfer.token_program
+          || observation.decimals !== transfer.decimals
+          || observation.signed_raw_quantity !== transfer.signed_raw_quantity) {
+        fail('position_economic_same_operation_unestablished', 'transfer effects require exact wallet-balance corroboration');
+      }
+    }
+    const targetQuantity = BigInt(target.signed_raw_quantity);
+    const eventKind = targetQuantity > 0n ? 'TARGET_ACQUISITION' : 'TARGET_DISPOSAL';
+    sourceEvents.push({
+      transaction_signature: effect.transaction_identity.signature,
+      authoritative_intra_transaction_coordinate: target.source_coordinate.outer_instruction_index,
+      event_kind: eventKind,
+      payload: {
+        target_raw_quantity: (targetQuantity < 0n ? -targetQuantity : targetQuantity).toString(),
+        quote_status: 'EXACT',
+        quote_mint: quoteMint,
+        quote_raw_amount: (BigInt(quote.signed_raw_quantity) < 0n
+          ? -BigInt(quote.signed_raw_quantity) : BigInt(quote.signed_raw_quantity)).toString(),
+      },
+      source_effect_ids: [target.effect_id, quote.effect_id].sort(),
+      corroborating_effect_ids: [
+        ...target.corroborating_effect_ids, ...quote.corroborating_effect_ids,
+      ].sort(),
+      dependency_references: [],
+    });
   }
-  // The current committed Slice 2 projector emits no instruction-bound token
-  // transfer effects. When the independent route-support slice adds them, its
-  // exact effect relationships become the RED input for production issuance.
-  fail(
-    'position_economic_route_support_not_implemented',
-    'production issuance awaits the independent controlled Slice 2 route-support profile',
-  );
+  if (sourceEvents.length !== 2
+      || sourceEvents[0].event_kind !== 'TARGET_ACQUISITION'
+      || sourceEvents[1].event_kind !== 'TARGET_DISPOSAL') {
+    fail('position_economic_controlled_population_invalid', 'controlled round trip requires one acquisition followed by one disposal');
+  }
+  return sourceEvents;
+}
+
+function economicEvidenceResponse(context, exactQuoteMint, reconstructed, sourceEvents) {
+  const roles = new Map();
+  for (const event of sourceEvents) {
+    const locator = {
+      transaction_signature: event.transaction_signature,
+      authoritative_intra_transaction_coordinate: event.authoritative_intra_transaction_coordinate,
+      event_kind: event.event_kind,
+    };
+    for (const id of event.source_effect_ids) roles.set(id, { disposition: 'PRIMARY', event_locator: locator, reason_code: null });
+    for (const id of event.corroborating_effect_ids) roles.set(id, { disposition: 'CORROBORATING', event_locator: locator, reason_code: null });
+  }
+  const allEffectIds = reconstructed.flatMap(({ effect }) => effect.established_effects.map(item => item.effect_id)).sort();
+  if (roles.size !== sourceEvents.length * 4 || [...roles.keys()].some(id => !allEffectIds.includes(id))) {
+    fail('position_economic_effect_disposition_invalid', 'economic effect roles are not unique and source-bound');
+  }
+  const response = {
+    economic_evidence_profile: 'ARTIFACT_AUTHORITATIVE_POSITION_ECONOMIC_EFFECTS_V1',
+    evidence_context_digest: context.evidence_context_digest,
+    exact_quote_mint: exactQuoteMint,
+    opening_basis_evidence: null,
+    source_events: sourceEvents,
+    effect_dispositions: allEffectIds.map(effectId => ({
+      effect_id: effectId,
+      ...(roles.get(effectId) ?? {
+        disposition: 'NON_ECONOMIC', event_locator: null, reason_code: 'NO_POSITION_ECONOMIC_EFFECT',
+      }),
+    })),
+    economic_evidence_digest: null,
+  };
+  response.economic_evidence_digest = sha256CanonicalJson(Object.fromEntries(
+    Object.entries(response).filter(([field]) => field !== 'economic_evidence_digest'),
+  ));
+  return response;
 }
 
 export function isProductionPositionEconomicEvidencePortV13(port) {
@@ -211,5 +284,29 @@ export async function createProductionPositionEconomicEvidencePortV13(input) {
     );
   }
   requireNarrowEffectPopulation(reconstructed, context, exactQuoteMint);
-  requireSameOperationAuthority(reconstructed, context.target_mint, exactQuoteMint);
+  const sourceEvents = requireSameOperationAuthority(reconstructed, context.target_mint, exactQuoteMint);
+  const response = economicEvidenceResponse(context, exactQuoteMint, reconstructed, sourceEvents);
+  const expectedRequest = {
+    economic_evidence_profile: 'ARTIFACT_AUTHORITATIVE_POSITION_ECONOMIC_EFFECTS_V1',
+    evidence_context_digest: context.evidence_context_digest,
+    analyzed_wallet: context.analyzed_wallet,
+    target_mint: context.target_mint,
+    exact_quote_mint: exactQuoteMint,
+  };
+  const port = createPositionEconomicEvidencePortV13({
+    async captureAuthoritativePositionEconomicsV13(request) {
+      if (canonicalJson(request) !== canonicalJson(expectedRequest)) {
+        fail('position_economic_evidence_scope_mismatch', 'production evidence request does not match its bound context');
+      }
+      await validateSourceBoundAuthoritativeEvidenceContextV13({
+        context,
+        ...Object.fromEntries(CONTEXT_AUTHORITY_FIELDS.map(
+          field => [field, authorityDescriptors[field].value],
+        )),
+      });
+      return response;
+    },
+  });
+  PRODUCTION_PORTS.set(port, CONTROLLED_CLASSIC_SPL_USDC_POSITION_ECONOMIC_BRIDGE_PROFILE_V1);
+  return port;
 }

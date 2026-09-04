@@ -8,6 +8,10 @@ import {
   validateTransactionEffectStructureV13,
 } from './transaction-effect.mjs';
 import { providerPublicKey, providerSignature } from '../wallet-acquisition/fixtures/test-identities.mjs';
+import {
+  CONTROLLED_MAINNET_CALIBRATION_WALLET_V1,
+  controlledMainnetCalibrationTransactionsV1,
+} from './fixtures/controlled-mainnet-calibration-round-trip-v1.mjs';
 
 const WALLET = providerPublicKey('v13-projector-wallet');
 const SPONSOR = providerPublicKey('v13-projector-sponsor');
@@ -102,6 +106,183 @@ function transaction(name, {
 function project(value) {
   return projectSolanaFullTransactionEffectV13({ wallet: WALLET, transaction: value });
 }
+
+function projectCalibration(value) {
+  return projectSolanaFullTransactionEffectV13({
+    wallet: CONTROLLED_MAINNET_CALIBRATION_WALLET_V1,
+    transaction: value,
+  });
+}
+
+const TEST_BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function testDecodeBase58(value) {
+  const bytes = [0];
+  for (const character of value) {
+    let carry = TEST_BASE58.indexOf(character);
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  for (let index = 0; index < value.length - 1 && value[index] === '1'; index += 1) bytes.push(0);
+  return bytes.reverse();
+}
+function testEncodeBase58(bytes) {
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let index = 0; index < digits.length; index += 1) {
+      carry += digits[index] << 8;
+      digits[index] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
+  }
+  let prefix = '';
+  for (let index = 0; index < bytes.length - 1 && bytes[index] === 0; index += 1) prefix += '1';
+  return prefix + digits.reverse().map(digit => TEST_BASE58[digit]).join('');
+}
+
+function writeTestU64(bytes, offset, value) {
+  const numeric = BigInt(value);
+  for (let index = 0; index < 8; index += 1) {
+    bytes[offset + index] = Number((numeric >> BigInt(index * 8)) & 0xffn);
+  }
+}
+
+test('projects both frozen direct classic Whirlpool swap directions without residuals', () => {
+  const [acquisition, disposal] = controlledMainnetCalibrationTransactionsV1().map(projectCalibration);
+  assert.deepEqual(acquisition.residual_unresolved_effects, []);
+  assert.deepEqual(disposal.residual_unresolved_effects, []);
+  assert.deepEqual(
+    acquisition.established_effects.filter(effect => effect.effect_kind === 'token_transfer')
+      .map(effect => [effect.mint, effect.signed_raw_quantity]),
+    [[USDC, '-5000000'], ['JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', '21437310']],
+  );
+  assert.deepEqual(
+    disposal.established_effects.filter(effect => effect.effect_kind === 'token_transfer')
+      .map(effect => [effect.mint, effect.signed_raw_quantity]),
+    [['JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', '-21437310'], [USDC, '4748794']],
+  );
+  for (const projection of [acquisition, disposal]) {
+    const observations = new Set(projection.established_effects
+      .filter(effect => effect.effect_kind === 'token_balance_observation')
+      .map(effect => effect.effect_id));
+    for (const transfer of projection.established_effects.filter(effect => effect.effect_kind === 'token_transfer')) {
+      assert.equal(transfer.source_coordinate.coordinate_kind, 'instruction');
+      assert.equal(transfer.source_coordinate.outer_instruction_index, 0);
+      assert.notEqual(transfer.source_coordinate.inner_instruction_index, null);
+      assert.equal(transfer.corroborating_effect_ids.length, 1);
+      assert.ok(observations.has(transfer.corroborating_effect_ids[0]));
+    }
+  }
+});
+
+test('classic Whirlpool recognition is independent of signature, slot, wallet, vault identities, and observed amounts', () => {
+  const [value] = controlledMainnetCalibrationTransactionsV1();
+  const alternate = {
+    wallet: providerPublicKey('orca-profile-alternate-wallet'),
+    targetAccount: providerPublicKey('orca-profile-alternate-target-account'),
+    quoteAccount: providerPublicKey('orca-profile-alternate-quote-account'),
+    pool: providerPublicKey('orca-profile-alternate-pool'),
+    targetVault: providerPublicKey('orca-profile-alternate-target-vault'),
+    quoteVault: providerPublicKey('orca-profile-alternate-quote-vault'),
+  };
+  const replacements = new Map([
+    [CONTROLLED_MAINNET_CALIBRATION_WALLET_V1, alternate.wallet],
+    [value.instructions[0].accounts[3], alternate.targetAccount],
+    [value.instructions[0].accounts[5], alternate.quoteAccount],
+    [value.instructions[0].accounts[2], alternate.pool],
+    [value.instructions[0].accounts[4], alternate.targetVault],
+    [value.instructions[0].accounts[6], alternate.quoteVault],
+  ]);
+  value.signature = providerSignature('orca-profile-alternate-signature');
+  value.slot = 123456;
+  value.block_time = 1700000000;
+  value.fee_payer = alternate.wallet;
+  for (const account of value.accounts) account.address = replacements.get(account.address) ?? account.address;
+  value.instructions[0].accounts = value.instructions[0].accounts.map(address => replacements.get(address) ?? address);
+  for (const instruction of value.inner_instruction_groups[0].instructions) {
+    instruction.accounts = instruction.accounts.map(address => replacements.get(address) ?? address);
+  }
+  for (const rows of [value.pre_token_balances, value.post_token_balances]) {
+    for (const row of rows) {
+      row.account = replacements.get(row.account) ?? row.account;
+      row.owner = replacements.get(row.owner) ?? row.owner;
+    }
+  }
+  const outerBytes = testDecodeBase58(value.instructions[0].data);
+  writeTestU64(outerBytes, 8, 100n);
+  writeTestU64(outerBytes, 16, 190n);
+  value.instructions[0].data = testEncodeBase58(outerBytes);
+  value.inner_instruction_groups[0].instructions.forEach((instruction, index) => {
+    const bytes = testDecodeBase58(instruction.data);
+    writeTestU64(bytes, 1, index === 0 ? 100n : 200n);
+    instruction.data = testEncodeBase58(bytes);
+  });
+  const amounts = new Map([
+    [alternate.quoteAccount, ['1000', '900']], [alternate.quoteVault, ['5000', '5100']],
+    [alternate.targetVault, ['10000', '9800']], [alternate.targetAccount, ['0', '200']],
+  ]);
+  for (const before of value.pre_token_balances) before.raw_amount = amounts.get(before.account)[0];
+  for (const after of value.post_token_balances) after.raw_amount = amounts.get(after.account)[1];
+
+  const projection = projectSolanaFullTransactionEffectV13({ wallet: alternate.wallet, transaction: value });
+  assert.deepEqual(projection.residual_unresolved_effects, []);
+  assert.deepEqual(projection.established_effects
+    .filter(effect => effect.effect_kind === 'token_transfer')
+    .map(effect => effect.signed_raw_quantity).sort(), ['-100', '200']);
+});
+
+test('partial classic Whirlpool profiles remain residual-bearing and grant no transfer authority', () => {
+  const mutations = [
+    value => { value.instructions[0].program_id = TOKEN_PROGRAM; },
+    value => { value.accounts.find(account => account.address === value.instructions[0].accounts[2]).is_writable = false; },
+    value => {
+      for (const rows of [value.pre_token_balances, value.post_token_balances]) {
+        rows.find(row => row.account === value.instructions[0].accounts[4]).mint = TARGET;
+      }
+    },
+    value => { value.inner_instruction_groups[0].instructions[0].data = '3aYxJmutJ6wy'; },
+    value => { value.post_token_balances.find(row => row.account === value.instructions[0].accounts[6]).raw_amount = '7080089857'; },
+    value => {
+      const bytes = testDecodeBase58(value.instructions[0].data);
+      const output = 21_437_311n;
+      for (let index = 0; index < 8; index += 1) bytes[16 + index] = Number((output >> BigInt(index * 8)) & 0xffn);
+      value.instructions[0].data = testEncodeBase58(bytes);
+    },
+    value => {
+      const bytes = testDecodeBase58(value.inner_instruction_groups[0].instructions[0].data);
+      bytes[0] = 4;
+      value.inner_instruction_groups[0].instructions[0].data = testEncodeBase58(bytes);
+    },
+    value => { value.inner_instruction_groups[0].instructions[1].accounts.reverse(); },
+    value => { value.instructions.push({ ...structuredClone(value.instructions[0]), instruction_index: 1 }); },
+    value => {
+      value.inner_instruction_groups[0].instructions.push({
+        ...structuredClone(value.inner_instruction_groups[0].instructions[1]), instruction_index: 2,
+      });
+    },
+    value => {
+      const outer = value.instructions[0];
+      outer.accounts[1] = outer.accounts[2];
+      outer.accounts[3] = outer.accounts[7];
+      outer.accounts[5] = outer.accounts[8];
+      value.inner_instruction_groups[0].instructions[0].accounts = [outer.accounts[7], outer.accounts[4], outer.accounts[2]];
+      value.inner_instruction_groups[0].instructions[1].accounts = [outer.accounts[6], outer.accounts[8], outer.accounts[2]];
+    },
+  ];
+  for (const mutate of mutations) {
+    const [value] = controlledMainnetCalibrationTransactionsV1();
+    mutate(value);
+    const projection = projectCalibration(value);
+    assert.equal(projection.established_effects.some(effect => effect.effect_kind === 'token_transfer'), false);
+    assert.ok(projection.residual_unresolved_effects.some(residual =>
+      residual.reason_code === 'UNMATCHED_WALLET_INSTRUCTION'));
+  }
+});
 
 test('projects exact balance observations without assigning transfer, trade, or economic order semantics', () => {
   const built = project(transaction('v13-observations', {

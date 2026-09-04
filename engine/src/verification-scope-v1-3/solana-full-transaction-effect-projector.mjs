@@ -17,6 +17,10 @@ const TOKEN_PROGRAMS = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
 ]);
+const CLASSIC_TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const CLASSIC_WHIRLPOOL_PROGRAM = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc';
+const CLASSIC_WHIRLPOOL_SWAP_DISCRIMINATOR = 'f8c69e91e17587c8';
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 function accountCoordinate(accountIndex) {
   return {
@@ -43,6 +47,32 @@ function direction(value) {
   return value < 0n ? 'debit' : 'credit';
 }
 function signed(value) { return value.toString(); }
+
+function decodeBase58(value) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  const bytes = [0];
+  for (const character of value) {
+    let carry = BASE58_ALPHABET.indexOf(character);
+    if (carry < 0) return null;
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  for (let index = 0; index < value.length - 1 && value[index] === '1'; index += 1) bytes.push(0);
+  return Uint8Array.from(bytes.reverse());
+}
+
+function unsignedLittleEndian(bytes) {
+  let value = 0n;
+  for (let index = bytes.length - 1; index >= 0; index -= 1) value = (value << 8n) + BigInt(bytes[index]);
+  return value;
+}
 
 function baseEffect({ kind, coordinate, account, directionValue, raw = null, decimals = null, lamports = null }) {
   return {
@@ -89,6 +119,124 @@ function tokenMaps(transaction) {
     pre: new Map(transaction.pre_token_balances.map(row => [row.account_index, row])),
     post: new Map(transaction.post_token_balances.map(row => [row.account_index, row])),
   };
+}
+
+function classicWhirlpoolSwapProjection(transaction, wallet) {
+  const empty = { effects: [], consumed: new Set() };
+  if (transaction.execution_state !== 'succeeded' || transaction.transaction_version !== 'legacy'
+      || transaction.instructions.length !== 1 || transaction.inner_instruction_groups.length !== 1) return empty;
+  const outer = transaction.instructions[0];
+  const group = transaction.inner_instruction_groups[0];
+  if (outer.instruction_index !== 0 || outer.program_id !== CLASSIC_WHIRLPOOL_PROGRAM
+      || outer.accounts.length !== 11 || group.outer_instruction_index !== 0
+      || group.instructions.length !== 2 || outer.accounts[0] !== CLASSIC_TOKEN_PROGRAM
+      || outer.accounts[1] !== wallet) return empty;
+  const data = decodeBase58(outer.data);
+  if (data === null || data.length !== 42
+      || Buffer.from(data.subarray(0, 8)).toString('hex') !== CLASSIC_WHIRLPOOL_SWAP_DISCRIMINATOR
+      || data[40] !== 1 || ![0, 1].includes(data[41])) return empty;
+  const inputAmount = unsignedLittleEndian(data.subarray(8, 16));
+  const minimumOutput = unsignedLittleEndian(data.subarray(16, 24));
+  const sqrtPriceLimit = unsignedLittleEndian(data.subarray(24, 40));
+  if (inputAmount === 0n || sqrtPriceLimit === 0n) return empty;
+
+  const accountRoles = new Map(transaction.accounts.map(account => [account.address, account]));
+  if (accountRoles.size !== transaction.accounts.length) return empty;
+  const role = (address, signer, writable) => {
+    const value = accountRoles.get(address);
+    return value !== undefined && value.is_signer === signer && value.is_writable === writable
+      && value.source === 'static';
+  };
+  if (!role(outer.program_id, false, false) || !role(outer.accounts[0], false, false)
+      || !role(outer.accounts[1], true, true) || !role(outer.accounts[2], false, true)
+      || !outer.accounts.slice(3, 10).every(address => role(address, false, true))
+      || !role(outer.accounts[10], false, false)) return empty;
+
+  const aToB = data[41] === 1;
+  const pool = outer.accounts[2];
+  const inputWalletAccount = outer.accounts[aToB ? 3 : 5];
+  const inputVault = outer.accounts[aToB ? 4 : 6];
+  const outputWalletAccount = outer.accounts[aToB ? 5 : 3];
+  const outputVault = outer.accounts[aToB ? 6 : 4];
+  if (new Set([inputWalletAccount, inputVault, outputWalletAccount, outputVault]).size !== 4) return empty;
+  const [inputTransfer, outputTransfer] = group.instructions;
+  const transferAmount = instruction => {
+    const bytes = decodeBase58(instruction.data);
+    if (instruction.program_id !== CLASSIC_TOKEN_PROGRAM || instruction.accounts.length !== 3
+        || bytes === null || bytes.length !== 9 || bytes[0] !== 3) return null;
+    return unsignedLittleEndian(bytes.subarray(1));
+  };
+  const decodedInputAmount = transferAmount(inputTransfer);
+  const outputAmount = transferAmount(outputTransfer);
+  if (inputTransfer.instruction_index !== 0 || outputTransfer.instruction_index !== 1
+      || decodedInputAmount !== inputAmount || outputAmount === null || outputAmount < minimumOutput
+      || canonicalJson(inputTransfer.accounts) !== canonicalJson([inputWalletAccount, inputVault, wallet])
+      || canonicalJson(outputTransfer.accounts) !== canonicalJson([outputVault, outputWalletAccount, pool])) return empty;
+
+  const indexes = new Map(transaction.accounts.map((account, index) => [account.address, index]));
+  const { pre, post } = tokenMaps(transaction);
+  if (new Set([...pre.keys(), ...post.keys()]).size !== 4 || pre.size !== 4 || post.size !== 4) return empty;
+  const pair = address => {
+    const index = indexes.get(address);
+    return index === undefined ? null : { before: pre.get(index), after: post.get(index) };
+  };
+  const inputWallet = pair(inputWalletAccount);
+  const inputPool = pair(inputVault);
+  const outputWallet = pair(outputWalletAccount);
+  const outputPool = pair(outputVault);
+  if ([inputWallet, inputPool, outputWallet, outputPool]
+    .some(value => value?.before === undefined || value.after === undefined)) return empty;
+  const sameIdentity = (left, right) => left.account === right.account && left.mint === right.mint
+    && left.owner === right.owner && left.decimals === right.decimals
+    && left.token_program === right.token_program;
+  if (![inputWallet, inputPool, outputWallet, outputPool].every(value => sameIdentity(value.before, value.after))
+      || inputWallet.before.owner !== wallet || outputWallet.before.owner !== wallet
+      || inputPool.before.owner !== pool || outputPool.before.owner !== pool
+      || inputWallet.before.token_program !== CLASSIC_TOKEN_PROGRAM
+      || inputPool.before.token_program !== CLASSIC_TOKEN_PROGRAM
+      || outputWallet.before.token_program !== CLASSIC_TOKEN_PROGRAM
+      || outputPool.before.token_program !== CLASSIC_TOKEN_PROGRAM
+      || inputWallet.before.mint !== inputPool.before.mint
+      || outputWallet.before.mint !== outputPool.before.mint
+      || inputWallet.before.mint === outputWallet.before.mint
+      || inputWallet.before.decimals !== inputPool.before.decimals
+      || outputWallet.before.decimals !== outputPool.before.decimals) return empty;
+  const delta = value => BigInt(value.after.raw_amount) - BigInt(value.before.raw_amount);
+  if (delta(inputWallet) !== -inputAmount || delta(inputPool) !== inputAmount
+      || delta(outputWallet) !== outputAmount || delta(outputPool) !== -outputAmount) return empty;
+
+  const transferEffect = (instruction, walletPair, amount) => ({
+    ...baseEffect({
+      kind: 'token_transfer',
+      coordinate: instructionCoordinate(0, instruction.instruction_index),
+      account: walletPair.before.account,
+      directionValue: direction(amount),
+      raw: signed(amount),
+      decimals: walletPair.before.decimals,
+    }),
+    owner: wallet,
+    authority: instruction.accounts[2],
+    destination: instruction.accounts[1],
+    mint: walletPair.before.mint,
+    token_program: CLASSIC_TOKEN_PROGRAM,
+  });
+  return {
+    effects: [
+      transferEffect(inputTransfer, inputWallet, -inputAmount),
+      transferEffect(outputTransfer, outputWallet, outputAmount),
+    ],
+    consumed: new Set(['0:top', '0:0', '0:1']),
+  };
+}
+
+function isClassicWhirlpoolEnvelope(transaction) {
+  if (transaction.instructions.length !== 1) return false;
+  const outer = transaction.instructions[0];
+  if (outer.program_id !== CLASSIC_WHIRLPOOL_PROGRAM) return false;
+  const data = decodeBase58(outer.data);
+  return data !== null
+    && data.length === 42
+    && Buffer.from(data.subarray(0, 8)).toString('hex') === CLASSIC_WHIRLPOOL_SWAP_DISCRIMINATOR;
 }
 
 function closureProjection(transaction, wallet, entries, addResidual) {
@@ -269,11 +417,16 @@ function finalizeProjection(projection) {
   const nativeObservationByAccount = new Map(observations
     .filter(effect => effect.effect_kind === 'native_balance_observation')
     .map(effect => [effect.account, effect.effect_id]));
+  const tokenObservationByAccount = new Map(observations
+    .filter(effect => effect.effect_kind === 'token_balance_observation')
+    .map(effect => [effect.account, effect.effect_id]));
   for (const effect of effects) {
     if (effect.evidence_role !== 'attributed_component') continue;
     const references = [];
     if (effect.effect_kind === 'network_fee') {
       if (nativeObservationByAccount.has(effect.account)) references.push(nativeObservationByAccount.get(effect.account));
+    } else if (effect.effect_kind === 'token_transfer') {
+      if (tokenObservationByAccount.has(effect.account)) references.push(tokenObservationByAccount.get(effect.account));
     } else if (['account_creation', 'account_closure'].includes(effect.effect_kind)) {
       if (nativeObservationByAccount.has(effect.account)) references.push(nativeObservationByAccount.get(effect.account));
       if (effect.destination !== null && nativeObservationByAccount.has(effect.destination)) references.push(nativeObservationByAccount.get(effect.destination));
@@ -355,6 +508,9 @@ export function projectSolanaFullTransactionEffectV13(input) {
   const entries = instructionEntries(transaction);
   const closure = closureProjection(transaction, wallet, entries, addResidual);
   established.push(...closure.effects);
+  const classicWhirlpoolEnvelope = isClassicWhirlpoolEnvelope(transaction);
+  const whirlpool = classicWhirlpoolSwapProjection(transaction, wallet);
+  established.push(...whirlpool.effects);
 
   const { pre, post } = tokenMaps(transaction);
   const tokenIndexes = [...new Set([...pre.keys(), ...post.keys()])].sort((left, right) => left - right);
@@ -435,7 +591,7 @@ export function projectSolanaFullTransactionEffectV13(input) {
     if (row.owner === wallet) tokenIdentityByAccount.set(row.account, row);
   }
   for (const entry of entries) {
-    if (closure.consumed.has(entry.key)) continue;
+    if (closure.consumed.has(entry.key) || whirlpool.consumed.has(entry.key)) continue;
     const touchedUnknownRows = [...new Map(entry.instruction.accounts
       .map(account => unknownTokenIdentityByAccount.get(account)).filter(Boolean)
       .map(row => [row.account, row])).values()];
@@ -451,7 +607,7 @@ export function projectSolanaFullTransactionEffectV13(input) {
     const touchedTokenRows = [...new Map(entry.instruction.accounts
       .map(account => tokenIdentityByAccount.get(account)).filter(Boolean)
       .map(row => [row.account, row])).values()];
-    if (!touchesWallet && touchedTokenRows.length === 0) continue;
+    if (!touchesWallet && touchedTokenRows.length === 0 && !classicWhirlpoolEnvelope) continue;
     const exactRow = touchedTokenRows.length === 1 ? touchedTokenRows[0] : null;
     addResidual('UNMATCHED_WALLET_INSTRUCTION', entry.coordinate, {
       program_id: entry.instruction.program_id,

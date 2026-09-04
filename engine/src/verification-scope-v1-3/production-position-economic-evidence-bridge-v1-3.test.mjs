@@ -6,7 +6,8 @@ import {
   USDC_MINT_V1,
   createControlledCaseAuthorityV1,
 } from './fixtures/controlled-case-offline-v1.mjs';
-import { createPositionEconomicEvidencePortV13 } from './position-episode.mjs';
+import { createControlledMainnetCalibrationAuthorityV1 } from './fixtures/controlled-mainnet-calibration-round-trip-v1.mjs';
+import { buildPositionEpisodeV13, createPositionEconomicEvidencePortV13 } from './position-episode.mjs';
 import {
   CONTROLLED_CLASSIC_SPL_USDC_POSITION_ECONOMIC_BRIDGE_PROFILE_V1,
   createProductionPositionEconomicEvidencePortV13,
@@ -41,6 +42,46 @@ test('a generic Slice 4 callback port cannot claim production provenance', async
   });
   assert.equal(isProductionPositionEconomicEvidencePortV13(forged), false);
   assert.equal(isProductionPositionEconomicEvidencePortV13({}), false);
+});
+
+test('the residual-free controlled Whirlpool round trip receives production economic authority', async () => {
+  const fixture = await createControlledMainnetCalibrationAuthorityV1();
+  const port = await createProductionPositionEconomicEvidencePortV13(productionInput(fixture));
+  assert.equal(isProductionPositionEconomicEvidencePortV13(port), true);
+  const evidence = await port.captureAuthoritativePositionEconomicsV13({
+    economic_evidence_profile: 'ARTIFACT_AUTHORITATIVE_POSITION_ECONOMIC_EFFECTS_V1',
+    evidence_context_digest: fixture.context.evidence_context_digest,
+    analyzed_wallet: fixture.context.analyzed_wallet,
+    target_mint: fixture.context.target_mint,
+    exact_quote_mint: fixture.exact_quote_mint,
+  });
+  assert.equal(evidence.source_events.some(event => event.event_kind === 'FEE'), false);
+  assert.equal(evidence.effect_dispositions.filter(item =>
+    item.disposition === 'NON_ECONOMIC'
+      && item.reason_code === 'NO_POSITION_ECONOMIC_EFFECT').length, 4);
+  const episode = await buildPositionEpisodeV13({
+    evidence_context: fixture.context,
+    exact_quote_mint: fixture.exact_quote_mint,
+    economic_evidence_port: port,
+  });
+  assert.deepEqual(episode.aggregate_acquisition_basis, { numerator: '5000000', denominator: '1' });
+  assert.deepEqual(episode.recognized_disposal_proceeds, { numerator: '4748794', denominator: '1' });
+  assert.deepEqual(episode.realized_pnl, { numerator: '-251206', denominator: '1' });
+  assert.deepEqual(episode.realized_return, { numerator: '-125603', denominator: '2500000' });
+  assert.equal(episode.position_state, 'CLOSED');
+  assert.deepEqual(episode.unresolved_economic_dependencies, []);
+});
+
+test('a partial classic Whirlpool match cannot receive production economic authority', async () => {
+  const fixture = await createControlledMainnetCalibrationAuthorityV1({
+    mutate_transactions(transactions) {
+      transactions[0].inner_instruction_groups[0].instructions[0].data = '3aYxJmutJ6wy';
+    },
+  });
+  await assert.rejects(
+    createProductionPositionEconomicEvidencePortV13(productionInput(fixture)),
+    error => error?.code === 'position_economic_residual_evidence',
+  );
 });
 
 test('residual-free aggregate balance signs cannot establish a same-operation acquisition or disposal', async () => {
