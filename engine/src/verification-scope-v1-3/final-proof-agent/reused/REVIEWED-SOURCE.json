@@ -1,0 +1,11 @@
+{
+  "archive_sha256": "edb8de9d432af46f9ff2fa0a848969ec74119d91ea4d702022c711501e620abc",
+  "bounded_rebroadcast_source_sha256": "9dfed7dd40e97da0f98c1eba1d374a58f98eff2a12c25df2bdf2ad6f54c5bb16",
+  "bounded_rebroadcast_local_offline_test_sha256": "84628466f8d36db2c275dacb943664512782bee7fd5520a54dab8866962cf596",
+  "bounded_rebroadcast_upstream_test_sha256": "eef8411e585a12bbe6c07f084c23d157fed69bba664bdca28e9a807c2c192a53",
+  "integration_status": "BYTE_IDENTICAL_REVIEWED_SOURCE_REUSED_OFFLINE_LIVE_RELEASE_UNRESOLVED",
+  "policy_id": "IDENTICAL_SIGNED_BYTES_BOUNDED_REBROADCAST_V1",
+  "source_archive_name": "wiggles-identical-byte-rebroadcast-v3-release-20260904.tar.gz",
+  "source_identity_version": "artifact_bounded_agent_reused_source_identity_v1",
+  "transaction_error_source_sha256": "ba39f4d5729f03394b5f619b15880397ec9c29a0d278cf7d5cf5730a23cd9066"
+}
