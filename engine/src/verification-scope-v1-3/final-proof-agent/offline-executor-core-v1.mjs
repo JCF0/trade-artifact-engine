@@ -80,7 +80,8 @@ export function createOfflineBoundedExecutorCoreV1(input) {
   const executorRelease = descriptors.executor_release_sha256.value;
   if (typeof executorRelease !== 'string' || !DIGEST.test(executorRelease)) fail('bounded_agent_executor_identity_invalid', 'executor release identity is invalid');
   const consumption = capability(descriptors.decision_consumption_port.value,
-    ['consumeEpisodeOrdinalV1', 'revokeAuthorizationV1'], 'decision_consumption_port');
+    ['consumeEpisodeOrdinalV1', 'revokeAuthorizationV1', 'recordPreparedV1', 'recordKeyLoadStartedV1'],
+    'decision_consumption_port');
   const execution = capability(descriptors.execution_port.value, ['prepareBoundedLegV1'], 'execution_port');
   const signer = capability(descriptors.wallet_signer_port.value, ['signAdmittedTransactionV1'], 'wallet_signer_port');
   const consumedDecisions = new Set();
@@ -97,12 +98,17 @@ export function createOfflineBoundedExecutorCoreV1(input) {
       });
       const consumptionResult = await consumption.consumeEpisodeOrdinalV1({
         episode_id: state.episode_id,
+        mandate_digest: state.mandate_digest,
         authorization_digest: state.authorization_digest,
+        executor_release_sha256: executorRelease,
         ordinal: challenge.ordinal,
+        phase: challenge.phase,
+        predecessor_state: state.state,
         predecessor_state_digest: state.state_digest,
         decision_id: decision.decision_id,
         challenge_id: challenge.challenge_id,
         admission_digest: transitioned.admission.admission_digest,
+        successor_state: transitioned.state,
       });
       if (consumptionResult === 'REVOKED') {
         fail('bounded_agent_authorization_revoked', 'authorization is revoked in the atomic episode authority');
@@ -115,6 +121,20 @@ export function createOfflineBoundedExecutorCoreV1(input) {
       if (transitioned.admission.status === 'REFUSED') return cloneAndFreeze(transitioned);
       const prepared = await execution.prepareBoundedLegV1({ mandate, challenge, admission: transitioned.admission });
       validatePrepared(prepared, { mandate, challenge, admission: transitioned.admission });
+      const preparedTransactionDigest = sha256CanonicalJson(prepared);
+      await consumption.recordPreparedV1({
+        episode_id: state.episode_id,
+        ordinal: challenge.ordinal,
+        admission_digest: transitioned.admission.admission_digest,
+        prepared_transaction_digest: preparedTransactionDigest,
+        semantic_transaction_digest: prepared.unsigned_transaction_digest,
+      });
+      await consumption.recordKeyLoadStartedV1({
+        episode_id: state.episode_id,
+        ordinal: challenge.ordinal,
+        admission_digest: transitioned.admission.admission_digest,
+        prepared_transaction_digest: preparedTransactionDigest,
+      });
       const signedIntent = await signer.signAdmittedTransactionV1({ admission: transitioned.admission, prepared_transaction: prepared });
       validateSignedTransactionIntentV1(signedIntent, { prepared, admission: transitioned.admission });
       const signedIntentDigest = sha256CanonicalJson(signedPreimage(signedIntent));

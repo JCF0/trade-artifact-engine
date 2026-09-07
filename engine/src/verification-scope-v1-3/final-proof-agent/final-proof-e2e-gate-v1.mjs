@@ -9,7 +9,7 @@ import { POLICY as REVIEWED_REBROADCAST_POLICY_V1 } from './reused/bounded-rebro
 export const BOUNDED_AGENT_FINAL_PROOF_GATE_VERSION_V1 = 'artifact_bounded_agent_final_proof_offline_gate_v1';
 export const BOUNDED_AGENT_FINAL_PROOF_GATE_PROFILE_V1 = 'ARTIFACT_BOUNDED_AGENT_FINAL_PROOF_OFFLINE_E2E_V1';
 export const BOUNDED_AGENT_FINAL_PROOF_GATE_RESULT_SHA256_V1 =
-  'fe01703bb25a4a987b0f957c329dd71eb926c966beeac47da4bda884b63d8385';
+  '62ca1b3dcea23a80b24a05b994a2e6a07a43422a493764829fdf69b0b12878ed';
 const DIGEST = /^[0-9a-f]{64}$/;
 const UNRESOLVED = Object.freeze([
   'REAL_HUMAN_AUTHORIZATION_PUBLIC_KEY',
@@ -43,7 +43,7 @@ function validateBoundedAgentFinalProofGateResultStructureV1(value) {
       || value.claim_outcome !== 'VERIFIED' || value.position_state !== 'CLOSED'
       || value.agent_decision_count !== 2 || value.wallet_sign_count !== 2
       || value.agent_provenance_authority !== 'PROVENANCE_ONLY_NOT_ECONOMIC_AUTHORITY'
-      || value.economic_authority !== 'FINALIZED_ONCHAIN_EVIDENCE_THROUGH_EXISTING_V1_3_PIPELINE_ONLY'
+      || value.economic_authority !== 'SYNTHETIC_FINALIZED_PROVIDER_FIXTURE_THROUGH_EXISTING_V1_3_PIPELINE_ONLY'
       || value.overall_status !== 'PASS_OFFLINE_LIVE_BLOCKED'
       || Object.values(value.assertions).some(assertion => assertion !== true)
       || JSON.stringify(value.unresolved_live_readiness) !== JSON.stringify(UNRESOLVED)) {
@@ -184,7 +184,7 @@ async function buildBoundedAgentFinalProofOfflineE2EGateV1() {
     agent_decision_count: 2,
     wallet_sign_count: fixture.signer_calls,
     agent_provenance_authority: 'PROVENANCE_ONLY_NOT_ECONOMIC_AUTHORITY',
-    economic_authority: 'FINALIZED_ONCHAIN_EVIDENCE_THROUGH_EXISTING_V1_3_PIPELINE_ONLY',
+    economic_authority: 'SYNTHETIC_FINALIZED_PROVIDER_FIXTURE_THROUGH_EXISTING_V1_3_PIPELINE_ONLY',
     public_wording: graph.outcome.public_wording,
     unresolved_live_readiness: [...UNRESOLVED],
     assertions,

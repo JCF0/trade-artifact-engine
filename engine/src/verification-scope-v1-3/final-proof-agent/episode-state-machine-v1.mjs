@@ -17,6 +17,7 @@ const STATES = new Set([
   'ACQUISITION_EVIDENCE_CLOSED', 'DISPOSAL_ADMITTED', 'DISPOSAL_SUBMISSION_RESOLVING',
   'DISPOSAL_EVIDENCE_CLOSED', 'AGENT_REFUSED_ACQUISITION', 'AGENT_REFUSED_DISPOSAL',
   'REVOKED_BEFORE_FIRST_ADMISSION', 'REVOKED_AFTER_ACQUISITION', 'REVOKED_AFTER_DISPOSAL',
+  'REVOKED_BEFORE_ACQUISITION_SIGNING', 'REVOKED_BEFORE_DISPOSAL_SIGNING',
   'RESOLUTION_REQUIRED_AFTER_REVOCATION',
 ]);
 function preimage(value) {
@@ -68,7 +69,8 @@ export function validateBoundedAgentEpisodeStateV1(value) {
     fail('bounded_agent_state_semantics_invalid', 'acquisition evidence state does not reconcile');
   }
   const requiresAcquisition = ['ACQUISITION_EVIDENCE_CLOSED', 'DISPOSAL_ADMITTED', 'DISPOSAL_SUBMISSION_RESOLVING',
-    'DISPOSAL_EVIDENCE_CLOSED', 'AGENT_REFUSED_DISPOSAL', 'REVOKED_AFTER_ACQUISITION', 'REVOKED_AFTER_DISPOSAL'].includes(value.state);
+    'DISPOSAL_EVIDENCE_CLOSED', 'AGENT_REFUSED_DISPOSAL', 'REVOKED_AFTER_ACQUISITION', 'REVOKED_AFTER_DISPOSAL',
+    'REVOKED_BEFORE_DISPOSAL_SIGNING'].includes(value.state);
   const forbidsAcquisition = !requiresAcquisition && value.state !== 'RESOLUTION_REQUIRED_AFTER_REVOCATION';
   if ((requiresAcquisition && !hasAcquisition) || (forbidsAcquisition && hasAcquisition)) {
     fail('bounded_agent_state_semantics_invalid', 'acquisition evidence state does not reconcile');
@@ -80,7 +82,9 @@ export function validateBoundedAgentEpisodeStateV1(value) {
     fail('bounded_agent_state_semantics_invalid', 'possible-submission status does not reconcile');
   }
   if (value.human_revocation_status === 'REVOKED'
-      !== ['REVOKED_BEFORE_FIRST_ADMISSION', 'REVOKED_AFTER_ACQUISITION', 'REVOKED_AFTER_DISPOSAL', 'RESOLUTION_REQUIRED_AFTER_REVOCATION'].includes(value.state)) {
+      !== ['REVOKED_BEFORE_FIRST_ADMISSION', 'REVOKED_BEFORE_ACQUISITION_SIGNING',
+        'REVOKED_BEFORE_DISPOSAL_SIGNING', 'REVOKED_AFTER_ACQUISITION', 'REVOKED_AFTER_DISPOSAL',
+        'RESOLUTION_REQUIRED_AFTER_REVOCATION'].includes(value.state)) {
     fail('bounded_agent_state_semantics_invalid', 'revocation status does not reconcile');
   }
   const shape = {
@@ -94,6 +98,8 @@ export function validateBoundedAgentEpisodeStateV1(value) {
     AGENT_REFUSED_ACQUISITION: [null, 1, false],
     AGENT_REFUSED_DISPOSAL: [null, 2, false],
     REVOKED_BEFORE_FIRST_ADMISSION: [null, 0, false],
+    REVOKED_BEFORE_ACQUISITION_SIGNING: [null, 1, false],
+    REVOKED_BEFORE_DISPOSAL_SIGNING: [null, 2, false],
     REVOKED_AFTER_ACQUISITION: [null, 1, false],
     REVOKED_AFTER_DISPOSAL: [null, 2, false],
   }[value.state];
@@ -217,6 +223,8 @@ export function applyHumanRevocationV1({ state, authorization_digest }) {
   if (state.human_revocation_status === 'REVOKED') fail('bounded_agent_revocation_replay', 'authorization was already revoked');
   if (state.possible_submission) return next(state, { state: 'RESOLUTION_REQUIRED_AFTER_REVOCATION', human_revocation_status: 'REVOKED' });
   if (state.state === 'AUTHORIZED_DORMANT') return next(state, { state: 'REVOKED_BEFORE_FIRST_ADMISSION', next_ordinal: null, human_revocation_status: 'REVOKED' });
+  if (state.state === 'ACQUISITION_ADMITTED') return next(state, { state: 'REVOKED_BEFORE_ACQUISITION_SIGNING', next_ordinal: null, human_revocation_status: 'REVOKED' });
+  if (state.state === 'DISPOSAL_ADMITTED') return next(state, { state: 'REVOKED_BEFORE_DISPOSAL_SIGNING', next_ordinal: null, human_revocation_status: 'REVOKED' });
   if (state.state === 'ACQUISITION_EVIDENCE_CLOSED') return next(state, { state: 'REVOKED_AFTER_ACQUISITION', next_ordinal: null, human_revocation_status: 'REVOKED' });
   fail('bounded_agent_revocation_state_invalid', 'revocation is not admitted from this state');
 }

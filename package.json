@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+    "test": "node --test engine/src/verification-scope-v1-3/*.test.mjs engine/src/verification-scope-v1-3/final-proof-agent/*.test.mjs engine/src/verification-scope-v1-3/final-proof-agent/reused/*.test.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

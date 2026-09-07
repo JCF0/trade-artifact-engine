@@ -8,6 +8,8 @@ import {
   buildFixedTestMandateV1,
 } from './fixtures/fixed-test-identities-v1.mjs';
 import {
+  admitAgentDecisionStateV1,
+  applyHumanRevocationV1,
   closeFinalizedLegV1,
   createAuthorizedEpisodeStateV1,
   validateBoundedAgentEpisodeStateV1,
@@ -40,6 +42,8 @@ function harness() {
       revokedEpisodes.add(episode_id);
       return 'REVOKED';
     },
+    async recordPreparedV1() { return 'PREPARED'; },
+    async recordKeyLoadStartedV1() { return 'KEY_LOAD_STARTED_AMBIGUOUS'; },
   };
   const executionPort = {
     async prepareBoundedLegV1({ mandate: boundMandate, challenge, admission }) {
@@ -221,6 +225,27 @@ test('revocation after possible submission requires resolution and cannot erase 
   assert.equal(resolved.next_ordinal, null);
 });
 
+test('revocation after admission but before key loading closes the leg without signing', () => {
+  const { mandate, authorization } = harness();
+  const state = createAuthorizedEpisodeStateV1({ mandate, authorization });
+  const challenge = challengeFor({
+    mandate, authorization, state, phase: 'ACQUISITION', nonce: 'pre-sign-revocation-0001',
+  });
+  const decision = buildFixedTestAgentDecisionV1(mandate, authorization, challenge);
+  const transitioned = admitAgentDecisionStateV1({
+    state, mandate, authorization, challenge, decision,
+    executor_release_sha256: mandate.offline_identity.executor_release_sha256,
+    now_unix_seconds: 1900000012,
+  });
+  const revoked = applyHumanRevocationV1({
+    state: transitioned.state,
+    authorization_digest: authorization.authorization_digest,
+  });
+  assert.equal(revoked.state, 'REVOKED_BEFORE_ACQUISITION_SIGNING');
+  assert.equal(revoked.possible_submission, false);
+  assert.equal(revoked.next_ordinal, null);
+});
+
 test('disposal is impossible before closed finalized acquisition and quantity substitution fails before signing', async () => {
   const { mandate, authorization, calls, executor } = harness();
   const initial = createAuthorizedEpisodeStateV1({ mandate, authorization });
@@ -254,6 +279,8 @@ test('disposal is impossible before closed finalized acquisition and quantity su
     decision_consumption_port: {
       async consumeEpisodeOrdinalV1() { return 'CONSUMED'; },
       async revokeAuthorizationV1() { return 'REVOKED'; },
+      async recordPreparedV1() { return 'PREPARED'; },
+      async recordKeyLoadStartedV1() { return 'KEY_LOAD_STARTED_AMBIGUOUS'; },
     },
     execution_port: maliciousPort,
     wallet_signer_port: { async signAdmittedTransactionV1() { calls.sign += 1; throw new Error('must not sign'); } },

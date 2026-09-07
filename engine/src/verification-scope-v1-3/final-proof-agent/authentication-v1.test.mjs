@@ -129,6 +129,35 @@ test('executor admission independently binds authorization, mandate, challenge, 
   assert.equal(Object.isFrozen(admission), true);
 });
 
+test('acquisition not-after is finite and does not expire later full disposal', () => {
+  const mandate = buildBoundedAgentMandateV1(mandateInput());
+  const authorization = authorizationFixture(mandate);
+  assert.equal(Number.isSafeInteger(authorization.acquisition_not_after_unix_seconds), true);
+  const challenge = buildReadinessChallengeV1({
+    episode_id: `bounded-agent-episode-${authorization.authorization_digest}`,
+    phase: 'DISPOSAL', ordinal: 2,
+    mandate_digest: mandate.mandate_digest, authorization_digest: authorization.authorization_digest,
+    predecessor_state: 'ACQUISITION_EVIDENCE_CLOSED', predecessor_state_digest: '7'.repeat(64),
+    executor_release_sha256: mandate.offline_identity.executor_release_sha256,
+    challenge_nonce: 'post-acquisition-deadline-disposal-v1', readiness_evidence_digest: '9'.repeat(64),
+    issued_at_unix_seconds: authorization.acquisition_not_after_unix_seconds + 10,
+    expires_at_unix_seconds: authorization.acquisition_not_after_unix_seconds + 110,
+    readiness_status: 'READY', finalized_acquisition_evidence_digest: '8'.repeat(64),
+    chain_derived_disposal_jup_raw: '21437310',
+    disposal_quantity_rule: 'FINALIZED_CHAIN_DERIVED_COMPLETE_ACQUIRED_JUP_BALANCE',
+  });
+  const decision = decisionFixture(mandate, authorization, challenge);
+  const admission = buildExecutorAdmissionV1({
+    mandate, authorization, challenge, decision,
+    expected_predecessor_state: challenge.predecessor_state,
+    expected_predecessor_state_digest: challenge.predecessor_state_digest,
+    expected_executor_release_sha256: mandate.offline_identity.executor_release_sha256,
+    now_unix_seconds: decision.signed_at_unix_seconds,
+  });
+  assert.equal(admission.status, 'ADMITTED');
+  assert.equal(decision.action, 'INITIATE_FULL_DISPOSAL');
+});
+
 test('executor rejects a human authorization issued in the future', () => {
   const mandate = buildBoundedAgentMandateV1(mandateInput());
   const authorization = authorizationFixture(mandate, { issued_at_unix_seconds: 1900000050 });

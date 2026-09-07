@@ -43,15 +43,16 @@ function finalProofTransactions(mandate) {
     return transformed;
   });
 }
-function targetAccountData(mandate) {
+function targetAccountData(mandate, rawAmount = '0') {
   const data = Buffer.alloc(165);
   new PublicKey(mandate.asset_scope.jup_mint).toBuffer().copy(data, 0);
   new PublicKey(mandate.wallet_scope.wallet).toBuffer().copy(data, 32);
+  data.writeBigUInt64LE(BigInt(rawAmount), 64);
   data[108] = 1;
   return data;
 }
-async function enumerationPort(mandate, boundaryKind, slot) {
-  const data = targetAccountData(mandate);
+async function enumerationPort(mandate, boundaryKind, slot, rawAmount = '0') {
+  const data = targetAccountData(mandate, rawAmount);
   return createFrozenControlledHeliusTargetAccountEnumerationPortV2({
     wallet: mandate.wallet_scope.wallet, target_mint: mandate.asset_scope.jup_mint,
     boundary_kind: boundaryKind, minimum_context_slot: slot,
@@ -80,8 +81,9 @@ function acquisitionRequest(mandate) {
     profiles: { wallet_acquisition_profile: 'wallet_wide_bounded_history_v1', wallet_normalization_profile: 'artifact_wallet_wide_solana_spot_normalization_v1' },
   };
 }
-async function createSyntheticFinalizedAuthority(mandate) {
-  const transactions = finalProofTransactions(mandate);
+async function createSyntheticFinalizedAuthority(mandate, { acquisition_only = false, acquisition_signature = null } = {}) {
+  const transactions = acquisition_only ? finalProofTransactions(mandate).slice(0, 1) : finalProofTransactions(mandate);
+  if (acquisition_signature !== null) transactions[0] = { ...transactions[0], signature: acquisition_signature };
   const descending = [...transactions].reverse();
   const sources = descending.map(({ signature, slot, block_time, execution_state }) => ({ signature, slot, block_time, execution_state }));
   const rawPort = {
@@ -104,12 +106,20 @@ async function createSyntheticFinalizedAuthority(mandate) {
     transaction_transcript_port: transcriptPort,
     legacy_acquisition_result: legacyAcquisitionResult,
     opening_enumeration_port: await enumerationPort(mandate, 'OPENING', 444006969),
-    ending_enumeration_port: await enumerationPort(mandate, 'ENDING_AS_OF', 444223890),
+    ending_enumeration_port: await enumerationPort(
+      mandate,
+      'ENDING_AS_OF',
+      444223890,
+      acquisition_only ? '21437310' : '0',
+    ),
     target_mint: mandate.asset_scope.jup_mint,
     opening_basis_reference: null,
   };
   const context = await buildSourceBoundAuthoritativeEvidenceContextV13(contextAuthority);
   return { context, context_authority: contextAuthority, exact_quote_mint: mandate.asset_scope.usdc_mint, transactions };
+}
+export async function createSyntheticAcquisitionAuthorityFixtureV1(mandate, { signature = null } = {}) {
+  return createSyntheticFinalizedAuthority(mandate, { acquisition_only: true, acquisition_signature: signature });
 }
 async function runExistingPipeline(authority) {
   const economicEvidencePort = await createProductionPositionEconomicEvidencePortV13({
@@ -168,6 +178,8 @@ async function buildBoundedAgentOfflineEpisodeFixtureV1(options = {}) {
         revokedEpisodes.add(episode_id);
         return 'REVOKED';
       },
+      async recordPreparedV1() { return 'PREPARED'; },
+      async recordKeyLoadStartedV1() { return 'KEY_LOAD_STARTED_AMBIGUOUS'; },
     },
     execution_port: { async prepareBoundedLegV1({ challenge, admission }) { return preparedFor(mandate, challenge, admission, authority); } },
     wallet_signer_port: { async signAdmittedTransactionV1({ admission, prepared_transaction: prepared }) {
@@ -254,7 +266,7 @@ async function buildBoundedAgentOfflineEpisodeFixtureV1(options = {}) {
     acquisition: { readiness: acquisitionChallenge, decision: acquisitionDecision, admission: acquisitionExecution.admission, signed_transaction_intent: acquisitionExecution.signed_transaction_intent, signed_transaction_intent_digest: acquisitionExecution.signed_transaction_intent_digest, transmission: acquisitionTransmission, finalized: acquisitionFinalized },
     disposal: { readiness: disposalChallenge, decision: disposalDecision, admission: disposalExecution.admission, signed_transaction_intent: disposalExecution.signed_transaction_intent, signed_transaction_intent_digest: disposalExecution.signed_transaction_intent_digest, transmission: disposalTransmission, finalized: disposalFinalized },
     reconstruction,
-    outcome: { status: 'CLAIM_VERIFIED_CLOSED', public_wording: 'An authorized agent-control runtime directed the bounded acquisition and disposal decisions; a constrained executor independently enforced the mandate and held the wallet key; Artifact independently reconstructed and verified the resulting onchain episode.' },
+    outcome: { status: 'CLAIM_VERIFIED_CLOSED', public_wording: 'In this offline fixture, authenticated agent-control decisions exercised a constrained executor; Artifact independently reconstructed synthetic finalized-provider evidence through the v1.3 pipeline. This does not assert that the fixture transactions occurred onchain.' },
   });
   const finalizedEvidencePort = createOfflineFinalizedEvidencePortV1({ capture_authority: async () => ({ context: authority.context, context_authority: authority.context_authority, exact_quote_mint: authority.exact_quote_mint }) });
   return Object.freeze({

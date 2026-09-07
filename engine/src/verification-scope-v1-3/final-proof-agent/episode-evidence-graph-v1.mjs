@@ -53,7 +53,7 @@ const GRAPH_FIELDS = [
   'episode_id', 'mandate', 'human_authorization', 'acquisition', 'disposal',
   'reconstruction', 'outcome', 'manifest',
 ];
-const PUBLIC_WORDING = 'An authorized agent-control runtime directed the bounded acquisition and disposal decisions; a constrained executor independently enforced the mandate and held the wallet key; Artifact independently reconstructed and verified the resulting onchain episode.';
+const PUBLIC_WORDING = 'In this offline fixture, authenticated agent-control decisions exercised a constrained executor; Artifact independently reconstructed synthetic finalized-provider evidence through the v1.3 pipeline. This does not assert that the fixture transactions occurred onchain.';
 function digestPreimage(value, fields, identityFields) {
   return Object.fromEntries(fields.filter(field => !identityFields.includes(field)).map(field => [field, value[field]]));
 }
