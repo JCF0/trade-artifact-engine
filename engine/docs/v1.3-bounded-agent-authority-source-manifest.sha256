@@ -1,5 +1,7 @@
 927cc6aaaaa48b90ed8019470392c37812b6c02736b588135876c02bdc67b0cc  Cargo.toml
-ea99c60744c49f8977983d12c30321e600b472d5afd4a0b92ac3bd0ae721416a  engine/docs/v1.3-bounded-agent-final-proof-offline-layer.md
+44a64fb4d324d3ec0bac1e1eee90bb200ac581110e663488c32a6fdd0c982c24  engine/docs/v1.3-bounded-agent-final-proof-offline-layer.md
+cbce6b53453773f44d89596d564ec71c5e4deda0545c2453c2f9a9c6aabedf29  engine/docs/v1.3-bounded-agent-rollback-deployment-decision.md
+08acf2ccc4011fc1f55e124f225526c65e22d9910527a482d85da6e82adf5e25  engine/docs/v1.3-construct-supervised-release-checklist.md
 64edc4f301f3a37b2b542935fd697e306472e939701ac2a034c7c1a35e8ddd75  engine/package.json
 9ce1f6a74285e01da22fdee41d68a405211c50eb6bd62628e1342c3d6a2220be  engine/src/acquisition/fixtures/retained-helius-real-shapes.json
 2653ee5434060e40e19b34419001590cc6cec21aa184c84e0cffa2d28bccc2a3  engine/src/candidate-set/acquisition-result.mjs
@@ -76,6 +78,11 @@ a10e139bd8eda7de92f691376dfddb6307dbf9cc484069bdab9faecc94367563  engine/src/ver
 87eae4eb748be1f6c279621db92667c5aea6224a913ed8f8ebc3149d698b344c  engine/src/verification-scope-v1-3/final-proof-agent/mandate-v1.mjs
 37b32d6e6ab97c31c6d9615db89ca7f2ee9c4b642470b9737d416931707d0805  engine/src/verification-scope-v1-3/final-proof-agent/mandate-v1.test.mjs
 c489e97a335f98851f306f1dae6831422d81db0dacd8e7cbd0b333e30e699170  engine/src/verification-scope-v1-3/final-proof-agent/offline-executor-core-v1.mjs
+e253b6aadfab9fd12976b8f078faca45c6e4e847a09baa636d584d744d1254e1  engine/src/verification-scope-v1-3/final-proof-agent/orca-message-boundary-v1.mjs
+cc977494c714fdba0e9b7bb136dba01a9fb70fbcf884070fb743f6f26d5582f6  engine/src/verification-scope-v1-3/final-proof-agent/orca-message-boundary-v1.test.mjs
+c71b4d06d73ef5d96e74ac98dae67c707a8fc7f872b7bc736ddf2f1f9ecb1926  engine/src/verification-scope-v1-3/final-proof-agent/orca-signed-wire-boundary-v1.mjs
+7b7efd57783d5e7906e2f03b862850cdd3a3cb749eb138080044cd79f9863c12  engine/src/verification-scope-v1-3/final-proof-agent/orca-signing-composition-v1.mjs
+d7a053063380265c1391cc4cbd8fe82c0c8595a817ab790154207c458cbc3a29  engine/src/verification-scope-v1-3/final-proof-agent/orca-signing-composition-v1.test.mjs
 b607ac809582488fe77fe26f838b3983e63c3c1aaaa678db22328cc76de09b85  engine/src/verification-scope-v1-3/final-proof-agent/readiness-challenge-v1.mjs
 111f9d9431e6301702011800eba4a6be09ba690e996b92fd2fabf6aca7d3c08e  engine/src/verification-scope-v1-3/final-proof-agent/reused/REVIEWED-SOURCE.json
 9dfed7dd40e97da0f98c1eba1d374a58f98eff2a12c25df2bdf2ad6f54c5bb16  engine/src/verification-scope-v1-3/final-proof-agent/reused/bounded-rebroadcast-v1.mjs
