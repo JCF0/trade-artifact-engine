@@ -5,7 +5,7 @@ import { captureAuthoritativeAcquisitionClosureV1 } from './acquisition-closure-
 import { validateAuthenticatedAgentDecisionV1 } from './agent-decision-v1.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
 import { validateHumanRevocationV1 } from './human-revocation-v1.mjs';
-import { assertLiveReadyBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { assertConfiguredExecutorMandateV1 as assertLiveReadyBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
 import { createOfflineBoundedExecutorCoreV1 } from './offline-executor-core-v1.mjs';
 import { applyHumanRevocationV1 } from './episode-state-machine-v1.mjs';
 import { validateReadinessChallengeV1 } from './readiness-challenge-v1.mjs';

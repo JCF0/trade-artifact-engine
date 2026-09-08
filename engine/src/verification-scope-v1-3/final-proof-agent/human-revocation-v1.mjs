@@ -1,7 +1,7 @@
 import { assertExactFields, cloneAndFreeze, fail, sha256CanonicalJson } from '../contract.mjs';
 import { domainSeparatedCanonicalBytesV1, verifyEd25519DomainSignatureV1 } from './authentication-domain-v1.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
-import { validateBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { validateExecutorMandateV1 as validateBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
 import { validateBoundedAgentEpisodeStateV1 } from './episode-state-machine-v1.mjs';
 
 export const HUMAN_REVOCATION_VERSION_V1 = 'artifact_bounded_agent_human_revocation_v1';

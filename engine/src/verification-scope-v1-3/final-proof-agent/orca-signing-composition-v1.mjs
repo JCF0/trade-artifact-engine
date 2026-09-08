@@ -77,7 +77,7 @@ export function createOfflineOrcaSigningCompositionV1({
         if (typeof build_input_port.assertFreshBeforeSigningV1 === 'function') {
           await build_input_port.assertFreshBeforeSigningV1({ challenge: retained.challenge });
         }
-        const result = await sign(Buffer.from(message));
+        const result = await sign(Buffer.from(message), { challenge: retained.challenge, admission });
         if (!Buffer.isBuffer(result)) reject('signer must return exact wire bytes');
         const wire = Buffer.from(result);
         const identity = retainExactSignedWireV1({ root: state_root, ordinal: admission.ordinal, message, wire });

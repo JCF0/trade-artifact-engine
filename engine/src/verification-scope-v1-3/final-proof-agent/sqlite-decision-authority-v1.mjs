@@ -1112,6 +1112,19 @@ function openCrashDurableDecisionAuthorityV1({ state_root, initialize = false, p
         durableError();
       }
     },
+    async readRetainedWireV1({ episode_id, ordinal }) {
+      if (typeof episode_id !== 'string' || !EPISODE.test(episode_id) || ![1, 2].includes(ordinal)) {
+        durableError('retained wire identity invalid');
+      }
+      const episode = getEpisode.get(episode_id);
+      verifyEpisodeRow(episode);
+      const row = database.prepare('SELECT * FROM ordinals WHERE episode_id = ? AND ordinal = ?').get(episode_id, ordinal);
+      verifyOrdinalRow(row);
+      if (!row || row.signed_wire_sha256 === null) durableError('no durable retained wire');
+      // Executor-only readback; not a submission permission or a path supplied by
+      // the controller. The same complete verifier is used at commit and reopen.
+      return readVerifiedSignedWire(root, row);
+    },
     closeV1() {
       if (closed) return;
       try {

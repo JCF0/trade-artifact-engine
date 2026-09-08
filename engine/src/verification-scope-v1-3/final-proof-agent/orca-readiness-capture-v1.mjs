@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import { cloneAndFreeze, sha256CanonicalJson, fail } from '../contract.mjs';
-import { validateBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { validateExecutorMandateV1 as validateBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
 import { buildOrcaMessageBoundaryV1 } from './orca-message-boundary-v1.mjs';
 import { buildReadinessChallengeV1 } from './readiness-challenge-v1.mjs';
 import { decodeFixedWhirlpoolV1, decodeFixedTickArrayV1, swapQuoteByInputToken } from '../../../orca-readiness-sdk/index.mjs';

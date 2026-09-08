@@ -1,7 +1,7 @@
 import { assertExactFields, cloneAndFreeze, fail, sha256CanonicalJson } from '../contract.mjs';
 import { buildExecutorAdmissionV1 } from './executor-admission-v1.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
-import { validateBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { validateExecutorMandateV1 as validateBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
 
 export const BOUNDED_AGENT_EPISODE_STATE_VERSION_V1 = 'artifact_bounded_agent_episode_state_v1';
 const DIGEST = /^[0-9a-f]{64}$/;

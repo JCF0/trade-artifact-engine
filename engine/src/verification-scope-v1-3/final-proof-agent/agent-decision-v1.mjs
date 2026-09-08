@@ -1,7 +1,7 @@
 import { assertExactFields, cloneAndFreeze, fail, sha256CanonicalJson } from '../contract.mjs';
 import { domainSeparatedCanonicalBytesV1, verifyEd25519DomainSignatureV1 } from './authentication-domain-v1.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
-import { validateBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { validateExecutorMandateV1 as validateBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
 import { validateReadinessChallengeV1 } from './readiness-challenge-v1.mjs';
 
 export const AUTHENTICATED_AGENT_DECISION_VERSION_V1 = 'artifact_bounded_agent_authenticated_decision_v1';

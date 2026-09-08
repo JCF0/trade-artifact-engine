@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import { assertExactFields, cloneAndFreeze, fail, sha256CanonicalJson } from '../contract.mjs';
-import { validateBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { validateExecutorMandateV1 as validateBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
 
 // Pure mapping only: these inputs must come from executor-owned readiness authority.
 // This module cannot attest a quote, finalized pool state, message fee, or chain time.
