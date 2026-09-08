@@ -81,8 +81,8 @@ function acquisitionRequest(mandate) {
     profiles: { wallet_acquisition_profile: 'wallet_wide_bounded_history_v1', wallet_normalization_profile: 'artifact_wallet_wide_solana_spot_normalization_v1' },
   };
 }
-async function createSyntheticFinalizedAuthority(mandate, { acquisition_only = false, acquisition_signature = null } = {}) {
-  const transactions = acquisition_only ? finalProofTransactions(mandate).slice(0, 1) : finalProofTransactions(mandate);
+async function createSyntheticFinalizedAuthority(mandate, { acquisition_only = false, acquisition_signature = null, disposal_only = false, acquisition_evidence_digest = 'a'.repeat(64) } = {}) {
+  const transactions = disposal_only ? finalProofTransactions(mandate).slice(1) : acquisition_only ? finalProofTransactions(mandate).slice(0, 1) : finalProofTransactions(mandate);
   if (acquisition_signature !== null) transactions[0] = { ...transactions[0], signature: acquisition_signature };
   const descending = [...transactions].reverse();
   const sources = descending.map(({ signature, slot, block_time, execution_state }) => ({ signature, slot, block_time, execution_state }));
@@ -105,7 +105,7 @@ async function createSyntheticFinalizedAuthority(mandate, { acquisition_only = f
   const contextAuthority = {
     transaction_transcript_port: transcriptPort,
     legacy_acquisition_result: legacyAcquisitionResult,
-    opening_enumeration_port: await enumerationPort(mandate, 'OPENING', 444006969),
+    opening_enumeration_port: await enumerationPort(mandate, 'OPENING', 444006969, disposal_only ? '21437310' : '0'),
     ending_enumeration_port: await enumerationPort(
       mandate,
       'ENDING_AS_OF',
@@ -113,13 +113,17 @@ async function createSyntheticFinalizedAuthority(mandate, { acquisition_only = f
       acquisition_only ? '21437310' : '0',
     ),
     target_mint: mandate.asset_scope.jup_mint,
-    opening_basis_reference: null,
+    opening_basis_reference: disposal_only ? { basis_evidence_profile: 'ARTIFACT_OPENING_BASIS_EVIDENCE_V1',
+      basis_evidence_digest: acquisition_evidence_digest } : null,
   };
   const context = await buildSourceBoundAuthoritativeEvidenceContextV13(contextAuthority);
   return { context, context_authority: contextAuthority, exact_quote_mint: mandate.asset_scope.usdc_mint, transactions };
 }
 export async function createSyntheticAcquisitionAuthorityFixtureV1(mandate, { signature = null } = {}) {
   return createSyntheticFinalizedAuthority(mandate, { acquisition_only: true, acquisition_signature: signature });
+}
+export async function createSyntheticDisposalAuthorityFixtureV1(mandate, { signature = null, acquisition_evidence_digest } = {}) {
+  return createSyntheticFinalizedAuthority(mandate, { disposal_only: true, acquisition_signature: signature, acquisition_evidence_digest });
 }
 async function runExistingPipeline(authority) {
   const economicEvidencePort = await createProductionPositionEconomicEvidencePortV13({

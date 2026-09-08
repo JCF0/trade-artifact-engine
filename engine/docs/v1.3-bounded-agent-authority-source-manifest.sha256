@@ -67,7 +67,7 @@ ffc7f6b29373a1bb74b9a7dcb1cbbf5b06a3a0d2b7aabbca8a5c8130c94ad1b4  engine/src/ver
 132d0824928c5e0ec4527af63ff4c7b5acfabc9a5b611074a3cbef20704d4560  engine/src/verification-scope-v1-3/episode-candidate-population.test.mjs
 7e9e94a43f19aff681b38e0060c76723cab513e6c83859be08d67af5eba52aff  engine/src/verification-scope-v1-3/explicit-candidate-selection.mjs
 4bc3da792570cb1e5a59ee85de97bb957a3db6b9cd11ef6bd8bbb9e35dd2d847  engine/src/verification-scope-v1-3/explicit-candidate-selection.test.mjs
-b53facb5887075bfb889543c0e93c8fb5b9c896960f4df1950fca7f7ddc7f35d  engine/src/verification-scope-v1-3/final-proof-agent/acquisition-closure-authority-v1.mjs
+b09006b13ea9c59031e49b2c8dcbca691a32d2b01b2753151576819467d8df73  engine/src/verification-scope-v1-3/final-proof-agent/acquisition-closure-authority-v1.mjs
 9b85e8d857e249a4964fbb52219b83d2a5aaf2cade19eae660bb325592591131  engine/src/verification-scope-v1-3/final-proof-agent/acquisition-closure-authority-v1.test.mjs
 9ce01886790acc525bd1c1109a92edfb37ff2757034faa5700c1a811e8aeac9d  engine/src/verification-scope-v1-3/final-proof-agent/agent-decision-v1.mjs
 9331532ff5cc2a4738f3ac5f3910275a8e32d6dadb0550919ca656dc78c8bffe  engine/src/verification-scope-v1-3/final-proof-agent/authentication-domain-v1.mjs
@@ -79,7 +79,7 @@ e5bc219f09b4588458e0f2402b135f806764a7b03163606705a79fa359d7d128  engine/src/ver
 34f353c6236dd0d7ea8345823d33da55d019d19970338dbbcd3f222eaf38560b  engine/src/verification-scope-v1-3/final-proof-agent/final-proof-e2e-gate-v1.mjs
 a315d778272449ea13376a628ca5b0f9324a5cc20d44db6008880d92859408c9  engine/src/verification-scope-v1-3/final-proof-agent/final-proof-e2e-gate-v1.test.mjs
 b2c6088f71fcdf4a52089c28817d6e93f7c58986309a4b5deed00bd9ed5c6fbe  engine/src/verification-scope-v1-3/final-proof-agent/finalized-evidence-adapter-v1.mjs
-8306cce6af17339c81bdf1e626a4f70ab0ec4c41b85cf0f5022320632c6a0f53  engine/src/verification-scope-v1-3/final-proof-agent/fixtures/bounded-agent-offline-v1.mjs
+0ec944b6133b73c53dd7b8dc37a78144f34f1042e3999ce08e2fa5c2c2afc24d  engine/src/verification-scope-v1-3/final-proof-agent/fixtures/bounded-agent-offline-v1.mjs
 6515d175820aff5852ce2aef90448dd7bb78d8736220f588faa6899e350de22c  engine/src/verification-scope-v1-3/final-proof-agent/fixtures/fixed-test-identities-v1.mjs
 b3d70911d941c69a0adcbbdfaf878379f7fb9991b8c91763a6a20caff03ba697  engine/src/verification-scope-v1-3/final-proof-agent/human-authorization-v1.mjs
 a55ba2de42841a1662e68bd75f79c34d8ab0546b6a8b2db6da8553e12fe5ac87  engine/src/verification-scope-v1-3/final-proof-agent/human-revocation-v1.mjs
@@ -103,7 +103,7 @@ b607ac809582488fe77fe26f838b3983e63c3c1aaaa678db22328cc76de09b85  engine/src/ver
 84628466f8d36db2c275dacb943664512782bee7fd5520a54dab8866962cf596  engine/src/verification-scope-v1-3/final-proof-agent/reused/bounded-rebroadcast-v1.test.mjs
 ba39f4d5729f03394b5f619b15880397ec9c29a0d278cf7d5cf5730a23cd9066  engine/src/verification-scope-v1-3/final-proof-agent/reused/transaction-error-v1.cjs
 5bd7fd41a1f1a5faafa6a2ebe63276dd4dbe8c3e4aa63cfe051660c47d12ac61  engine/src/verification-scope-v1-3/final-proof-agent/run-final-proof-e2e-gate-v1.mjs
-37f1776699afb22d6d1dd89128bb233c3ebff57de8724be23b70619835d68662  engine/src/verification-scope-v1-3/final-proof-agent/sqlite-decision-authority-v1.mjs
+4ba8ec931937efefaa951167857cba6005156459980c1a769cd7d7eb8116db04  engine/src/verification-scope-v1-3/final-proof-agent/sqlite-decision-authority-v1.mjs
 3e7a62493c06166957b427c42eca8b36059d8a33f40dd9efbbe4645f4a759db8  engine/src/verification-scope-v1-3/final-proof-agent/sqlite-decision-authority-v1.test.mjs
 bda8770053849e3fbd020d49fc34b17a2220a325c9ddc16bfcb6c1d9e5a800f2  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-authenticated-control-plane-v1.mjs
 a2b19d900270cae9d4513ee416602d188df4522038d3f0a28c4ede5be9c36a10  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-authenticated-control-plane-v1.test.mjs
@@ -178,5 +178,11 @@ c4398c5f1f6ec9069042c3e01d0a9f8509723ed53c93f5244cc8d69a686c66bc  engine/src/ver
 dcd3285bde9c4d2cea56f822ea675c2a5ce04dc254f92c03ad8666a4497b19fb  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-decision-channel-v1.test.mjs
 caaa772a5f87aef8b1bc44e4af9c362623223464e86e99f997e3c848c231d4e4  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-production-configuration-v1.mjs
 8b4c3e793f8f6378769b11106f427d16d5d6eb39e5e96cf7c87c225d1b292653  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-production-configuration-v1.test.mjs
-6d4c4a510a0eecc7631ae69949e8119ebe1d77014d6a4622ae2e8e2ca1ef821b  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-trusted-runtime-v1.mjs
-0a1350f985a6c28f73095d1d1ca3f24305647ea297d88083eea931d26f5cc2ba  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-trusted-runtime-v1.test.mjs
+71cf8d61c04aaf3299ded43402f8abd648210390411dab3cf7d5ee306139e4bb  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-trusted-runtime-v1.mjs
+1518322a5727d47d0a8a72b7a048565918b53d6f2653f6a5d2eded2da6c3390c  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-trusted-runtime-v1.test.mjs
+c29400aa419076d7fad691a005d2a89d74b3406da65535542d84997cb1678074  engine/src/verification-scope-v1-3/final-proof-agent/fixtures/submission-runtime-offline-v1.mjs
+17de0b1a5e18eef1e0854d30ce39381f1a858914048836de80538105163c25d7  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-submission-v1.mjs
+3593e4a407687b91851a3cadbebbc673980f84ad98560e1eaf545649245eab6b  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-submission-v1.test.mjs
+eeec297ff0f8fda9b9cb2ef93f70e3f9bf007dadced9f25d5b18d63a9cbf8d5f  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-submission-recovery-v1.test.mjs
+4623e3f25d6462f30f5328c75952eaf233d9f60b9bad751db6b57b3f88801f95  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-terminal-closure-v1.mjs
+8a7d95e06ad18fb2e883f1b43e63bb8e4ff7b2f4f985f51dc81f54400cc062d1  engine/src/verification-scope-v1-3/final-proof-agent/wiggles-submission-timing-v1.test.mjs

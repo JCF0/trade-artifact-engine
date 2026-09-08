@@ -9,6 +9,7 @@ import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mj
 import { createCrashDurableDecisionAuthorityV1 } from './sqlite-decision-authority-v1.mjs';
 import { createOrcaReadinessCaptureV1 } from './orca-readiness-capture-v1.mjs';
 import { createOfflineOrcaSigningCompositionV1 } from './orca-signing-composition-v1.mjs';
+import { createOfflineTrustedSubmissionV1 } from './wiggles-submission-v1.mjs';
 
 const CONFIG_FIELDS = ['mandate', 'authorization', 'executor_release_sha256', 'expected_wallet',
   'wallet_key_path', 'state_root', 'budget', 'deadline_unix_seconds'];
@@ -142,13 +143,14 @@ export function validateWigglesRuntimeConfigurationV1(configuration, now) {
 // Released offline qualification surface. No production-wallet configuration can
 // reach this body. The intended live factory is unchanged and has no enable flag.
 // transport/clock are trusted process construction, NEVER agent channel values.
-export function createOfflineTrustedWigglesRuntimeV1(configuration, { transport, clock }) {
+export function createOfflineTrustedWigglesRuntimeV1(configuration, { transport, clock, submission }) {
   const c = validateWigglesRuntimeConfigurationV1(configuration, clock.unixSeconds());
   if (c.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) reject('offline disposable wallet profile required');
   const authority = createCrashDurableDecisionAuthorityV1({ state_root: c.state_root });
   const episodeId = `bounded-agent-episode-${c.authorization.authorization_digest}`;
-  let control;
+  let control, submitter;
   try {
+    submitter = createOfflineTrustedSubmissionV1(c, { authority, clock, submission });
     const capture = createOrcaReadinessCaptureV1({ mandate: c.mandate, authorization: c.authorization,
       budget: c.budget, deadline_unix_seconds: c.deadline_unix_seconds, transport, clock,
       retain_evidence: async record => retainEvidence(c.state_root, record), durable_episode_authority: authority });
@@ -183,7 +185,8 @@ export function createOfflineTrustedWigglesRuntimeV1(configuration, { transport,
     }),
     trusted: Object.freeze({ readRetainedWireV1(ordinal) {
       now(); return authority.readRetainedWireV1({ episode_id: episodeId, ordinal });
-    } }),
+    }, submitRetainedIntentV1(ordinal) { now(); return submitter.submit(ordinal); },
+    finalizeRetainedIntentV1(ordinal) { now(); return submitter.finalize(ordinal); } }),
     closeV1() { if (!closed) { authority.closeV1(); closed = true; } },
   });
 }

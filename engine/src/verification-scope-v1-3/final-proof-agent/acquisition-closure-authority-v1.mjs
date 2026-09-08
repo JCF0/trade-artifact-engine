@@ -5,7 +5,7 @@ import { canonicalJson, cloneAndFreeze, fail, sha256CanonicalJson } from '../con
 import { projectSolanaFullTransactionEffectV13 } from '../solana-full-transaction-effect-projector.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
 import { validateFinalizedLegEvidenceV1 } from './episode-evidence-graph-v1.mjs';
-import { validateBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { validateExecutorMandateV1 as validateBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
 
 const PORTS = new WeakMap();
 const PROOFS = new WeakSet();

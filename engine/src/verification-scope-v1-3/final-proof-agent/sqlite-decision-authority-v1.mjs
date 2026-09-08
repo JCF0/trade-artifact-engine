@@ -906,7 +906,8 @@ function openCrashDurableDecisionAuthorityV1({ state_root, initialize = false, p
         }
         if (activeOrdinal?.stage === 'SIGNED_INTENT_DURABLE') {
           readVerifiedSignedWire(root, activeOrdinal);
-          const signedState = recordSignedIntentV1({ state: predecessor, signed_intent_digest: activeOrdinal.signed_intent_digest });
+          const signedState = ['ACQUISITION_SUBMISSION_RESOLVING', 'DISPOSAL_SUBMISSION_RESOLVING'].includes(predecessor.state)
+            ? predecessor : recordSignedIntentV1({ state: predecessor, signed_intent_digest: activeOrdinal.signed_intent_digest });
           const resolvingRevoked = applyHumanRevocationV1({ state: signedState, authorization_digest: value.authorization_digest });
           updateState(predecessor, resolvingRevoked);
           return 'REVOKED_SIGNED_BYTES_DURABLE';

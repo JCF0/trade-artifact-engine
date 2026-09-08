@@ -91,6 +91,41 @@ function setup() {
     cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
+test('trusted submission runs reviewed scheduler from independently reread durable intent', async () => {
+  const { createOfflineTrustedWigglesRuntimeV1 } = await import('./wiggles-trusted-runtime-v1.mjs');
+  const f = setup(); let runtime;
+  const calls = []; let wire;
+  const submission = { profile: 'OFFLINE_INJECTED_SUBMISSION_V1', max_calls: 188,
+    overall_timeout_ms: 190000, max_response_bytes: 1048576,
+    sleep: async ms => { f.source.time.mono += ms; },
+    transport: async request => {
+      calls.push(request);
+      let result;
+      if (request.kind === 'send') result = request.params[0] && request.expectedSignature;
+      if (request.kind === 'status') result = { context: { slot: 900000010 }, value: request.ordinal < 1000 ? [null]
+        : [{ slot: 900000010, confirmations: null, err: null, confirmationStatus: 'finalized' }] };
+      if (request.kind === 'blockHeight') result = 900000000;
+      if (request.kind === 'transaction') result = { slot: 900000010, transaction: [wire.toString('base64'), 'base64'], meta: { err: null } };
+      return { status: 200, body: Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: request.id, result })) };
+    } };
+  try {
+    runtime = createOfflineTrustedWigglesRuntimeV1(f.configuration, { ...f.source, submission });
+    const challenge = await runtime.supervisor.issueReadinessChallengeV1('ACQUISITION');
+    f.source.time.wall++;
+    await runtime.agent.submitDecisionBytesV1(Buffer.from(canonicalJson(buildFixedTestAgentDecisionV1(f.mandate, f.authorization, challenge))));
+    wire = await runtime.trusted.readRetainedWireV1(1);
+    assert.equal(typeof runtime.trusted.submitRetainedIntentV1, 'function');
+    const result = await runtime.trusted.submitRetainedIntentV1(1);
+    assert.equal(result.classification, 'FINALIZED_SUCCESS');
+    assert.equal(result.economic_authority, 'NOT_PROMOTED');
+    assert.equal(calls.filter(r => r.kind === 'send').length, 3);
+    assert.ok(calls.filter(r => r.kind === 'send').every(r => r.params[0] === wire.toString('base64')));
+    runtime.closeV1(); runtime = createOfflineTrustedWigglesRuntimeV1(f.configuration, { ...f.source, submission });
+    assert.deepEqual(await runtime.trusted.submitRetainedIntentV1(1), result);
+    assert.equal(calls.filter(r => r.kind === 'send').length, 3);
+  } finally { runtime?.closeV1(); f.cleanup(); }
+});
+
 test('concrete runtime captures, authenticates, loads disposable key and returns only durable identity', async () => {
   const { createOfflineTrustedWigglesRuntimeV1 } = await import('./wiggles-trusted-runtime-v1.mjs');
   const f = setup(); let runtime;
