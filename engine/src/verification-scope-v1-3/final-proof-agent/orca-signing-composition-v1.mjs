@@ -53,7 +53,7 @@ export function createOfflineOrcaSigningCompositionV1({
           unsigned_transaction_digest: sha256CanonicalJson(plan), readiness_evidence_digest: challenge.readiness_evidence_digest,
         });
         if (pending.has(admission.admission_digest)) reject('prepared plan already exists');
-        pending.set(admission.admission_digest, { plan, prepared });
+        pending.set(admission.admission_digest, { plan, prepared, challenge });
         return prepared;
       },
     },
@@ -74,6 +74,9 @@ export function createOfflineOrcaSigningCompositionV1({
         }
         const message = Buffer.from(retained.plan.message_base64, 'base64');
         assertExactOrcaMessageV1(retained.plan, message);
+        if (typeof build_input_port.assertFreshBeforeSigningV1 === 'function') {
+          await build_input_port.assertFreshBeforeSigningV1({ challenge: retained.challenge });
+        }
         const result = await sign(Buffer.from(message));
         if (!Buffer.isBuffer(result)) reject('signer must return exact wire bytes');
         const wire = Buffer.from(result);

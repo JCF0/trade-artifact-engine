@@ -2,6 +2,7 @@ import { types as utilTypes } from 'node:util';
 
 import { cloneAndFreeze, sha256CanonicalJson } from '../verification-scope-v1-3/contract.mjs';
 import { isSolanaPublicKeyV1 } from './solana-identities.mjs';
+import { isSolanaRentEpochV1 } from './solana-rent-epoch-v1.mjs';
 import {
   CLASSIC_TOKEN_PROGRAM_V1,
   TOKEN_2022_PROGRAM_V1,
@@ -166,7 +167,7 @@ function parseRow(row, program, wallet) {
   const account = row.account;
   if (!isSolanaPublicKeyV1(row.pubkey) || account.owner !== program || account.executable !== false
       || !Number.isSafeInteger(account.lamports) || account.lamports < 0 || Object.is(account.lamports, -0)
-      || !Number.isSafeInteger(account.rentEpoch) || account.rentEpoch < 0 || Object.is(account.rentEpoch, -0)
+      || !isSolanaRentEpochV1(account.rentEpoch)
       || !Number.isSafeInteger(account.space) || account.space < 0 || Object.is(account.space, -0)) {
     fail('helius_owner_population_invalid');
   }

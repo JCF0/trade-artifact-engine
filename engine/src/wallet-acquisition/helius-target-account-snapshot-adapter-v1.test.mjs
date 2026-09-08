@@ -98,6 +98,55 @@ async function capture(port, boundary = 'OPENING') {
   return captureTargetAccountEnumerationV1({ port, wallet: WALLET, target_mint: MINT, boundary_kind: boundary });
 }
 
+test('exact u64 rent metadata passes the owner authority without losing its decimal identity', async () => {
+  const h = harness(body => {
+    const account = row(CLASSIC_ACCOUNT, CLASSIC);
+    account.account.rentEpoch = '18446744073709551615';
+    return rpc(body.id, 500, body.params[1].programId === CLASSIC ? [account] : []);
+  });
+  const result = await capture(await createFrozenHeliusTargetAccountEnumerationPortV2(input(), h.dependencies));
+  assert.equal(result.program_results[0].accounts[0].rent_epoch, '18446744073709551615');
+});
+
+test('safe Number rent metadata preserves normalized evidence identities under exact string input', async () => {
+  async function result(value) {
+    const h = harness(body => {
+      const account = row(CLASSIC_ACCOUNT, CLASSIC);
+      account.account.rentEpoch = value;
+      return rpc(body.id, 500, body.params[1].programId === CLASSIC ? [account] : []);
+    });
+    return capture(await createFrozenHeliusTargetAccountEnumerationPortV2(input(), h.dependencies));
+  }
+  for (const value of [0, 1, Number.MAX_SAFE_INTEGER]) {
+    assert.deepEqual(await result(value), await result(String(value)));
+  }
+  const zero = await result(0), one = await result(1);
+  assert.notEqual(sha256CanonicalJson(zero), sha256CanonicalJson(one));
+  assert.deepEqual(zero.program_results[0].accounts[0].token_state, one.program_results[0].accounts[0].token_state);
+});
+
+test('owner authority still rejects unsafe or invalid metadata and never broadens lamports or context', async () => {
+  for (const value of [Number.MAX_SAFE_INTEGER + 1, Number('18446744073709551615'), -0, -1, 0.5,
+    '18446744073709551616', '-1', '1.5', '01', '', null, true]) {
+    const h = harness(body => {
+      const account = row(CLASSIC_ACCOUNT, CLASSIC); account.account.rentEpoch = value;
+      return rpc(body.id, 500, body.params[1].programId === CLASSIC ? [account] : []);
+    });
+    await assert.rejects(createFrozenHeliusTargetAccountEnumerationPortV2(input(), h.dependencies), { code: 'helius_owner_population_invalid' });
+    assert.equal(h.calls.length, 2);
+  }
+  for (const field of ['lamports', 'space']) {
+    const h = harness(body => {
+      const account = row(CLASSIC_ACCOUNT, CLASSIC);
+      account.account.rentEpoch = '18446744073709551615'; account.account[field] = '1';
+      return rpc(body.id, 500, body.params[1].programId === CLASSIC ? [account] : []);
+    });
+    await assert.rejects(createFrozenHeliusTargetAccountEnumerationPortV2(input(), h.dependencies), { code: 'helius_owner_population_invalid' });
+  }
+  const h = harness(body => rpc(body.id, '500', []));
+  await assert.rejects(createFrozenHeliusTargetAccountEnumerationPortV2(input(), h.dependencies), { code: 'helius_rpc_schema_invalid' });
+});
+
 test('captures one non-atomic equal-watermark pair with independent lane completeness evidence', async () => {
   const h = harness(body => rpc(body.id, 500, body.params[1].programId === CLASSIC
     ? [row(CLASSIC_ACCOUNT, CLASSIC)] : []));

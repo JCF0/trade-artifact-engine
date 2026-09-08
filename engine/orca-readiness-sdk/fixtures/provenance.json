@@ -1,0 +1,18 @@
+{
+  "classification": "RETAINED_CALIBRATION_REPLAY_NOT_LIVE_READINESS",
+  "archive_sha256": "58e60c1f0aea1e745475d83945ca516bc6e9fe16ae1805efdd286d31c1adb8f1",
+  "members": [
+    {
+      "member": "acquisition-20260903T153624603Z/build-and-quote.json",
+      "sha256": "e904c5f50c9532850f079d577b50198e1d32e0fb33290a40862828ba74a16747"
+    },
+    {
+      "member": "acquisition-20260903T153624603Z/raw-rpc-3106-getAccountInfo.json",
+      "sha256": "d48d87303939a9e2b1530ad4d1f4555b19fbafb92cb16558d3fe552c2081bef0"
+    },
+    {
+      "member": "acquisition-20260903T153624603Z/raw-rpc-3107-getMultipleAccounts.json",
+      "sha256": "d28f5a967b2bc3b43e763ae7bf9a6ba7331cfda971a65cca1ac43a8d489ddf11"
+    }
+  ]
+}
