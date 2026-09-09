@@ -178,7 +178,8 @@ function validateTerminal(terminal, intent) {
   }
   return result;
 }
-function validateCallTiming(root, name, binding, request, retention) {
+function validateCallTiming(root, name, binding, request, retention, access = { json, read }) {
+  const { json, read } = access;
   const event = json(join(root, name)), t = json(join(root, name.replace('call-', 'timing-')));
   assertExactFields(t, ['schema', 'request_id', 'call_sha256', 'request_ordinal', 'acknowledgment_origin_ms',
     'resolution_origin_ms', 'disposition', 'dispatch_ms', 'dispatch_unix_seconds', 'observed_ms',
@@ -215,6 +216,37 @@ function validateCallTiming(root, name, binding, request, retention) {
   return t;
 }
 export function validateRetainedSubmissionEvidenceV1({ root, expected_binding }) {
+  return validateSubmissionContents({ root, expected_binding }, { json, read, snapshot, readdirSync });
+}
+// Same verifier, with an immutable byte snapshot instead of executor-root I/O.
+// This proves retained transmission consistency, never provider truth/economics.
+export function validateRetainedSubmissionSnapshotV1({ members, expected_binding }) {
+  const values = cloneAndFreeze(members), files = new Map();
+  if (!Array.isArray(values) || values.length > 1500) stop();
+  let total = 0;
+  for (const member of values) {
+    assertExactFields(member, ['path', 'base64'], 'submission_snapshot_member');
+    if (typeof member.path !== 'string' || !/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+){0,3}$/.test(member.path)
+        || member.path.split('/').some(p => p === '.' || p === '..') || files.has(member.path)
+        || typeof member.base64 !== 'string' || member.base64.length > 5592408) stop();
+    const bytes = Buffer.from(member.base64, 'base64'); total += bytes.length;
+    if (!bytes.length || bytes.length > 4194304 || total > 67108864 || bytes.toString('base64') !== member.base64) stop();
+    files.set(member.path, bytes);
+  }
+  const readBytes = name => { const b = files.get(name); if (!b) stop(); return Buffer.from(b); };
+  const parse = name => { const b = readBytes(name), v = JSON.parse(b); if (!Buffer.from(canonicalJson(v)).equals(b)) stop(); return v; };
+  const list = prefix => [...new Set([...files.keys()].filter(p => !prefix || p.startsWith(`${prefix}/`))
+    .map(p => p.slice(prefix ? prefix.length + 1 : 0).split('/')[0]))];
+  const sub = prefix => {
+    const subset = new Map([...files].filter(([p]) => p.startsWith(`${prefix}/`)).map(([p, b]) => [p.slice(prefix.length + 1), Buffer.from(b)]));
+    const directories = new Set(['']);
+    for (const p of subset.keys()) { const parts = p.split('/'); for (let i = 1; i < parts.length; i++) directories.add(parts.slice(0, i).join('/')); }
+    return { files: subset, directories };
+  };
+  return validateSubmissionContents({ root: '', expected_binding }, { json: parse, read: readBytes, snapshot: sub, readdirSync: list });
+}
+function validateSubmissionContents({ root, expected_binding }, access) {
+  const { json, read, snapshot, readdirSync } = access;
   const binding = json(join(root, 'binding.json'));
   if (canonicalJson(binding) !== canonicalJson(expected_binding)) stop();
   const signed = json(join(root, 'signed-intent.json'));
@@ -255,7 +287,7 @@ export function validateRetainedSubmissionEvidenceV1({ root, expected_binding })
     const [path, body] = matches[0], decoded = JSON.parse(body);
     const files = scheduler.files.has(path) ? scheduler.files : terminal.files;
     const request = JSON.parse(files.get(path.replace('-request-body.json', '-request.json')));
-    validateCallTiming(root, name, binding, request, JSON.parse(files.get(path.replace('-request-body.json', '-retention.json'))));
+    validateCallTiming(root, name, binding, request, JSON.parse(files.get(path.replace('-request-body.json', '-retention.json'))), access);
     if (request.timeout_ms !== event.timeout_ms || decoded.method !== {
       send: 'sendTransaction', status: 'getSignatureStatuses', blockHeight: 'getBlockHeight', transaction: 'getTransaction',
     }[event.kind]) stop();

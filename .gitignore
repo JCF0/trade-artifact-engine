@@ -30,6 +30,8 @@ artifact-v114-live-validation-report.json
 !engine/src/wallet-acquisition/fixtures/jupiter_close_account_full.json
 !engine/src/wallet-acquisition/fixtures/provenance-fidelity-manifest.json
 !engine/src/verification-scope-v1-3/final-proof-agent/reused/REVIEWED-SOURCE.json
+!engine/src/verification-scope-v1-3/final-proof-agent/fixtures/retained-calibration-acquisition-response.json
+!engine/src/verification-scope-v1-3/final-proof-agent/fixtures/retained-calibration-disposal-response.json
 
 # Track reviewed static display metadata registries
 !engine/assets/
