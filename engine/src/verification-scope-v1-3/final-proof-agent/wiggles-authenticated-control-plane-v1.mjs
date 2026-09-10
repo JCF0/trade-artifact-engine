@@ -55,6 +55,7 @@ export function createWigglesAuthenticatedControlPlaneV1({
   readiness_challenge_port,
   execution_port,
   wallet_signer_port,
+  authenticated_decision_observer,
 }) {
   assertLiveReadyBoundedAgentMandateV1(mandate);
   validateHumanEpisodeAuthorizationV1(authorization, { mandate });
@@ -167,6 +168,8 @@ export function createWigglesAuthenticatedControlPlaneV1({
         episode_id: episodeId,
         challenge_id: `readiness-challenge-${decision.challenge_digest}`,
       });
+      if (authenticated_decision_observer) await authenticated_decision_observer({ state, challenge, decision,
+        admitted_at_unix_seconds: now_unix_seconds });
       const result = await executor.executeAgentDecisionV1({
         state, mandate, authorization, challenge, decision, now_unix_seconds,
       });

@@ -18,6 +18,7 @@ import { inspectSignedLegacyWire } from './reused/bounded-rebroadcast-v1.mjs';
 import { loadRetainedEpisodePackageV1, RetainedEpisodePackageError } from './retained-episode-package-v1.mjs';
 import { loadRetainedControlV1, evaluateRetainedControlV1 } from './retained-final-control-v1.mjs';
 import { OFFLINE_WALLET_SCOPE_V1 } from './executor-mandate-profile-v1.mjs';
+import { admitSupervisedHistoryV1 } from './supervised-history-v1.mjs';
 
 const HASH = b => createHash('sha256').update(b).digest('hex');
 const CALIBRATION_WALLET = '6nHvRF1wK9T4wdnbSZES4mrAfKfJPkVX5wrHqhbkDBgs';
@@ -42,22 +43,23 @@ function descriptor(loaded, kind) {
     SYNTHETIC_FINAL_EPISODE: OFFLINE_WALLET_SCOPE_V1.wallet,
     SUPERVISED_RETAINED_FINAL_EPISODE: '5CJdSbz9d5CifzFcWL5NcbicgpSAEuDGpSZBgaLHN1tA' };
   if (d.evidence_kind !== kind || !Object.hasOwn(wallets, kind)
-      || d.version !== (kind === 'CALIBRATION_TRANSACTIONS_SYNTHETIC_BOUNDARIES' ? 'artifact_final_episode_replay_v1' : 'artifact_final_episode_replay_v2')) stop('REPLAY_SOURCE_ADMISSION_UNAVAILABLE');
+      || !(kind === 'CALIBRATION_TRANSACTIONS_SYNTHETIC_BOUNDARIES' ? ['artifact_final_episode_replay_v1']
+        : ['artifact_final_episode_replay_v2', 'artifact_final_episode_replay_v3']).includes(d.version)) stop('REPLAY_SOURCE_ADMISSION_UNAVAILABLE');
   assertExactFields(d.scope, ['wallet', 'target_mint', 'exact_quote_mint', 'route_program', 'route_pool'], 'episode_scope');
   if (d.scope.wallet !== wallets[kind] || d.scope.target_mint !== JUP || d.scope.exact_quote_mint !== USDC
       || d.scope.route_program !== PROGRAM || d.scope.route_pool !== POOL || d.acquisition_request.wallet !== d.scope.wallet) stop('REPLAY_SCOPE_MISMATCH');
-  assertExactFields(d.history, ['genesis', 'slot', 'block', 'pages'], 'episode_history');
+  assertExactFields(d.history, ['genesis', 'slot', 'block', 'pages', ...(d.version.endsWith('_v3') ? ['admission'] : [])], 'episode_history');
   if (!Array.isArray(d.transactions) || d.transactions.length > 2 || (d.version.endsWith('_v1') && d.transactions.length < 1)
       || !Array.isArray(d.history.pages) || !d.history.pages.length || d.history.pages.length > 100) stop('REPLAY_POPULATION_INVALID');
   return d;
 }
-async function source(loaded, d) {
+export async function buildRetainedFinalizedSourceV1(loaded, d, control) {
   const network = validateHeliusRpcGenesisResponseV1(v1(rpc(loaded, d.history.genesis)));
   const slot = validateHeliusRpcSlotResponseV1(v1(rpc(loaded, d.history.slot)));
   const block = validateHeliusRpcBlockResponseV1(v1(rpc(loaded, d.history.block)), slot);
   if (block === null) stop('REPLAY_ANCHOR_UNAVAILABLE');
   const pages = d.history.pages.map(path => validateHeliusRpcSignaturePageResponseV1(v1(rpc(loaded, path))));
-  if (pages.at(-1).length >= 100 || pages.slice(0, -1).some(p => p.length !== 100)) stop('REPLAY_HISTORY_INCOMPLETE');
+  if (!d.version.endsWith('_v3') && (pages.at(-1).length >= 100 || pages.slice(0, -1).some(p => p.length !== 100))) stop('REPLAY_HISTORY_INCOMPLETE');
   const reconciliation = [];
   const transactions = d.transactions.map((item, i) => {
     assertExactFields(item, ['signature', 'response'], 'episode_transaction');
@@ -81,15 +83,20 @@ async function source(loaded, d) {
     return normalized;
   });
   const descending = [...transactions].reverse();
-  const indexed = pages.flat();
+  const admission = d.version.endsWith('_v3') ? admitSupervisedHistoryV1({ loaded, descriptor: d, control,
+    anchor_slot: slot, anchor_block_time: block.block_time, transactions }) : null;
+  const indexed = admission === null ? pages.flat() : admission.admitted;
   if (indexed.length !== transactions.length || canonicalJson(indexed) !== canonicalJson(descending.map(({ signature, slot, block_time, execution_state }) => ({ signature, slot, block_time, execution_state })))) stop('REPLAY_HISTORY_TRANSACTION_MISMATCH');
+  // Admission accounts for every original row in all three lanes. Only its
+  // checked economic view enters the swap pipeline; original pages stay intact.
+  const acquisitionPages = admission === null ? pages : [indexed];
   const rawPort = {
     async getNetworkIdentityV1() { return network; }, async getFinalizedSlotV1() { return slot; },
     async getFinalizedBlockV1(input) { if (input.slot !== slot) stop('REPLAY_REQUEST_UNAVAILABLE'); return block; },
     async getFinalizedWalletSignaturePageV1(input) {
-      const index = input.before === null ? 0 : pages.findIndex(p => p.at(-1)?.signature === input.before) + 1;
-      if (input.wallet !== d.scope.wallet || index < 0 || index >= pages.length) stop('REPLAY_REQUEST_UNAVAILABLE');
-      return pages[index];
+      const index = input.before === null ? 0 : acquisitionPages.findIndex(p => p.at(-1)?.signature === input.before) + 1;
+      if (input.wallet !== d.scope.wallet || index < 0 || index >= acquisitionPages.length) stop('REPLAY_REQUEST_UNAVAILABLE');
+      return acquisitionPages[index];
     },
     async getFinalizedFullTransactionPageV1(input) {
       if (input.wallet !== d.scope.wallet || input.pagination_token !== null || input.anchor_slot !== slot) stop('REPLAY_REQUEST_UNAVAILABLE');
@@ -118,21 +125,21 @@ async function source(loaded, d) {
     target_mint: d.scope.target_mint, opening_basis_reference: null };
   const context = await buildSourceBoundAuthoritativeEvidenceContextV13(authority);
   await validateSourceBoundAuthoritativeEvidenceContextV13({ context, ...authority });
-  return { context, authority, acquired, reconciliation, transactions };
+  return { context, authority, acquired, reconciliation, transactions, admission };
 }
 export async function reconstructFinalEpisodeReleaseV1(input) {
   assertExactFields(input, ['root', 'expected_manifest_sha256', 'expected_evidence_kind'], 'episode_release_input');
   const loaded = loadRetainedEpisodePackageV1({ root: input.root, expected_manifest_sha256: input.expected_manifest_sha256 });
   const d = descriptor(loaded, input.expected_evidence_kind);
-  const control = d.version.endsWith('_v2') ? loadRetainedControlV1(loaded, d.control) : null;
-  const captured = await source(loaded, d);
+  const control = !d.version.endsWith('_v1') ? loadRetainedControlV1(loaded, d.control) : null;
+  const captured = await buildRetainedFinalizedSourceV1(loaded, d, control);
   let economic = null, unavailable = null;
   try {
     economic = await createProductionPositionEconomicEvidencePortV13({ evidence_context: captured.context, context_authority: captured.authority, exact_quote_mint: d.scope.exact_quote_mint });
   } catch (error) {
     // These are explicit existing profile limits, not evaluated BLOCKED claims.
     // Unexpected exceptions and selection/issuance errors retain their own type.
-    if (!d.version.endsWith('_v2') || error?.name !== 'VerificationScopeError'
+    if (d.version.endsWith('_v1') || error?.name !== 'VerificationScopeError'
         || !['position_economic_controlled_boundary_invalid', 'position_economic_controlled_population_invalid', 'position_economic_transaction_unsupported'].includes(error.code)) throw error;
     unavailable = { code: error.code, detail: error.message };
   }
@@ -168,7 +175,7 @@ export async function reconstructFinalEpisodeReleaseV1(input) {
       source_truth: 'Checksums bind bytes, not provider truth. This profile admits only the pinned calibration transaction bodies. History and boundary evidence are synthetic and cannot establish final-demo eligibility.',
       live_authorization: 'NONE' },
   };
-  if (d.version.endsWith('_v2')) {
+  if (!d.version.endsWith('_v1')) {
     result.economic_availability = { status: unavailable === null ? 'AVAILABLE' : 'UNAVAILABLE',
       dependencies: unavailable === null ? [] : [unavailable], selection_request: d.selection,
       evaluator_outcome: claim?.claim_evaluation.claim_outcome ?? null };
@@ -176,7 +183,8 @@ export async function reconstructFinalEpisodeReleaseV1(input) {
       ending_target_raw_quantity: captured.context.ending_snapshot.aggregate_raw_quantity,
       transactions: captured.transactions.map(t => ({ signature: t.signature, execution_state: t.execution_state,
         fee_lamports: t.fee_lamports, pre_token_balances: t.pre_token_balances, post_token_balances: t.post_token_balances })) };
-    const assessed = await evaluateRetainedControlV1({ loaded, control, descriptor: d, transactions: captured.transactions, reconciliation: captured.reconciliation });
+    const assessed = await evaluateRetainedControlV1({ loaded, control, descriptor: d, transactions: captured.transactions, reconciliation: captured.reconciliation,
+      source_context: captured.context });
     Object.assign(result, assessed);
     const synthetic = d.evidence_kind === 'SYNTHETIC_FINAL_EPISODE';
     result.source_admission = { evidence_kind: d.evidence_kind, status: 'ADMITTED',
@@ -196,5 +204,6 @@ export async function reconstructFinalEpisodeReleaseV1(input) {
           : 'Retained economic evidence was reconstructed; a complete authorized agent-directed final demonstration is not established.' };
     result.verification.source_truth = 'Explicit-root, administrator-qualified retained provider evidence, not independent provider authentication. Synthetic and final-wallet profiles are disjoint. Original opening predicates are re-evaluated from retained request/response bytes.';
   }
+  if (captured.admission !== null) result.history_admission = captured.admission;
   return cloneAndFreeze({ ...result, release_digest: sha256CanonicalJson(result) });
 }

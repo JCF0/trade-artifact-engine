@@ -9,7 +9,13 @@ import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mj
 import { createCrashDurableDecisionAuthorityV1 } from './sqlite-decision-authority-v1.mjs';
 import { createOrcaReadinessCaptureV1 } from './orca-readiness-capture-v1.mjs';
 import { createOfflineOrcaSigningCompositionV1 } from './orca-signing-composition-v1.mjs';
-import { createOfflineTrustedSubmissionV1 } from './wiggles-submission-v1.mjs';
+import { createOfflineTrustedSubmissionV1, createSupervisedTrustedSubmissionV1 } from './wiggles-submission-v1.mjs';
+import { validateSupervisedPhaseBudgetsV1 } from './supervised-profile-v1.mjs';
+import { createBoundedSupervisedRpcV1 } from './supervised-rpc-v1.mjs';
+import { simulateExactPreparedMessageV1 } from './supervised-simulation-v1.mjs';
+import { validateProductionWigglesConfigurationV1 } from './wiggles-production-configuration-v1.mjs';
+import { captureSupervisedFinalizedSourceV1 } from './supervised-finalized-source-v1.mjs';
+import { exportSupervisedRetainedEpisodeV1, inspectSupervisedExportCandidatesV1 } from './supervised-exporter-v1.mjs';
 
 const CONFIG_FIELDS = ['mandate', 'authorization', 'executor_release_sha256', 'expected_wallet',
   'wallet_key_path', 'state_root', 'budget', 'deadline_unix_seconds'];
@@ -146,19 +152,59 @@ export function validateWigglesRuntimeConfigurationV1(configuration, now) {
 export function createOfflineTrustedWigglesRuntimeV1(configuration, { transport, clock, submission }) {
   const c = validateWigglesRuntimeConfigurationV1(configuration, clock.unixSeconds());
   if (c.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) reject('offline disposable wallet profile required');
+  return createTrustedRuntime(c, { transport, clock, submission });
+}
+// Administrator-private construction, not a launcher or an agent-facing factory.
+// Existing live entry points remain disabled. No provisioning occurs here.
+export function createPrivateSupervisedWigglesRuntimeV1(configuration, dependencies) {
+  const c = validateProductionWigglesConfigurationV1(configuration, dependencies.clock.unixSeconds());
+  validateSupervisedPhaseBudgetsV1(c.budget);
+  return createTrustedRuntime(c, dependencies, true);
+}
+export function createOfflineSupervisedWigglesRuntimeV1(configuration, dependencies) {
+  const c = validateWigglesRuntimeConfigurationV1(configuration, dependencies.clock.unixSeconds());
+  if (c.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) reject('offline disposable wallet profile required');
+  validateSupervisedPhaseBudgetsV1(c.budget);
+  return createTrustedRuntime(c, dependencies, true);
+}
+function createTrustedRuntime(c, { transport, clock, submission, supervision }, integrated = false) {
+  if (integrated && (!supervision || typeof supervision.retain !== 'function' || typeof supervision.claimPhase !== 'function')) reject('private supervision required');
   const authority = createCrashDurableDecisionAuthorityV1({ state_root: c.state_root });
   const episodeId = `bounded-agent-episode-${c.authorization.authorization_digest}`;
   let control, submitter;
   try {
-    submitter = createOfflineTrustedSubmissionV1(c, { authority, clock, submission });
+    if (integrated) {
+      if (Object.hasOwn(submission, 'finalization_source')) reject('source capability is supervisor-owned');
+      const fixedSubmission = { ...submission, finalization_source: request => captureSupervisedFinalizedSourceV1({
+        configuration: c, ordinal: request.ordinal, terminal: request, transport, clock, journal: supervision }) };
+      submitter = createSupervisedTrustedSubmissionV1(c, { authority, clock, submission: fixedSubmission,
+        retained_evidence_observer: record => supervision.retain({ kind: 'terminal_record', record }) });
+    } else submitter = createOfflineTrustedSubmissionV1(c, { authority, clock, submission });
     const capture = createOrcaReadinessCaptureV1({ mandate: c.mandate, authorization: c.authorization,
-      budget: c.budget, deadline_unix_seconds: c.deadline_unix_seconds, transport, clock,
-      retain_evidence: async record => retainEvidence(c.state_root, record), durable_episode_authority: authority });
+      budget: integrated ? c.budget.capture : c.budget, deadline_unix_seconds: c.deadline_unix_seconds, transport, clock,
+      retain_evidence: async record => {
+        const digest = retainEvidence(c.state_root, record);
+        if (integrated) await supervision.retain({ kind: 'readiness', record });
+        return digest;
+      }, durable_episode_authority: authority });
     control = createOfflineOrcaSigningCompositionV1({ mandate: c.mandate, authorization: c.authorization,
       executor_release_sha256: c.executor_release_sha256, state_root: c.state_root,
       durable_episode_authority: authority, acquisition_closure_port: {},
       readiness_challenge_port: capture, build_input_port: capture,
+      authenticated_decision_observer: integrated ? record => supervision.retain({ kind: 'authenticated_decision_request', record }) : undefined,
       message_signer_port: { async signExactMessageV1(message, { challenge, admission }) {
+        if (integrated) {
+          await supervision.claimPhase('simulation', challenge.ordinal);
+          const binding = await capture.captureSimulationBindingV1({ challenge });
+          const rpc = createBoundedSupervisedRpcV1({ phase: 'simulation', budget: c.budget.simulation, transport, clock,
+            deadline_unix_seconds: c.deadline_unix_seconds,
+            assert_dispatch: () => capture.assertFreshAtDispatchV1({ challenge }),
+            retain: record => supervision.retain({ kind: 'simulation_rpc', ordinal: challenge.ordinal, record }) });
+          await simulateExactPreparedMessageV1({ message, expected_message_sha256: binding.message_sha256,
+            minimum_context_slot: binding.minimum_context_slot, challenge, rpc, clock,
+            assertFresh: () => capture.assertFreshBeforeSigningV1({ challenge }),
+            retain: record => supervision.retain({ kind: 'simulation', ordinal: challenge.ordinal, record }) });
+        }
         return signWithWallet(c.wallet_key_path, c.expected_wallet, message, async () => {
           const current = await authority.inspectEpisodeV1({ episode_id: episodeId });
           const row = current.ordinals.find(item => item.ordinal === admission.ordinal);
@@ -174,19 +220,50 @@ export function createOfflineTrustedWigglesRuntimeV1(configuration, { transport,
   return Object.freeze({
     agent: Object.freeze({ async submitDecisionBytesV1(decisionBytes) {
       const result = await control.executeAuthenticatedDecisionBytesV1({ decision_bytes: decisionBytes, now_unix_seconds: now() });
+      if (integrated) await supervision.retain({ kind: 'decision', decision_bytes_base64: Buffer.from(decisionBytes).toString('base64'), result });
       return Object.freeze({ status: result.admission.status === 'REFUSED' ? 'REFUSED' : 'SIGNED_INTENT_DURABLE',
         episode_id: episodeId, signed_intent_digest: result.signed_transaction_intent_digest ?? null });
     } }),
     supervisor: Object.freeze({
-      issueReadinessChallengeV1(phase) { return control.issueReadinessChallengeV1({ phase, now_unix_seconds: now() }); },
-      revokeAuthenticatedBytesV1(revocationBytes) {
-        return control.revokeAuthenticatedBytesV1({ revocation_bytes: revocationBytes, now_unix_seconds: now() });
+      async issueReadinessChallengeV1(phase) {
+        if (integrated) {
+          if (!['ACQUISITION', 'DISPOSAL'].includes(phase)) reject('unsupported phase');
+          await supervision.claimPhase('capture', phase === 'ACQUISITION' ? 1 : 2);
+        }
+        return control.issueReadinessChallengeV1({ phase, now_unix_seconds: now() });
+      },
+      async revokeAuthenticatedBytesV1(revocationBytes) {
+        const result = await control.revokeAuthenticatedBytesV1({ revocation_bytes: revocationBytes, now_unix_seconds: now() });
+        if (integrated) await supervision.retain({ kind: 'revocation', revocation_bytes_base64: Buffer.from(revocationBytes).toString('base64'), result });
+        return result;
       },
     }),
     trusted: Object.freeze({ readRetainedWireV1(ordinal) {
       now(); return authority.readRetainedWireV1({ episode_id: episodeId, ordinal });
     }, submitRetainedIntentV1(ordinal) { now(); return submitter.submit(ordinal); },
-    finalizeRetainedIntentV1(ordinal) { now(); return submitter.finalize(ordinal); } }),
+    finalizeRetainedIntentV1(ordinal) { now(); return submitter.finalize(ordinal); },
+    ...(integrated ? {
+      async captureRetainedOutcomeSourceV1(ordinal) {
+        now();
+        if (![1, 2].includes(ordinal)) reject('unsupported ordinal');
+        const retained = supervision.snapshot().records;
+        if (retained.some(r => r.kind === 'economic_source' && r.ordinal === ordinal)) return;
+        const capture = retained.find(r => r.kind === 'readiness' && r.record.challenge?.ordinal === ordinal)?.record;
+        if (!capture) reject('original capture required');
+        // Read-only outcome acquisition shares (and consumes) the same source
+        // budget as successful closure. It cannot sign, send, or close authority.
+        await captureSupervisedFinalizedSourceV1({ configuration: c, ordinal, terminal: { slot: capture.anchor.slot },
+          transport, clock, journal: supervision, derive_projection: false });
+      },
+      inspectRetainedExportCandidatesV1(ordinal) {
+        return inspectSupervisedExportCandidatesV1({ c, journal: supervision, ordinal });
+      },
+      exportRetainedEpisodeV1(request) {
+        assertExactFields(request, ['ordinal', 'selection'], 'supervised_export_request');
+        const owned = cloneAndFreeze(request);
+        return exportSupervisedRetainedEpisodeV1({ c, journal: supervision, authority, ordinal: owned.ordinal, selection: owned.selection });
+      },
+    } : {}) }),
     closeV1() { if (!closed) { authority.closeV1(); closed = true; } },
   });
 }

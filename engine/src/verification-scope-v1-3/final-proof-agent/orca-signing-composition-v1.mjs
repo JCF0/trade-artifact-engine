@@ -12,7 +12,7 @@ function reject(message) { fail('bounded_agent_orca_composition_blocked', messag
 // operational wallet, submission callback, or scheduler is constructed here.
 export function createOfflineOrcaSigningCompositionV1({
   mandate, authorization, executor_release_sha256, state_root, durable_episode_authority,
-  acquisition_closure_port, readiness_challenge_port, build_input_port, message_signer_port,
+  acquisition_closure_port, readiness_challenge_port, build_input_port, message_signer_port, authenticated_decision_observer,
 }) {
   const frozenMandate = cloneAndFreeze(mandate);
   const capture = build_input_port.captureBuildInputV1.bind(build_input_port);
@@ -22,7 +22,7 @@ export function createOfflineOrcaSigningCompositionV1({
   const pending = new Map();
   return createWigglesAuthenticatedControlPlaneV1({
     mandate: frozenMandate, authorization: cloneAndFreeze(authorization), executor_release_sha256,
-    durable_episode_authority, acquisition_closure_port, readiness_challenge_port,
+    durable_episode_authority, acquisition_closure_port, readiness_challenge_port, authenticated_decision_observer,
     execution_port: {
       async prepareBoundedLegV1({ challenge, admission }) {
         const state = await loadState({ episode_id: admission.episode_id });

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { assertExactFields, canonicalJson, cloneAndFreeze, sha256CanonicalJson } from '../contract.mjs';
 import { buildOrcaMessageBoundaryV1 } from './orca-message-boundary-v1.mjs';
 import { OFFLINE_WALLET_PROFILE_V1 } from './executor-mandate-profile-v1.mjs';
+import { SUPERVISED_SUBMISSION_PROFILE_V1, assertSupervisedSubmissionConstructionV1 } from './supervised-profile-v1.mjs';
 import { closeTrustedTerminalSourceV1 } from './wiggles-terminal-closure-v1.mjs';
 import { POLICY, canonicalJson as schedulerJson, createFilesystemEvidencePort, inspectSignedLegacyWire,
   runBoundedRebroadcast, verifyClosedEvidence, verifyResolutionEvidence } from './reused/bounded-rebroadcast-v1.mjs';
@@ -154,7 +155,7 @@ function unresolved(x) {
     recovery: 'NO_NEW_SENDS_OR_SIGNING; RETAIN_FOR_SUPERVISED_RECONCILIATION' });
 }
 function bindingFor(c, x, limits) {
-  return { schema: 'artifact_trusted_submission_binding_v1', profile: PROFILE, policy: POLICY.id,
+  return { schema: 'artifact_trusted_submission_binding_v1', profile: limits.profile, policy: POLICY.id,
     episode_id: x.episode_id, ordinal: x.row.ordinal, mandate_digest: c.mandate.mandate_digest,
     authorization_digest: c.authorization.authorization_digest, executor_release_sha256: c.executor_release_sha256,
     signed_intent_digest: x.row.signed_intent_digest, prepared_transaction_digest: x.row.prepared_transaction_digest,
@@ -221,6 +222,8 @@ export function validateRetainedSubmissionEvidenceV1({ root, expected_binding })
 // Same verifier, with an immutable byte snapshot instead of executor-root I/O.
 // This proves retained transmission consistency, never provider truth/economics.
 export function validateRetainedSubmissionSnapshotV1({ members, expected_binding }) {
+  if (![PROFILE, SUPERVISED_SUBMISSION_PROFILE_V1].includes(expected_binding?.profile)
+    || expected_binding.profile !== expected_binding.limits?.profile) stop();
   const values = cloneAndFreeze(members), files = new Map();
   if (!Array.isArray(values) || values.length > 1500) stop();
   let total = 0;
@@ -306,11 +309,18 @@ function validateSubmissionContents({ root, expected_binding }, access) {
 
 export function createOfflineTrustedSubmissionV1(c, { authority, clock, submission }) {
   if (c.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) stop();
+  return createTrustedSubmission(c, { authority, clock, submission }, PROFILE);
+}
+export function createSupervisedTrustedSubmissionV1(c, dependencies) {
+  assertSupervisedSubmissionConstructionV1(c, dependencies.submission);
+  return createTrustedSubmission(c, dependencies, SUPERVISED_SUBMISSION_PROFILE_V1);
+}
+function createTrustedSubmission(c, { authority, clock, submission, retained_evidence_observer }, profile) {
   if (submission === undefined) return Object.freeze({ async submit() { throw Error('SUBMISSION_CONFIGURATION_NOT_APPROVED'); } });
   const { transport, sleep, finalization_source, ...values } = submission;
   const limits = cloneAndFreeze(values);
   assertExactFields(limits, ['profile', 'max_calls', 'overall_timeout_ms', 'max_response_bytes'], 'offline_submission_configuration');
-  if (limits.profile !== PROFILE || typeof transport !== 'function' || typeof sleep !== 'function'
+  if (limits.profile !== profile || typeof transport !== 'function' || typeof sleep !== 'function'
       || !uint(limits.max_calls) || limits.max_calls < 1 || limits.max_calls > 188
       || !uint(limits.overall_timeout_ms) || limits.overall_timeout_ms < 1 || limits.overall_timeout_ms > 190000
       || !uint(limits.max_response_bytes) || limits.max_response_bytes < 1 || limits.max_response_bytes > 1048576) stop();
@@ -507,6 +517,7 @@ export function createOfflineTrustedSubmissionV1(c, { authority, clock, submissi
           if (!read(join(c.state_root, name), 4194304, true).equals(Buffer.from(canonicalJson(record)))) stop();
           syncDirectory(c.state_root);
         }
+        if (retained_evidence_observer) await retained_evidence_observer(record);
       } });
   } });
 }

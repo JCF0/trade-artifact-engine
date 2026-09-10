@@ -333,7 +333,7 @@ export function createOrcaReadinessCaptureV1(options) {
           // Private clock-domain state, never serialized or adopted after restart.
           const expiresMonotonic = start + (challenge.expires_at_unix_seconds - startUnix) * 1000;
           required(monotonic() < expiresMonotonic, 'stale readiness');
-          cached.set(challenge.challenge_digest, { source: cloneAndFreeze(source), challenge, expiresMonotonic });
+          cached.set(challenge.challenge_digest, { source: cloneAndFreeze(source), challenge, expiresMonotonic, simulationFloor: fee.context.slot });
           return challenge;
         } finally { for (const controller of active) controller.abort(); }
       } finally { expired = true; busy = false; } });
@@ -345,6 +345,14 @@ export function createOrcaReadinessCaptureV1(options) {
     },
     async captureBuildInputV1({ challenge }) {
       return fresh(challenge, 'stale readiness');
+    },
+    async captureSimulationBindingV1({ challenge }) {
+      const source = fresh(challenge, 'stale simulation readiness');
+      return cloneAndFreeze({ message_sha256: source.fee_message_sha256,
+        minimum_context_slot: cached.get(challenge.challenge_digest).simulationFloor });
+    },
+    assertFreshAtDispatchV1({ challenge }) {
+      fresh(challenge, 'stale readiness at dispatch');
     },
     async assertFreshBeforeSigningV1({ challenge }) {
       fresh(challenge, 'stale readiness before signer');
