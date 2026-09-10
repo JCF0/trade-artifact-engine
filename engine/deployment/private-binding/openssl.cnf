@@ -1,0 +1,2 @@
+# Artifact candidate: no ambient OpenSSL providers or configuration includes.
+# Node's compiled defaults apply. TLS CA bytes are explicit private exchange input.
