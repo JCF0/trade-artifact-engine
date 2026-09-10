@@ -1,6 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { performance } from 'node:perf_hooks';
+import { types } from 'node:util';
 import { canonicalJson } from '../../src/verification-scope-v1-3/contract.mjs';
 import { createSupervisedSubmissionTransportV1 } from '../../src/verification-scope-v1-3/final-proof-agent/supervised-profile-v1.mjs';
 
@@ -10,11 +11,27 @@ const bounded = (n, max) => Number.isSafeInteger(n) && n > 0 && n <= max;
 
 // Administrator-private construction. Nothing reads credentials, opens a socket,
 // starts a timer or changes process state merely by importing this module.
-export function createPrivateExchangeV1(policy) { return construct(policy, false); }
+export function createPrivateExchangeV1(policy) { try { return construct(policy, false); } catch { throw unavailable(); } }
 // Explicit disposable transport fixture. HTTP is limited to numeric loopback;
 // callers must also enforce the qualification namespace on the whole process.
-export function createFixtureExchangeV1(policy) { return construct(policy, true); }
-function construct({ endpoint, bearer, ca, capability_id, timeout_ms, max_response_bytes }, fixture) {
+export function createFixtureExchangeV1(policy) { try { return construct(policy, true); } catch { throw unavailable(); } }
+export const HELIUS_CAPABILITY_V1 = 'helius-mainnet-query-v1';
+const HELIUS_ENDPOINT = 'https://mainnet.helius-rpc.com/';
+export function createHeliusExchangeV1(policy) { return helius(policy, HELIUS_ENDPOINT, false); }
+// Endpoint substitution is solely a numeric-loopback fixture, never production policy.
+export function createFixtureHeliusExchangeV1(policy, endpoint) { return helius(policy, endpoint, true); }
+function helius(policy, endpoint, fixture) {
+  try {
+    if (!policy || types.isProxy(policy) || Object.getPrototypeOf(policy) !== Object.prototype) throw unavailable();
+    const descriptors = Object.getOwnPropertyDescriptors(policy);
+    const fields = ['api_key', 'ca', 'capability_id', 'timeout_ms', 'max_response_bytes'];
+    if (Reflect.ownKeys(descriptors).length !== fields.length || fields.some(k => !descriptors[k] || !('value' in descriptors[k]))) throw unavailable();
+    const { api_key, ca, capability_id, timeout_ms, max_response_bytes } = policy;
+    if (capability_id !== HELIUS_CAPABILITY_V1 || typeof endpoint !== 'string') throw unavailable();
+    return construct({ endpoint, bearer: api_key, ca, capability_id, timeout_ms, max_response_bytes }, fixture, true);
+  } catch { throw unavailable(); }
+}
+function construct({ endpoint, bearer, ca, capability_id, timeout_ms, max_response_bytes }, fixture, query = false) {
   let target;
   try { target = new URL(endpoint); } catch { throw unavailable(); }
   if (typeof bearer !== 'string' || !/^[A-Za-z0-9._~-]{16,4096}$/.test(bearer)
@@ -26,10 +43,27 @@ function construct({ endpoint, bearer, ca, capability_id, timeout_ms, max_respon
     || (ca !== null && (typeof ca !== 'string' || Buffer.byteLength(ca) > 65536))) throw unavailable();
   // Keep private endpoint and credential in this closure, never a public record.
   const needles = [bearer, `Bearer ${bearer}`, endpoint];
+  if (query) {
+    target.searchParams.set('api-key', bearer);
+    needles.push(target.href, target.pathname + target.search, target.search);
+  }
+  // Finite screening views only: originals/URI forms and standard or URL-safe
+  // base64, padded or unpadded. Never substitute these views for evidence bytes.
+  const encodedNeedles = query ? [...new Set(needles.flatMap(n => [n, encodeURIComponent(n)].flatMap(s =>
+    [s, Buffer.from(s).toString('base64'), Buffer.from(s).toString('base64').replace(/=+$/, ''), Buffer.from(s).toString('base64url')])))] : [];
+  function queryUnsafe(s) {
+    for (let layer = 0; layer <= 2; layer++) {
+      if (encodedNeedles.some(n => s.includes(n))) return true;
+      // Decode ASCII percent triplets locally, including unreserved characters
+      // and mixed-case hex. Malformed unrelated '%' text cannot disable checks.
+      if (layer < 2) s = s.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    }
+    return false;
+  }
   function contaminated(bytes) {
     const text = bytes.toString('utf8');
     if (!Buffer.from(text).equals(bytes)) return true;
-    const unsafe = s => needles.some(n => s.includes(n) || s.includes(encodeURIComponent(n))
+    const unsafe = s => query ? queryUnsafe(s) : needles.some(n => s.includes(n) || s.includes(encodeURIComponent(n))
       || s.includes(Buffer.from(n).toString('base64')));
     if (unsafe(text)) return true;
     // Escaped JSON string echoes are also contaminants. Parsing does not replace
@@ -71,7 +105,7 @@ function construct({ endpoint, bearer, ca, capability_id, timeout_ms, max_respon
         req = (target.protocol === 'https:' ? https : http).request(target, {
           method: 'POST', agent: false, maxHeaderSize: 16384, highWaterMark: 16384,
           headers: { 'content-type': 'application/json', 'accept': 'application/json',
-            'accept-encoding': 'identity', 'authorization': `Bearer ${bearer}`,
+            'accept-encoding': 'identity', ...(query ? {} : { 'authorization': `Bearer ${bearer}` }),
             'content-length': body.length, 'connection': 'close' },
           ...(target.protocol === 'https:' ? { rejectUnauthorized: true, minVersion: 'TLSv1.2', ...(ca === null ? {} : { ca }) } : {}),
         }, res => {
@@ -89,7 +123,7 @@ function construct({ endpoint, bearer, ca, capability_id, timeout_ms, max_respon
           res.on('end', () => {
             if (settled || performance.now() >= end || signal.aborted || !res.complete) return abort();
             const bytes = Buffer.concat(chunks, size); chunks.length = 0;
-            if (contaminated(bytes)) return abort();
+            if (contaminated(bytes) || performance.now() >= end || signal.aborted) return abort();
             finish(false, { status: 200, body: bytes });
           });
         });

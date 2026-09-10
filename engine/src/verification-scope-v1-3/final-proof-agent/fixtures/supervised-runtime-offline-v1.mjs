@@ -107,8 +107,8 @@ export function supervisedRuntimeFixtureV1({ opening_time, authorization_factory
     get runtime() { return runtime; }, get journal() { return journal; }, get wire() { return wire; },
     setSimulationError(v) { simulationError = v; }, setHandler(v) { handler = v; },
     setVisible(v) { visible = v; },
-    open(wrapJournal = j => j) { journal = createSupervisedJournalV1(stateRoot); runtime = createOfflineSupervisedWigglesRuntimeV1(configuration,
-      { transport, clock: source.clock, submission, supervision: wrapJournal(journal) }); return runtime; },
+    open(wrapJournal = j => j, wrapDependencies = d => d) { journal = createSupervisedJournalV1(stateRoot); runtime = createOfflineSupervisedWigglesRuntimeV1(configuration,
+      wrapDependencies({ transport, clock: source.clock, submission, supervision: wrapJournal(journal) })); return runtime; },
     close() { runtime?.closeV1(); runtime = undefined; },
     async sign(phase = 'ACQUISITION', beforeDecision = async () => {}) {
       phaseOrdinal = phase === 'ACQUISITION' ? 1 : 2;

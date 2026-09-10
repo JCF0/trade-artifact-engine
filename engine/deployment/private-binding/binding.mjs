@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { Socket } from 'node:net';
 import { performance } from 'node:perf_hooks';
+import { types } from 'node:util';
 import { assertExactFields, cloneAndFreeze, sha256CanonicalJson } from '../../src/verification-scope-v1-3/contract.mjs';
 import { validateProductionWigglesConfigurationV1 } from '../../src/verification-scope-v1-3/final-proof-agent/wiggles-production-configuration-v1.mjs';
 import { validateWigglesRuntimeConfigurationV1, createPrivateSupervisedWigglesRuntimeV1,
@@ -13,7 +14,8 @@ import { validateSupervisedPhaseBudgetsV1 } from '../../src/verification-scope-v
 import { createCrashDurableDecisionAuthorityV1 } from '../../src/verification-scope-v1-3/final-proof-agent/sqlite-decision-authority-v1.mjs';
 import { blocked, readBoundedFdV1, parseCanonicalV1 } from './io.mjs';
 import { verifyProvisionedBindingV1 } from './provision.mjs';
-import { createPrivateExchangeV1, createFixtureExchangeV1, fixedRpcAdaptersV1 } from './exchange.mjs';
+import { createHeliusExchangeV1, createFixtureHeliusExchangeV1, HELIUS_CAPABILITY_V1,
+  createFixtureExchangeV1, fixedRpcAdaptersV1 } from './exchange.mjs';
 import { publishRetainedPackageV1 } from './custody.mjs';
 
 export const FD_ROLES_V1 = Object.freeze({ configuration: 3, release: 4, credential: 5,
@@ -31,7 +33,10 @@ function publicConfig(bytes, now, fixture) {
   if (fixture) {
     validateWigglesRuntimeConfigurationV1(c.runtime, now);
     if (c.runtime.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) throw blocked();
-  } else validateProductionWigglesConfigurationV1(c.runtime, now);
+  } else {
+    if (c.provider_capability_id !== HELIUS_CAPABILITY_V1) throw blocked();
+    validateProductionWigglesConfigurationV1(c.runtime, now);
+  }
   validateSupervisedPhaseBudgetsV1(c.runtime.budget);
   return c;
 }
@@ -101,14 +106,27 @@ export function verifyReleaseInventoryV1(bytes, expected_sha256, fixture = false
   return cloneAndFreeze(r);
 }
 
-function loadCredential(c) {
-  const bytes = readBoundedFdV1(FD_ROLES_V1.credential, 73728, process.getuid());
+function credentialFor(secret, c, query = true) {
   try {
-    const secret = parseCanonicalV1(bytes);
-    assertExactFields(secret, ['capability_id', 'endpoint', 'bearer', 'ca'], 'private_credential');
-    if (secret.capability_id !== c.provider_capability_id) throw blocked();
-    return secret;
-  } finally { bytes.fill(0); closeSync(FD_ROLES_V1.credential); }
+    if (!secret || types.isProxy(secret) || Object.getPrototypeOf(secret) !== Object.prototype) throw blocked();
+    const fields = query ? ['capability_id', 'api_key', 'ca'] : ['capability_id', 'endpoint', 'bearer', 'ca'];
+    const descriptors = Object.getOwnPropertyDescriptors(secret);
+    if (Reflect.ownKeys(descriptors).length !== fields.length || fields.some(k => !descriptors[k] || !('value' in descriptors[k]))) throw blocked();
+    if (secret.capability_id !== c.provider_capability_id
+      || (query ? secret.capability_id !== HELIUS_CAPABILITY_V1 : secret.capability_id === HELIUS_CAPABILITY_V1)) throw blocked();
+    const key = query ? secret.api_key : secret.bearer;
+    if (typeof key !== 'string' || !/^[A-Za-z0-9._~-]{16,4096}$/.test(key)
+      || (secret.ca !== null && (typeof secret.ca !== 'string' || Buffer.byteLength(secret.ca) > 65536))) throw blocked();
+    return { ...secret };
+  } catch { throw blocked(); }
+}
+function loadCredential(c) {
+  let bytes;
+  try {
+    bytes = readBoundedFdV1(FD_ROLES_V1.credential, 73728, process.getuid());
+    return credentialFor(parseCanonicalV1(bytes), c);
+  } catch { throw blocked(); }
+  finally { bytes?.fill(0); try { closeSync(FD_ROLES_V1.credential); } catch { throw blocked(); } }
 }
 
 // Mechanical candidate stop. It validates all public/FD/release bindings before
@@ -128,10 +146,14 @@ function requireActivationV1() {
 
 // Fixed composition kernel. No entry point invokes it for a production profile.
 // Kept private so a controller cannot select a constructor, clock or transport.
-function compose(c, credential, fixture, clock) {
-  if (credential.capability_id !== c.provider_capability_id) throw blocked();
-  const exchange = (fixture ? createFixtureExchangeV1 : createPrivateExchangeV1)({ ...credential,
-    timeout_ms: 60000, max_response_bytes: 16777216 });
+function compose(c, credential, fixture, clock, fixtureEndpoint) {
+  const query = !fixture || fixtureEndpoint !== undefined;
+  let exchange;
+  try {
+    const policy = { ...credentialFor(credential, c, query), timeout_ms: 60000, max_response_bytes: 16777216 };
+    exchange = !fixture ? createHeliusExchangeV1(policy) : query
+      ? createFixtureHeliusExchangeV1(policy, fixtureEndpoint) : createFixtureExchangeV1(policy);
+  } catch { throw blocked(); }
   let runtime, contextAuthority;
   try {
     verifyProvisionedBindingV1(c.runtime);
@@ -155,4 +177,11 @@ function compose(c, credential, fixture, clock) {
 export function composeFixtureBindingV1(publicBytes, credential, clock = REAL_CLOCK_V1) {
   const c = validateFixturePublicBindingV1(publicBytes, clock.unixSeconds());
   return compose(c, credential, true, clock);
+}
+export function composeFixtureHeliusBindingV1(publicBytes, credential, endpoint, clock = REAL_CLOCK_V1) {
+  try {
+    if (typeof endpoint !== 'string') throw blocked();
+    const c = validateFixturePublicBindingV1(publicBytes, clock.unixSeconds());
+    return compose(c, credential, true, clock, endpoint);
+  } catch { throw blocked(); }
 }

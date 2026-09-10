@@ -12,11 +12,76 @@ import { canonicalJson } from '../../src/verification-scope-v1-3/contract.mjs';
 const url = new URL('./exchange.mjs', import.meta.url);
 const candidate = existsSync(url) ? await import(url) : {};
 const canary = 'SYNTHETIC_CREDENTIAL_CANARY_0192837465';
+const queryCanary = 'SYNTHETIC_QUERY_CANARY_0192837465.~';
+const queryPolicy = { api_key: queryCanary, ca: null, capability_id: 'helius-mainnet-query-v1', timeout_ms: 500, max_response_bytes: 4096 };
+test('Helius query capability sends one encoded key, no auth headers and exact body once', async t => {
+  assert.equal(typeof candidate.createFixtureHeliusExchangeV1, 'function', 'MISSING_QUERY_CAPABILITY');
+  let calls = 0;
+  const bytes = Buffer.from('{"id":1, "method":"getSlot"}\n');
+  const endpoint = await server(t, async (req, res) => {
+    calls++;
+    assert.equal(req.url, '/rpc?' + new URLSearchParams({ 'api-key': queryCanary }));
+    assert.deepEqual([...new URL(req.url, 'http://127.0.0.1').searchParams], [['api-key', queryCanary]]);
+    assert.equal(req.headers.authorization, undefined); assert.equal(req.headers['x-api-key'], undefined);
+    const chunks = []; for await (const c of req) chunks.push(c);
+    assert.deepEqual(Buffer.concat(chunks), bytes);
+    res.setHeader('content-type', 'application/json'); res.end('{ "result": 7 }\n');
+  });
+  const exchange = candidate.createFixtureHeliusExchangeV1(queryPolicy, endpoint); t.after(() => exchange.close());
+  assert.deepEqual((await exchange.request(bytes, new AbortController().signal)).body, Buffer.from('{ "result": 7 }\n'));
+  assert.equal(calls, 1);
+});
+test('constructor errors containing private getter input are normalized', () => {
+  const policy = Object.defineProperty({}, 'endpoint', { get() { throw Error(canary); } });
+  assert.throws(() => candidate.createPrivateExchangeV1(policy), e => e.message === 'PRIVATE_RPC_UNAVAILABLE' && !e.stack.includes(canary) && e.cause === undefined);
+});
 async function server(t, handler) {
   const s = createServer(handler); s.listen(0, '127.0.0.1'); await once(s, 'listening');
   t.after(() => { s.closeAllConnections(); s.close(); });
   return `http://127.0.0.1:${s.address().port}/rpc`;
 }
+test('query echo screening rejects bounded encoded forms in actual chunked JSON keys and values', async t => {
+  const percent = s => [...Buffer.from(s)].map((c, i) => '%' + c.toString(16)[i % 2 ? 'toUpperCase' : 'toLowerCase']()).join('');
+  let payload, calls = 0;
+  const endpoint = await server(t, (req, res) => {
+    calls++; res.setHeader('content-type', 'application/json');
+    const b = Buffer.from(payload); res.write(b.subarray(0, 17)); res.end(b.subarray(17));
+  });
+  const target = new URL(endpoint); target.searchParams.set('api-key', queryCanary);
+  const originals = [queryCanary, endpoint, target.href, target.pathname + target.search, target.search];
+  const forms = [...new Set(originals.flatMap(s => [s, encodeURIComponent(s), percent(s), encodeURIComponent(percent(s)),
+    Buffer.from(s).toString('base64'), Buffer.from(s).toString('base64').replace(/=+$/, ''), Buffer.from(s).toString('base64url')]))];
+  const exchange = candidate.createFixtureHeliusExchangeV1(queryPolicy, endpoint); t.after(() => exchange.close());
+  for (const form of forms) for (const key of [false, true]) {
+    payload = JSON.stringify(key ? { error: { [form]: 'unavailable' } } : { result: { logs: [form] } });
+    await assert.rejects(exchange.request(Buffer.from('{}'), new AbortController().signal), e => e.message === 'PRIVATE_RPC_UNAVAILABLE' && e.cause === undefined, 'ENCODED_ECHO_ADMITTED');
+  }
+  for (const original of originals) {
+    payload = '{"result":"' + [...original].map(c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')).join('') + '"}';
+    await assert.rejects(exchange.request(Buffer.from('{}'), new AbortController().signal), /PRIVATE_RPC_UNAVAILABLE/);
+    payload = JSON.stringify({ [original]: 1 }).replaceAll('/', '\\/');
+    await assert.rejects(exchange.request(Buffer.from('{}'), new AbortController().signal), /PRIVATE_RPC_UNAVAILABLE/);
+  }
+  assert.equal(calls, forms.length * 2 + originals.length * 2);
+  assert.ok(!JSON.stringify(exchange.mapping).includes(queryCanary));
+});
+test('fixed query policy rejects selectors, hostile fields and invalid keys before any dispatch', async t => {
+  let calls = 0, getters = 0;
+  const endpoint = await server(t, () => calls++);
+  const bad = [null, {}, { ...queryPolicy, capability_id: 'another-provider' },
+    ...['endpoint', 'query', 'bearer', 'transport', 'authentication', queryCanary].map(k => ({ ...queryPolicy, [k]: endpoint })),
+    ...['', 'x', 'a'.repeat(4097), queryCanary + '&other=1', queryCanary + '\n'].map(api_key => ({ ...queryPolicy, api_key })),
+    Object.defineProperty({ ...queryPolicy }, 'api_key', { get() { getters++; throw Error(queryCanary); } }),
+    new Proxy({}, { ownKeys() { getters++; throw Error(queryCanary); } })];
+  for (const policy of bad) for (const factory of [candidate.createHeliusExchangeV1, p => candidate.createFixtureHeliusExchangeV1(p, endpoint)]) {
+    assert.throws(() => factory(policy), e => e.message === 'PRIVATE_RPC_UNAVAILABLE' && !e.stack.includes(queryCanary) && e.cause === undefined);
+  }
+  for (const url of ['http://localhost/rpc', 'https://mainnet.helius-rpc.com/', endpoint + '?api-key=x', endpoint + '#x', endpoint.replace('127.0.0.1', 'user@127.0.0.1')]) {
+    assert.throws(() => candidate.createFixtureHeliusExchangeV1(queryPolicy, url), /PRIVATE_RPC_UNAVAILABLE/);
+  }
+  const prod = candidate.createHeliusExchangeV1(queryPolicy); prod.close();
+  assert.equal(calls, 0); assert.equal(getters, 0);
+});
 test('fixed exchange transmits exact request bytes once and returns exact UTF-8 bytes', async t => {
   assert.equal(typeof candidate.createFixtureExchangeV1, 'function', 'missing concrete bounded exchange');
   const bytes = Buffer.from('{"jsonrpc":"2.0", "id":1,"method":"getSlot","params":[]}');
@@ -33,15 +98,20 @@ test('fixed exchange transmits exact request bytes once and returns exact UTF-8 
   assert.deepEqual(response, { status: 200, body: Buffer.from('{"result":7}\n') });
   assert.equal(calls, 1); exchange.close();
 });
-for (const fault of ['stream-overflow', 'declared-overflow', 'stalled-headers', 'stalled-body', 'redirect',
+function modeExchange(query, policy) {
+  if (!query) return candidate.createFixtureExchangeV1(policy);
+  const { endpoint, bearer, ...rest } = policy;
+  return candidate.createFixtureHeliusExchangeV1({ ...rest, capability_id: 'helius-mainnet-query-v1', api_key: bearer }, endpoint);
+}
+for (const query of [false, true]) for (const fault of ['stream-overflow', 'declared-overflow', 'stalled-headers', 'stalled-body', 'redirect',
   '429', '500', 'gzip', 'invalid-utf8', 'credential', 'escaped-credential', 'cancel', 'late-body']) {
-  test(`actual exchange refuses ${fault} without hidden resend or admissible contaminated bytes`, async t => {
+  test(`actual ${query ? 'query' : 'bearer'} exchange refuses ${fault} without hidden resend or admissible contaminated bytes`, async t => {
     let calls = 0, socketClosed = false, late;
     const endpoint = await server(t, (req, res) => {
       calls++; req.socket.on('close', () => { socketClosed = true; });
       res.setHeader('content-type', 'application/json');
       if (fault === 'stalled-headers' || fault === 'cancel') return;
-      if (fault === 'redirect') { res.writeHead(307, { location: '/elsewhere' }); res.end(canary); return; }
+      if (fault === 'redirect') { res.writeHead(307, { location: '/elsewhere?api-key=' + canary }); res.end(canary); return; }
       if (['429', '500'].includes(fault)) { res.writeHead(Number(fault), { 'retry-after': '0' }); res.end(canary); return; }
       if (fault === 'gzip') { res.setHeader('content-encoding', 'gzip'); res.end('compressed'); return; }
       if (fault === 'declared-overflow') { res.setHeader('content-length', '999999999'); res.flushHeaders(); return; }
@@ -52,7 +122,7 @@ for (const fault of ['stream-overflow', 'declared-overflow', 'stalled-headers', 
       res.flushHeaders(); res.write('{"result":');
       if (fault === 'late-body') late = setTimeout(() => res.end('7}'), 150);
     });
-    const exchange = candidate.createFixtureExchangeV1({ endpoint, bearer: canary, ca: null,
+    const exchange = modeExchange(query, { endpoint, bearer: canary, ca: null,
       capability_id: 'synthetic-provider-v1', timeout_ms: 80, max_response_bytes: 128 });
     t.after(() => { clearTimeout(late); exchange.close(); });
     const controller = new AbortController();
@@ -63,17 +133,17 @@ for (const fault of ['stream-overflow', 'declared-overflow', 'stalled-headers', 
     assert.equal(calls, 1); assert.equal(socketClosed, true);
   });
 }
-test('aborted before dispatch and closed exchange cause zero connections', async t => {
+for (const query of [false, true]) test(`${query ? 'query' : 'bearer'} aborted before dispatch and closed exchange cause zero connections`, async t => {
   let calls = 0;
   const endpoint = await server(t, () => { calls++; });
-  const exchange = candidate.createFixtureExchangeV1({ endpoint, bearer: canary, ca: null,
+  const exchange = modeExchange(query, { endpoint, bearer: canary, ca: null,
     capability_id: 'synthetic-provider-v1', timeout_ms: 100, max_response_bytes: 128 });
   const c = new AbortController(); c.abort();
   await assert.rejects(exchange.request(Buffer.from('{}'), c.signal));
   exchange.close(); await assert.rejects(exchange.request(Buffer.from('{}'), new AbortController().signal));
   assert.equal(calls, 0);
 });
-test('actual TLS validates certificate, rejects untrusted TLS, and connect refusal is sanitized', async t => {
+for (const query of [false, true]) test(`actual ${query ? 'query' : 'bearer'} TLS validates certificate, rejects untrusted TLS, and connect refusal is sanitized`, async t => {
   const root = mkdtempSync(join(tmpdir(), 'artifact-local-tls-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const key = join(root, 'synthetic.key'), cert = join(root, 'synthetic.crt');
@@ -87,7 +157,7 @@ test('actual TLS validates certificate, rejects untrusted TLS, and connect refus
   s.listen(0, '127.0.0.1'); await once(s, 'listening');
   const endpoint = `https://127.0.0.1:${s.address().port}/rpc`;
   const policy = { endpoint, bearer: canary, ca: readFileSync(cert, 'utf8'), capability_id: 'synthetic-provider-v1', timeout_ms: 500, max_response_bytes: 128 };
-  const good = candidate.createFixtureExchangeV1(policy), bad = candidate.createFixtureExchangeV1({ ...policy, ca: null });
+  const good = modeExchange(query, policy), bad = modeExchange(query, { ...policy, ca: null });
   t.after(() => { good.close(); bad.close(); s.closeAllConnections(); s.close(); });
   assert.equal((await good.request(Buffer.from('{}'), new AbortController().signal)).status, 200);
   await assert.rejects(bad.request(Buffer.from('{}'), new AbortController().signal), /PRIVATE_RPC_UNAVAILABLE/);
@@ -96,13 +166,13 @@ test('actual TLS validates certificate, rejects untrusted TLS, and connect refus
   await assert.rejects(good.request(Buffer.from('{}'), new AbortController().signal), /PRIVATE_RPC_UNAVAILABLE/);
   assert.equal(calls, 1);
 });
-test('trusted readiness/source/submission adapters preserve contracts and honest compatibility-label mapping', async t => {
+for (const query of [false, true]) test(`trusted ${query ? 'query' : 'bearer'} readiness/source/submission adapters preserve contracts and honest compatibility-label mapping`, async t => {
   const observed = [];
   const endpoint = await server(t, async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk); observed.push(Buffer.concat(chunks));
     res.setHeader('content-type', 'application/json'); res.end('{"result":1}');
   });
-  const exchange = candidate.createFixtureExchangeV1({ endpoint, bearer: canary, ca: null,
+  const exchange = modeExchange(query, { endpoint, bearer: canary, ca: null,
     capability_id: 'synthetic-provider-v1', timeout_ms: 500, max_response_bytes: 1024 });
   t.after(() => exchange.close());
   const b = { call_timeout_ms: 500, max_response_bytes: 1024 };
@@ -111,12 +181,14 @@ test('trusted readiness/source/submission adapters preserve contracts and honest
   assert.equal(await adapters.transport({ body, signal }), '{"result":1}');
   const simulation = { ...body, id: 'simulation-1', method: 'simulateTransaction' }, exact = Buffer.from(canonicalJson(simulation));
   await adapters.transport({ body: simulation, signal, request_bytes: exact });
+  const economic = { ...body, id: 'economic-1', method: 'getTransaction' }, economicBytes = Buffer.from(canonicalJson(economic));
+  await adapters.transport({ body: economic, signal, request_bytes: economicBytes });
   const requestBody = Buffer.from('{"method":"sendTransaction"}');
   const request = { endpoint: 'OFFLINE_INJECTED_PRIMARY_SOLANA_RPC', requestBody, signal,
     options: { body: requestBody, redirect: 'error', timeoutMs: 500 } };
   await adapters.submission.transport(request);
-  assert.deepEqual(observed, [Buffer.from(canonicalJson(body)), exact, requestBody]);
+  assert.deepEqual(observed, [Buffer.from(canonicalJson(body)), exact, economicBytes, requestBody]);
   assert.throws(() => adapters.submission.transport({ ...request, endpoint }));
   await assert.rejects(adapters.transport({ body, signal, request_bytes: Buffer.from('{}') }));
-  assert.deepEqual(exchange.mapping, { capability_id: 'synthetic-provider-v1', scheduler_label: request.endpoint, transport_retries: 0 });
+  assert.deepEqual(exchange.mapping, { capability_id: query ? 'helius-mainnet-query-v1' : 'synthetic-provider-v1', scheduler_label: request.endpoint, transport_retries: 0 });
 });
