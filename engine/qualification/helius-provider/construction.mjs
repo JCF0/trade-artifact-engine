@@ -34,6 +34,7 @@ export async function constructAndSimulate(session, context, minimum, root) {
   const first = floor(await session.call('getAccountInfo', [m.route_scope.pool, cfg(minimum)]), minimum);
   const initial = decodeFixedWhirlpoolV1(bytes(first.value, m.route_scope.whirlpool_program));
   const indices = starts(initial), program = new PublicKey(m.route_scope.whirlpool_program), poolKey = new PublicKey(m.route_scope.pool);
+  check(PublicKey.findProgramAddressSync([Buffer.from('oracle'), poolKey.toBuffer()], program)[0].toBase58() === m.route_scope.oracle);
   const ticks = indices.map(i => PublicKey.findProgramAddressSync([Buffer.from('tick_array'), poolKey.toBuffer(), Buffer.from(String(i))], program)[0].toBase58());
   const addresses = [m.route_scope.pool, ...ticks, m.route_scope.jup_vault, m.route_scope.usdc_vault,
     m.route_scope.oracle, m.asset_scope.jup_mint, m.asset_scope.usdc_mint];
@@ -52,7 +53,11 @@ export async function constructAndSimulate(session, context, minimum, root) {
     const { token_state: t } = decodeSolanaTokenAccountDataV1({ raw_base64: route.value[i].data[0], token_program: m.wallet_scope.token_program, expected_wallet: m.route_scope.pool });
     check(t.mint === mint && t.delegate_status === 'NONE' && t.close_authority_status === 'NONE' && t.account_state === 'INITIALIZED');
   }
-  bytes(route.value[6], m.route_scope.whirlpool_program);
+  // Classic static-fee swap still requires the exact oracle PDA as a read-only
+  // instruction account, not an initialized account body. The static-fee guard
+  // above remains mandatory. Only explicit RPC null gains admission; missing or
+  // malformed non-null observations retain the existing fail-closed validation.
+  if (route.value[6] !== null) bytes(route.value[6], m.route_scope.whirlpool_program);
   for (const i of [7, 8]) bytes(route.value[i], m.wallet_scope.token_program, 82);
   const quoteTime = Math.floor(Date.now() / 1000), amount = m.economic_authority.acquisition_input_usdc_raw;
   const q = swapQuoteByInputToken(BigInt(amount), false, m.economic_authority.maximum_slippage_bps, p, undefined, arrays, BigInt(quoteTime));
