@@ -10,6 +10,8 @@ import { computeCandidateMemberDigestV13 } from '../explicit-candidate-selection
 import { loadRetainedEpisodePackageV1 } from './retained-episode-package-v1.mjs';
 import { inspectSignedLegacyWire } from './reused/bounded-rebroadcast-v1.mjs';
 import { validateHumanRevocationV1 } from './human-revocation-v1.mjs';
+import { isRecoveredSetupExecutorMandateV2 } from './executor-mandate-profile-v1.mjs';
+import { validateExecutorRecoveredSetupEvidenceV2 as validateRecoveredSetupEvidenceV2 } from './recovered-setup-v2.mjs';
 const hash = b => createHash('sha256').update(b).digest('hex');
 function stop() { throw Error('SUPERVISED_EXPORT_INVALID'); }
 function read(path) {
@@ -130,7 +132,18 @@ export async function exportSupervisedRetainedEpisodeV1({ c, journal, authority,
       || r.revocation_digest !== durable.authenticated_revocation_digest || r.predecessor_state !== durable.predecessor_state
       || r.predecessor_state_digest !== durable.predecessor_state_digest || r.revoked_at_unix_seconds !== durable.revoked_at_unix_seconds) stop();
   }
-  put('control.json', { version: 'artifact_retained_control_v2', mandate: c.mandate, authorization: c.authorization,
+  const recovered = isRecoveredSetupExecutorMandateV2(c.mandate);
+  if (recovered) {
+    // Historical export cannot expire already admitted evidence. The original
+    // signed authorization/attestation times are checked, not the export clock.
+    validateRecoveredSetupEvidenceV2({ mandate: c.mandate, authorization: c.authorization,
+      evidence: c.setup_provenance, mode: 'replay' });
+    put('recovered-setup.json', c.setup_provenance);
+  }
+  put('control.json', { version: recovered ? 'artifact_retained_control_v3' : 'artifact_retained_control_v2',
+    ...(recovered ? { setup_provenance: { version: 'artifact_retained_recovered_setup_v1', evidence_member: 'recovered-setup.json' },
+      runtime_deadline_unix_seconds: c.deadline_unix_seconds } : {}),
+    mandate: c.mandate, authorization: c.authorization,
     configured_principals: { human_public_key: c.authorization.human_public_key, agent_public_key: c.authorization.agent_public_key,
       executor_release_sha256: c.executor_release_sha256 }, legs,
     revocation: revocations.length ? JSON.parse(Buffer.from(revocations[0].revocation_bytes_base64, 'base64')) : null,

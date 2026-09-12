@@ -3,8 +3,14 @@ import {
   BOUNDED_AGENT_MANDATE_VERSION_V1, BOUNDED_AGENT_MANDATE_PROFILE_V1,
   buildBoundedAgentMandateV1, validateBoundedAgentMandateV1, assertLiveReadyBoundedAgentMandateV1,
 } from './mandate-v1.mjs';
+import { RECOVERED_SETUP_PROFILE_V2, RECOVERED_SETUP_VERSION_V2,
+  buildRecoveredSetupMandateV2, validateRecoveredSetupMandateV2,
+  assertLiveReadyRecoveredSetupMandateV2 } from './recovered-setup-v2.mjs';
 
 export const OFFLINE_WALLET_PROFILE_V1 = 'ARTIFACT_DISPOSABLE_WALLET_OFFLINE_TEST_ONLY_V1';
+export const OFFLINE_RECOVERED_SETUP_PROFILE_V2 = 'ARTIFACT_DISPOSABLE_RECOVERED_SETUP_OFFLINE_TEST_ONLY_V2';
+export const isOfflineExecutorMandateV1 = m => [OFFLINE_WALLET_PROFILE_V1, OFFLINE_RECOVERED_SETUP_PROFILE_V2].includes(m?.mandate_profile);
+export const isRecoveredSetupExecutorMandateV2 = m => [RECOVERED_SETUP_PROFILE_V2, OFFLINE_RECOVERED_SETUP_PROFILE_V2].includes(m?.mandate_profile);
 export const OFFLINE_WALLET_SCOPE_V1 = Object.freeze({
   wallet: 'GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB',
   jup_ata: '4MrBbrbnZFCcxWh8gtX57onPMuvB9SBCz3rsBAbQTYZ1',
@@ -36,6 +42,11 @@ export function buildOfflineWalletMandateV1(input) {
 }
 export function validateExecutorMandateV1(value) {
   const v = cloneAndFreeze(value);
+  if (v.mandate_profile === RECOVERED_SETUP_PROFILE_V2) return validateRecoveredSetupMandateV2(v);
+  if (v.mandate_profile === OFFLINE_RECOVERED_SETUP_PROFILE_V2) {
+    recoveredFixtureIdentity(v);
+    return validateRecoveredSetupMandateV2(recoveredFixtureIdentity(v));
+  }
   if (v.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) return validateBoundedAgentMandateV1(v);
   if (v.mandate_version !== OFFLINE_WALLET_PROFILE_V1
       || Object.entries(OFFLINE_WALLET_SCOPE_V1).some(([k, x]) => v.wallet_scope[k] !== x)
@@ -56,10 +67,40 @@ export function validateExecutorMandateV1(value) {
     wallet_scope: { ...v.wallet_scope, ...FINAL_WALLET } }));
 }
 export function assertConfiguredExecutorMandateV1(value) {
+  if (isRecoveredSetupExecutorMandateV2(value)) {
+    validateExecutorMandateV1(value);
+    return assertLiveReadyRecoveredSetupMandateV2(value.mandate_profile === RECOVERED_SETUP_PROFILE_V2 ? value : recoveredFixtureIdentity(value));
+  }
   if (value?.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) return assertLiveReadyBoundedAgentMandateV1(value);
   validateExecutorMandateV1(value);
   if (value.unresolved_live_readiness.status !== 'RESOLVED') {
     fail('bounded_agent_live_readiness_unresolved', 'explicit test configuration required');
   }
   return true;
+}
+
+// Separate disposable V2 domain. No V1 object is built or admitted on this path.
+// The signed/test mandate retains its actual V2-fixture preimage throughout.
+function recoveredFixtureIdentity(v) {
+  if (v.mandate_version !== OFFLINE_RECOVERED_SETUP_PROFILE_V2
+      || Object.entries(OFFLINE_WALLET_SCOPE_V1).some(([k, x]) => v.wallet_scope[k] !== x)
+      || v.offline_identity.human_authorization_public_key !== OFFLINE_CONTROL_KEYS_V1[0]
+      || v.offline_identity.agent_control_public_key !== OFFLINE_CONTROL_KEYS_V1[1]
+      || sha256CanonicalJson(identity(v)) !== sha256CanonicalJson(v)) {
+    fail('bounded_agent_test_mandate_invalid', 'separate disposable V2 identity required');
+  }
+  if (v.unresolved_live_readiness.status === 'RESOLVED') {
+    for (const k of Object.keys(v.unresolved_live_readiness).filter(k => k !== 'status')) {
+      if (v.unresolved_live_readiness[k] !== v.offline_identity[k]) fail('bounded_agent_test_mandate_invalid', 'test authority must remain test-only');
+    }
+  }
+  return identity({ ...v, mandate_version: RECOVERED_SETUP_VERSION_V2, mandate_profile: RECOVERED_SETUP_PROFILE_V2,
+    wallet_scope: { ...v.wallet_scope, ...FINAL_WALLET } });
+}
+export function buildOfflineRecoveredSetupMandateV2(input) {
+  const base = buildRecoveredSetupMandateV2(input);
+  const value = identity({ ...base, mandate_version: OFFLINE_RECOVERED_SETUP_PROFILE_V2,
+    mandate_profile: OFFLINE_RECOVERED_SETUP_PROFILE_V2, wallet_scope: { ...base.wallet_scope, ...OFFLINE_WALLET_SCOPE_V1 } });
+  validateExecutorMandateV1(value);
+  return cloneAndFreeze(value);
 }

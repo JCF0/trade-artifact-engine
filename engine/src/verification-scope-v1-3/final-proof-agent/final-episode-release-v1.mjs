@@ -205,5 +205,18 @@ export async function reconstructFinalEpisodeReleaseV1(input) {
     result.verification.source_truth = 'Explicit-root, administrator-qualified retained provider evidence, not independent provider authentication. Synthetic and final-wallet profiles are disjoint. Original opening predicates are re-evaluated from retained request/response bytes.';
   }
   if (captured.admission !== null) result.history_admission = captured.admission;
+  if (control?.version === 'artifact_retained_control_v3') {
+    result.setup_provenance = {
+      version: 'artifact_recovered_setup_replay_assessment_v1', status: 'RECOVERED_PROVENANCE_ACCEPTED_UNDER_V2',
+      original_execution_archive: 'UNKNOWN', historical_byte_continuity: 'NOT_ATTESTED',
+      provenance_sha256: control.mandate.setup_authority.recovered_provenance_sha256,
+      custodian_attestation_sha256: control.mandate.setup_authority.custodian_attestation_sha256,
+      retained_subset_members_verified: 8, recovery_inventory_member_identities_verified: 652,
+      full_recovery_bundle_member_bytes: 'NOT_VERIFIED_NOT_ALL_RETAINED',
+      transfer_archive_bytes: 'NOT_VERIFIED_NOT_RETAINED',
+      freshness: 'REPLAY_VALIDATES_SIGNED_HISTORICAL_TIMES_NOT_CURRENT_ELIGIBILITY',
+    };
+    result.demonstration.limitations.push('ORIGINAL_SETUP_ARCHIVE_UNKNOWN_HISTORICAL_BYTE_CONTINUITY_NOT_ATTESTED');
+  }
   return cloneAndFreeze({ ...result, release_digest: sha256CanonicalJson(result) });
 }

@@ -18,6 +18,8 @@ def snapshot():
     paths = {line[66:] for line in manifest.read_text().splitlines()}
     paths.add(str(manifest.relative_to(ROOT)))
     paths.update(str(p.relative_to(ROOT)) for p in HERE.rglob('*') if p.is_file() and '__pycache__' not in p.parts)
+    paths.update(str(p.relative_to(ROOT)) for p in (ROOT / 'engine/src/verification-scope-v1-3/final-proof-agent').rglob('*')
+                 if p.is_file() and '__pycache__' not in p.parts)
     return {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in sorted(paths)}
 
 

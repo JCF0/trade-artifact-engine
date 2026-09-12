@@ -3,7 +3,7 @@ import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openS
 import { dirname, join } from 'node:path';
 import { assertExactFields, canonicalJson, cloneAndFreeze, sha256CanonicalJson } from '../contract.mjs';
 import { buildOrcaMessageBoundaryV1 } from './orca-message-boundary-v1.mjs';
-import { OFFLINE_WALLET_PROFILE_V1 } from './executor-mandate-profile-v1.mjs';
+import { isOfflineExecutorMandateV1 } from './executor-mandate-profile-v1.mjs';
 import { SUPERVISED_SUBMISSION_PROFILE_V1, assertSupervisedSubmissionConstructionV1 } from './supervised-profile-v1.mjs';
 import { closeTrustedTerminalSourceV1 } from './wiggles-terminal-closure-v1.mjs';
 import { POLICY, canonicalJson as schedulerJson, createFilesystemEvidencePort, inspectSignedLegacyWire,
@@ -308,7 +308,7 @@ function validateSubmissionContents({ root, expected_binding }, access) {
 }
 
 export function createOfflineTrustedSubmissionV1(c, { authority, clock, submission }) {
-  if (c.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) stop();
+  if (!isOfflineExecutorMandateV1(c.mandate)) stop();
   return createTrustedSubmission(c, { authority, clock, submission }, PROFILE);
 }
 export function createSupervisedTrustedSubmissionV1(c, dependencies) {

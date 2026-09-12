@@ -29,6 +29,10 @@ def inventory():
     sources = {r[66:] for r in baseline.read_text().splitlines()}
     sources.add(str(baseline.relative_to(ROOT)))
     sources.update(str(p.relative_to(ROOT)) for p in HERE.rglob('*') if p.is_file() and '__pycache__' not in p.parts)
+    # Successor additions are not present in the historical manifest. Retain the
+    # predecessor identity, but inventory the actual successor closure separately.
+    sources.update(str(p.relative_to(ROOT)) for p in (ROOT / 'engine/src/verification-scope-v1-3/final-proof-agent').rglob('*')
+                   if p.is_file() and '__pycache__' not in p.parts)
     for path in sorted(sources): add('source/' + path, ROOT / path)
     for index, package in enumerate(runtime['packages']):
         base = Path(package)
@@ -47,6 +51,9 @@ def inventory():
     # ELF closure is observed, not a template runtime/CA path. Include each linked
     # shared library recursively as well as libraries already mapped by Python.
     binaries = [runtime['node'], '/usr/bin/python3']
+    for tool in ['/usr/bin/unshare', '/usr/bin/setpriv', '/usr/sbin/ip', '/usr/bin/ldd']:
+        add('runtime/host-tools/' + Path(tool).name, tool)
+        if Path(tool).read_bytes()[:4] == b'\x7fELF': binaries.append(tool)
     binaries += [m['resolved'] for m in members.values() if m['resolved'].endswith(('.node', '.so'))
                  and Path(m['resolved']).read_bytes()[:6] == b'\x7fELF\x02\x01'
                  and Path(m['resolved']).read_bytes()[18:20] == b'\x3e\x00']

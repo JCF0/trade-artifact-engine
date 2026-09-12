@@ -5,7 +5,7 @@ import { createFrozenControlledHeliusTargetAccountEnumerationPortV2 } from '../.
 import { buildRetainedFinalizedSourceV1 } from './final-episode-release-v1.mjs';
 import { createBoundedSupervisedRpcV1 } from './supervised-rpc-v1.mjs';
 import { validateSupervisedSetupSourceV1 } from './supervised-setup-source-v1.mjs';
-import { OFFLINE_WALLET_PROFILE_V1 } from './executor-mandate-profile-v1.mjs';
+import { isOfflineExecutorMandateV1 } from './executor-mandate-profile-v1.mjs';
 import { reviveSolanaRentEpochV1 } from '../../wallet-acquisition/solana-rent-epoch-v1.mjs';
 const TOKEN = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', TOKEN2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 function stop() { throw Error('SUPERVISED_FINALIZED_SOURCE_INVALID'); }
@@ -102,7 +102,7 @@ export async function captureSupervisedFinalizedSourceV1({ configuration: c, ord
     transactions.push({ signature: row.signature, response: response.response });
   }
   const admission = put('economic-history-admission.json', canonicalJson({ version: 'artifact_supervised_history_v1', lanes }));
-  const descriptor = { version: 'artifact_final_episode_replay_v3', evidence_kind: m.mandate_profile === OFFLINE_WALLET_PROFILE_V1 ? 'SYNTHETIC_FINAL_EPISODE' : 'SUPERVISED_RETAINED_FINAL_EPISODE',
+  const descriptor = { version: 'artifact_final_episode_replay_v3', evidence_kind: isOfflineExecutorMandateV1(m) ? 'SYNTHETIC_FINAL_EPISODE' : 'SUPERVISED_RETAINED_FINAL_EPISODE',
     scope: { wallet: m.wallet_scope.wallet, target_mint: m.asset_scope.jup_mint, exact_quote_mint: m.asset_scope.usdc_mint,
       route_program: m.route_scope.whirlpool_program, route_pool: m.route_scope.pool },
     acquisition_request: { request_version: 'wallet_wide_acquisition_request_v2', chain: 'solana', network: 'mainnet-beta', genesis_hash: genesis.result,

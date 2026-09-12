@@ -158,7 +158,7 @@ function preparedFor(mandate, challenge, admission, authority) {
   };
 }
 async function buildBoundedAgentOfflineEpisodeFixtureV1(options = {}) {
-  const mandate = buildFixedTestMandateV1();
+  const mandate = options.mandate ?? buildFixedTestMandateV1();
   const authorization = buildFixedTestAuthorizationV1(mandate, options.episode_nonce_suffix ?? '');
   const authority = await createSyntheticFinalizedAuthority(mandate);
   const pipeline = await runExistingPipeline(authority);
@@ -267,6 +267,7 @@ async function buildBoundedAgentOfflineEpisodeFixtureV1(options = {}) {
   });
   const evidenceGraph = buildEpisodeEvidenceGraphV1({
     mandate, authorization,
+    ...(options.setup_provenance === undefined ? {} : { setup_provenance: options.setup_provenance }),
     acquisition: { readiness: acquisitionChallenge, decision: acquisitionDecision, admission: acquisitionExecution.admission, signed_transaction_intent: acquisitionExecution.signed_transaction_intent, signed_transaction_intent_digest: acquisitionExecution.signed_transaction_intent_digest, transmission: acquisitionTransmission, finalized: acquisitionFinalized },
     disposal: { readiness: disposalChallenge, decision: disposalDecision, admission: disposalExecution.admission, signed_transaction_intent: disposalExecution.signed_transaction_intent, signed_transaction_intent_digest: disposalExecution.signed_transaction_intent_digest, transmission: disposalTransmission, finalized: disposalFinalized },
     reconstruction,

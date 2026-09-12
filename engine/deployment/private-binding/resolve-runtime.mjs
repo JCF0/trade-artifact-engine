@@ -45,6 +45,7 @@ function candidateFiles(directory) {
   }
 }
 candidateFiles(join(root, 'engine/deployment/private-binding'));
+candidateFiles(join(root, 'engine/src/verification-scope-v1-3/final-proof-agent'));
 for (const path of source.filter(p => /\.(mjs|js)$/.test(p))) {
   const full = join(root, path), text = readFileSync(full, 'utf8');
   function walk(node) {

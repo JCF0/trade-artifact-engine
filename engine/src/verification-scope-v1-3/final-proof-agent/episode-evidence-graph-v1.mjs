@@ -1,11 +1,13 @@
-import { assertExactFields, canonicalJson, cloneAndFreeze, fail, sha256CanonicalJson } from '../contract.mjs';
+import { assertExactFields, assertPlainJsonValue, canonicalJson, cloneAndFreeze, fail, sha256CanonicalJson } from '../contract.mjs';
 import { validateAuthenticatedAgentDecisionV1 } from './agent-decision-v1.mjs';
 import { validateExecutorAdmissionV1 } from './executor-admission-v1.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
-import { validateBoundedAgentMandateV1 } from './mandate-v1.mjs';
+import { validateExecutorMandateV1 as validateBoundedAgentMandateV1, isRecoveredSetupExecutorMandateV2 } from './executor-mandate-profile-v1.mjs';
+import { validateExecutorRecoveredSetupEvidenceV2 as validateRecoveredSetupEvidenceV2 } from './recovered-setup-v2.mjs';
 import { validateReadinessChallengeV1 } from './readiness-challenge-v1.mjs';
 
 export const EPISODE_EVIDENCE_GRAPH_VERSION_V1 = 'artifact_bounded_agent_episode_evidence_graph_v1';
+export const EPISODE_EVIDENCE_GRAPH_VERSION_V2 = 'artifact_bounded_agent_episode_evidence_graph_v2';
 const DIGEST = /^[0-9a-f]{64}$/;
 const RAW = /^(?:0|[1-9][0-9]*)$/;
 const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{80,90}$/;
@@ -54,6 +56,7 @@ const GRAPH_FIELDS = [
   'reconstruction', 'outcome', 'manifest',
 ];
 const PUBLIC_WORDING = 'In this offline fixture, authenticated agent-control decisions exercised a constrained executor; Artifact independently reconstructed synthetic finalized-provider evidence through the v1.3 pipeline. This does not assert that the fixture transactions occurred onchain.';
+const graphFields = value => [...GRAPH_FIELDS, ...(isRecoveredSetupExecutorMandateV2(value.mandate) ? ['setup_provenance'] : [])];
 function digestPreimage(value, fields, identityFields) {
   return Object.fromEntries(fields.filter(field => !identityFields.includes(field)).map(field => [field, value[field]]));
 }
@@ -195,6 +198,7 @@ function membersFor(value) {
     ['disposal/finalized-evidence.json', value.disposal.finalized],
     ['reconstruction/reconstruction.json', value.reconstruction], ['episode-result.json', value.outcome],
   ];
+  if (isRecoveredSetupExecutorMandateV2(value.mandate)) rows.push(['setup/recovered-evidence.json', value.setup_provenance]);
   return rows.map(([path, record]) => ({ path, sha256: sha256CanonicalJson(record) }));
 }
 function manifestFor(value) {
@@ -210,11 +214,15 @@ function manifestFor(value) {
 // graph. It is deliberately not economic authority; callers that promote a
 // claim must use the source-bound finalized-evidence adapter/gate.
 export function validateEpisodeEvidenceGraphStructureV1(value) {
-  assertExactFields(value, GRAPH_FIELDS, 'bounded_agent_episode_evidence_graph');
-  if (value.episode_evidence_graph_version !== EPISODE_EVIDENCE_GRAPH_VERSION_V1
+  assertPlainJsonValue(value);
+  const recovered = isRecoveredSetupExecutorMandateV2(value.mandate);
+  assertExactFields(value, graphFields(value), 'bounded_agent_episode_evidence_graph');
+  if (value.episode_evidence_graph_version !== (recovered ? EPISODE_EVIDENCE_GRAPH_VERSION_V2 : EPISODE_EVIDENCE_GRAPH_VERSION_V1)
       || !/^bounded-agent-episode-[0-9a-f]{64}$/.test(value.episode_id)) fail('bounded_agent_episode_evidence_version_invalid', 'episode graph version or identity is invalid');
   validateBoundedAgentMandateV1(value.mandate);
   validateHumanEpisodeAuthorizationV1(value.human_authorization, { mandate: value.mandate });
+  if (recovered) validateRecoveredSetupEvidenceV2({ mandate: value.mandate, authorization: value.human_authorization,
+    evidence: value.setup_provenance, mode: 'replay' });
   const episodeId = `bounded-agent-episode-${value.human_authorization.authorization_digest}`;
   if (value.episode_id !== episodeId) fail('bounded_agent_episode_evidence_chain_mismatch', 'episode does not bind its authorization');
   validateLeg(value.acquisition, 'ACQUISITION', value.mandate, value.human_authorization, episodeId);
@@ -242,16 +250,19 @@ export function validateEpisodeEvidenceGraphStructureV1(value) {
   value.manifest.members.forEach((member, index) => assertExactFields(member, MEMBER_FIELDS, `manifest.members.${index}`));
   const expectedManifest = manifestFor(value);
   if (canonicalJson(value.manifest) !== canonicalJson(expectedManifest)) fail('bounded_agent_episode_manifest_mismatch', 'episode manifest does not match its members');
-  const expectedDigest = sha256CanonicalJson(digestPreimage(value, GRAPH_FIELDS, ['episode_evidence_graph_id', 'episode_evidence_graph_digest']));
+  const expectedDigest = sha256CanonicalJson(digestPreimage(value, graphFields(value), ['episode_evidence_graph_id', 'episode_evidence_graph_digest']));
   if (value.episode_evidence_graph_digest !== expectedDigest
       || value.episode_evidence_graph_id !== `bounded-agent-evidence-graph-${expectedDigest}`) {
     fail('bounded_agent_episode_evidence_identity_invalid', 'episode graph identity is invalid');
   }
   return true;
 }
-export function buildEpisodeEvidenceGraphV1({ mandate, authorization, acquisition, disposal, reconstruction, outcome }) {
+export function buildEpisodeEvidenceGraphV1({ mandate, authorization, acquisition, disposal, reconstruction, outcome, setup_provenance }) {
+  const recovered = isRecoveredSetupExecutorMandateV2(mandate);
+  if (!recovered && setup_provenance !== undefined) fail('bounded_agent_episode_evidence_version_invalid', 'V1 cannot carry V2 provenance');
   const value = {
-    episode_evidence_graph_version: EPISODE_EVIDENCE_GRAPH_VERSION_V1,
+    episode_evidence_graph_version: recovered ? EPISODE_EVIDENCE_GRAPH_VERSION_V2 : EPISODE_EVIDENCE_GRAPH_VERSION_V1,
+    ...(recovered ? { setup_provenance } : {}),
     episode_evidence_graph_id: `bounded-agent-evidence-graph-${'0'.repeat(64)}`,
     episode_evidence_graph_digest: '0'.repeat(64),
     episode_id: `bounded-agent-episode-${authorization.authorization_digest}`,
@@ -259,7 +270,7 @@ export function buildEpisodeEvidenceGraphV1({ mandate, authorization, acquisitio
     manifest: {},
   };
   value.manifest = manifestFor(value);
-  value.episode_evidence_graph_digest = sha256CanonicalJson(digestPreimage(value, GRAPH_FIELDS, ['episode_evidence_graph_id', 'episode_evidence_graph_digest']));
+  value.episode_evidence_graph_digest = sha256CanonicalJson(digestPreimage(value, graphFields(value), ['episode_evidence_graph_id', 'episode_evidence_graph_digest']));
   value.episode_evidence_graph_id = `bounded-agent-evidence-graph-${value.episode_evidence_graph_digest}`;
   validateEpisodeEvidenceGraphStructureV1(value);
   return cloneAndFreeze(value);

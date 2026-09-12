@@ -3,7 +3,8 @@
 import { Message } from '@solana/web3.js';
 import { createHash } from 'node:crypto';
 import { assertExactFields, canonicalJson, cloneAndFreeze, sha256CanonicalJson as digest } from '../contract.mjs';
-import { validateExecutorMandateV1, OFFLINE_WALLET_PROFILE_V1 } from './executor-mandate-profile-v1.mjs';
+import { validateExecutorMandateV1, isOfflineExecutorMandateV1, isRecoveredSetupExecutorMandateV2 } from './executor-mandate-profile-v1.mjs';
+import { validateExecutorRecoveredSetupEvidenceV2 as validateRecoveredSetupEvidenceV2 } from './recovered-setup-v2.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
 import { validateHumanRevocationV1 } from './human-revocation-v1.mjs';
 import { createAuthorizedEpisodeStateV1, admitAgentDecisionStateV1, recordSignedIntentV1, closeFinalizedLegV1, applyHumanRevocationV1 } from './episode-state-machine-v1.mjs';
@@ -17,6 +18,17 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const equal = (a, b) => canonicalJson(a) === canonicalJson(b);
 class ControlError extends Error { constructor(code) { super(code); this.code = code; } }
 function need(value, code) { if (!value) throw new ControlError(code); }
+export function validateRetainedRecoveredSetupTimesV2({ mandate, authorization, evidence, dispatch_times, runtime_deadline_unix_seconds = null }) {
+  validateRecoveredSetupEvidenceV2({ mandate, authorization, evidence, mode: 'replay' });
+  const end = evidence.enrollment.payload.not_after_unix_seconds;
+  need(Array.isArray(dispatch_times) && dispatch_times.length > 0
+    && dispatch_times.every(t => Number.isSafeInteger(t) && t >= authorization.issued_at_unix_seconds && t <= end),
+  'RECOVERED_CUSTODY_NOT_VALID_AT_ORIGINAL_DISPATCH');
+  if (runtime_deadline_unix_seconds !== null) need(Number.isSafeInteger(runtime_deadline_unix_seconds)
+    && runtime_deadline_unix_seconds > authorization.issued_at_unix_seconds && runtime_deadline_unix_seconds <= end
+    && dispatch_times.every(t => t < runtime_deadline_unix_seconds), 'RECOVERED_RUNTIME_NOT_VALID_AT_ORIGINAL_DISPATCH');
+  return true;
+}
 function issue(error) {
   if (!(error instanceof ControlError) && error?.name !== 'VerificationScopeError'
       && error?.message !== 'TRUSTED_SUBMISSION_EVIDENCE_OR_AUTHORITY_INVALID'
@@ -28,10 +40,25 @@ import { SUPERVISED_SUBMISSION_PROFILE_V1 } from './supervised-profile-v1.mjs';
 export function loadRetainedControlV1(loaded, reference) {
   if (reference === null) return null;
   const value = loaded.parseMemberV1(reference);
-  const supervised = value.version === 'artifact_retained_control_v2';
-  assertExactFields(value, ['version', 'mandate', 'authorization', 'configured_principals', 'legs', 'revocation', ...(supervised ? ['supervision'] : [])], 'retained_control');
+  const recovered = value.version === 'artifact_retained_control_v3';
+  const supervised = recovered || value.version === 'artifact_retained_control_v2';
+  assertExactFields(value, ['version', 'mandate', 'authorization', 'configured_principals', 'legs', 'revocation',
+    ...(supervised ? ['supervision'] : []), ...(recovered ? ['setup_provenance', 'runtime_deadline_unix_seconds'] : [])], 'retained_control');
+  need(recovered === isRecoveredSetupExecutorMandateV2(value.mandate), 'CONTROL_PROVENANCE_VERSION_MISMATCH');
+  if (recovered) {
+    assertExactFields(value.setup_provenance, ['version', 'evidence_member'], 'retained_recovered_setup');
+    need(value.setup_provenance.version === 'artifact_retained_recovered_setup_v1'
+      && value.setup_provenance.evidence_member === 'recovered-setup.json', 'CONTROL_PROVENANCE_REFERENCE_INVALID');
+    validateRecoveredSetupEvidenceV2({ mandate: value.mandate, authorization: value.authorization,
+      evidence: loaded.parseMemberV1('recovered-setup.json'), mode: 'replay' });
+  }
   need((supervised || value.version === 'artifact_retained_control_v1') && Array.isArray(value.legs) && value.legs.length <= 2, 'CONTROL_FORMAT_INVALID');
   if (supervised) loadRetainedSupervisionV1(loaded, value);
+  if (recovered) {
+    const evidence = loaded.parseMemberV1(value.setup_provenance.evidence_member), deadline = value.runtime_deadline_unix_seconds;
+    need(Number.isSafeInteger(deadline) && deadline > value.authorization.issued_at_unix_seconds
+      && deadline <= evidence.enrollment.payload.not_after_unix_seconds, 'RETAINED_RUNTIME_EXCEEDS_CUSTODY_ENROLLMENT');
+  }
   // Resolve every reference before any replay capability is constructed.
   for (const leg of value.legs) {
     assertExactFields(leg, ['challenge', 'decision', 'admitted_at_unix_seconds', 'admission', 'signed_intent', 'wire_member',
@@ -50,10 +77,17 @@ async function readiness(loaded, c, leg, state, rows, descriptor) {
   for (const r of records) assertExactFields(r, ['request', 'raw_response', 'started_unix_seconds', 'observed_unix_seconds', 'elapsed_ms'], 'retained_capture_record');
   need(records.length > 0 && equal(manifest.challenge, leg.challenge)
     && equal(manifest.raw_evidence_digests, records.map(digest)), 'CAPTURE_REFERENCE_MISMATCH');
+  if (c.version === 'artifact_retained_control_v3') {
+    validateRetainedRecoveredSetupTimesV2({ mandate: c.mandate, authorization: c.authorization,
+      evidence: loaded.parseMemberV1(c.setup_provenance.evidence_member),
+      runtime_deadline_unix_seconds: c.runtime_deadline_unix_seconds,
+      dispatch_times: [leg.admitted_at_unix_seconds, ...records.flatMap(r => [r.started_unix_seconds, r.observed_unix_seconds])] });
+  }
   let at = 0, retained = 0, wall = records[0].started_unix_seconds, mono = 0;
   const outputs = [];
   const capture = createOrcaReadinessCaptureV1({ mandate: c.mandate, authorization: c.authorization, budget: manifest.budget,
-    deadline_unix_seconds: leg.challenge.expires_at_unix_seconds,
+    deadline_unix_seconds: c.version === 'artifact_retained_control_v3'
+      ? Math.min(c.runtime_deadline_unix_seconds, leg.challenge.expires_at_unix_seconds) : leg.challenge.expires_at_unix_seconds,
     clock: { unixSeconds: () => wall, monotonicMs: () => mono },
     durable_episode_authority: { async loadCurrentEpisodeStateV1() { return state; },
       async inspectEpisodeV1() { return { revoked: false, ordinals: rows }; } },
@@ -84,7 +118,7 @@ async function readiness(loaded, c, leg, state, rows, descriptor) {
     need(descriptor.opening.minimum_context_slot === original.context.slot && opening.context.slot === original.context.slot
       && target?.account.data[0] === original.value[1].data[0], 'ECONOMIC_OPENING_CAPTURE_MISMATCH');
   }
-  if (c.version === 'artifact_retained_control_v2' && leg.signed_intent !== null) {
+  if (['artifact_retained_control_v2', 'artifact_retained_control_v3'].includes(c.version) && leg.signed_intent !== null) {
     const { fee_message_sha256, ...source } = manifest.source;
     const amount = leg.challenge.ordinal === 1 ? c.mandate.economic_authority.acquisition_input_usdc_raw : state.chain_derived_acquired_jup_raw;
     const plan = buildOrcaMessageBoundaryV1({ ...source, mandate: c.mandate, phase: leg.challenge.phase, ordinal: leg.challenge.ordinal,
@@ -112,7 +146,7 @@ export async function evaluateRetainedControlV1({ loaded, control: c, descriptor
     validateHumanEpisodeAuthorizationV1(a, { mandate: m });
     assertExactFields(c.configured_principals, ['human_public_key', 'agent_public_key', 'executor_release_sha256'], 'retained_principals');
     need(equal(c.configured_principals, { human_public_key: a.human_public_key, agent_public_key: a.agent_public_key, executor_release_sha256: a.executor_release_sha256 }), 'CONFIGURED_PRINCIPAL_MISMATCH');
-    const principals = m.mandate_profile === OFFLINE_WALLET_PROFILE_V1 ? m.offline_identity : m.unresolved_live_readiness;
+    const principals = isOfflineExecutorMandateV1(m) ? m.offline_identity : m.unresolved_live_readiness;
     need(principals.human_authorization_public_key === a.human_public_key && principals.agent_control_public_key === a.agent_public_key
       && principals.executor_release_sha256 === a.executor_release_sha256, 'MANDATE_PRINCIPAL_MISMATCH');
     state = createAuthorizedEpisodeStateV1({ mandate: m, authorization: a });
@@ -184,8 +218,8 @@ export async function evaluateRetainedControlV1({ loaded, control: c, descriptor
           input_raw_quantity: amount, maximum_slippage_bps: m.economic_authority.maximum_slippage_bps,
           transaction_profile: 'DIRECT_CLASSIC_ORCA_LEGACY_SWAP_V1', unsigned_transaction_digest: digest(plan), readiness_evidence_digest: leg.challenge.readiness_evidence_digest };
         assertExactFields(binding.limits, ['profile', 'max_calls', 'overall_timeout_ms', 'max_response_bytes'], 'retained_submission_limits');
-        const submissionProfile = c.version === 'artifact_retained_control_v2' ? SUPERVISED_SUBMISSION_PROFILE_V1 : 'OFFLINE_INJECTED_SUBMISSION_V1';
-        if (c.version === 'artifact_retained_control_v2') {
+        const submissionProfile = ['artifact_retained_control_v2', 'artifact_retained_control_v3'].includes(c.version) ? SUPERVISED_SUBMISSION_PROFILE_V1 : 'OFFLINE_INJECTED_SUBMISSION_V1';
+        if (['artifact_retained_control_v2', 'artifact_retained_control_v3'].includes(c.version)) {
           const authorized = c.supervision.phase_budgets.submission;
           need(binding.limits.max_calls === authorized.max_calls && binding.limits.overall_timeout_ms === authorized.overall_timeout_ms
             && binding.limits.max_response_bytes === authorized.max_response_bytes, 'SUBMISSION_BUDGET_AUTHORITY_MISMATCH');
@@ -201,7 +235,8 @@ export async function evaluateRetainedControlV1({ loaded, control: c, descriptor
           intent: { parent_intent_path: 'signed-intent.json', parent_intent_sha256: hash(schedulerJson(s)), expected_signature: s.signature,
             signed_transaction_sha256: s.signed_wire_sha256, message_sha256: s.message_sha256, recent_blockhash: wire.recentBlockhash,
             last_valid_block_height: lifetime.value.lastValidBlockHeight, latest_blockhash_context_slot: lifetime.context.slot, endpoint_capability_id: 'PRIMARY_SOLANA_RPC' },
-          limits: binding.limits, runtime_deadline_unix_seconds: binding.runtime_deadline_unix_seconds,
+          limits: binding.limits, runtime_deadline_unix_seconds: c.version === 'artifact_retained_control_v3'
+            ? c.runtime_deadline_unix_seconds : binding.runtime_deadline_unix_seconds,
           recovery_policy: 'WHOLE_SCHEDULE_CONSUMED_BEFORE_EFFECT_NO_RESTART_TRANSPORT' };
         const verified = validateRetainedSubmissionSnapshotV1({ members, expected_binding });
         t.terminal_classification = verified.classification;
@@ -220,7 +255,7 @@ export async function evaluateRetainedControlV1({ loaded, control: c, descriptor
       if (tx) need(BigInt(tx.fee_lamports) === BigInt(plan.fee_lamports), 'FINALIZED_FEE_MISMATCH');
       if (leg.finalized !== null) need(finalized !== null && equal(finalized, leg.finalized), 'RETAINED_FINALIZED_CLAIM_CONTRADICTED');
       if (!finalized) break;
-      if (i === 1 && c.version === 'artifact_retained_control_v2') {
+      if (i === 1 && ['artifact_retained_control_v2', 'artifact_retained_control_v3'].includes(c.version)) {
         await validateRetainedTerminalProjectionV1({ loaded, control: c, leg, state, source_context, tx });
       }
       rows.push({ ordinal: i + 1, transaction_signature: s.signature });

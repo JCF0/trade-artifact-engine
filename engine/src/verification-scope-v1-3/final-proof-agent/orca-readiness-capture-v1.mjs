@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import { cloneAndFreeze, sha256CanonicalJson, fail } from '../contract.mjs';
 import { validateExecutorMandateV1 as validateBoundedAgentMandateV1 } from './executor-mandate-profile-v1.mjs';
+import { validateRecoveredSetupHistoryV2 } from './supervised-setup-source-v1.mjs';
+import { RECOVERED_SETUP_PROFILE_V2 } from './recovered-setup-v2.mjs';
 import { buildOrcaMessageBoundaryV1 } from './orca-message-boundary-v1.mjs';
 import { buildReadinessChallengeV1 } from './readiness-challenge-v1.mjs';
 import { decodeFixedWhirlpoolV1, decodeFixedTickArrayV1, swapQuoteByInputToken } from '../../../orca-readiness-sdk/index.mjs';
@@ -229,6 +231,7 @@ export function createOrcaReadinessCaptureV1(options) {
           }
           let latestSetup = 0;
           const recent = new Set();
+          const setupHistory = new Map();
           // Standard getSignaturesForAddress supports minContextSlot. Success
           // attests this provider-enforced floor, not an atomic history snapshot.
           // Never retry without the floor or infer freshness from matching heads.
@@ -247,7 +250,14 @@ export function createOrcaReadinessCaptureV1(options) {
                 if (row.block_time > m.setup_authority.latest_setup_block_time) {
                   required(!acquisition && row.signature === allowedSignature && row.execution_state === 'succeeded', 'unexpected post-setup history');
                   recent.add(row.signature);
-                } else latestSetup = Math.max(latestSetup, row.block_time);
+                } else {
+                  latestSetup = Math.max(latestSetup, row.block_time);
+                  if (m.mandate_profile === RECOVERED_SETUP_PROFILE_V2) {
+                    const prior = setupHistory.get(row.signature);
+                    required(!prior || sha256CanonicalJson(prior) === sha256CanonicalJson(row), 'setup history contradiction');
+                    setupHistory.set(row.signature, row);
+                  }
+                }
               }
               before = rows.at(-1).signature;
             }
@@ -256,6 +266,7 @@ export function createOrcaReadinessCaptureV1(options) {
             required(sha256CanonicalJson(repeated) === sha256CanonicalJson(head), 'history head changed');
           }
           required(latestSetup === m.setup_authority.latest_setup_block_time, 'frozen setup time not corroborated');
+          validateRecoveredSetupHistoryV2({ mandate: m, observations: [...setupHistory.values()] });
           if (acquisition) required(deriveOldestAllowedTimestampV1({ anchor_block_time: anchor.block_time,
             requested_lookback_seconds: m.age_gate.lookback_seconds }) > latestSetup, 'strict age equality/ineligibility');
           else required(recent.has(allowedSignature), 'acquisition history absent');

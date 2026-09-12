@@ -15,7 +15,8 @@ import { createSupervisedJournalV1, provisionSupervisedJournalV1 } from '../supe
 import { SUPERVISED_BUDGET_VERSION_V1, SUPERVISED_SUBMISSION_PROFILE_V1, createSupervisedSubmissionTransportV1 } from '../supervised-profile-v1.mjs';
 import { canonicalJson, sha256CanonicalJson } from '../../contract.mjs';
 // Disposable synthetic identities and controlled in-process effects only.
-export function supervisedRuntimeFixtureV1({ opening_time, authorization_factory = buildFixedTestAuthorizationV1, distinct_setup = false } = {}) {
+export function supervisedRuntimeFixtureV1({ opening_time, authorization_factory = buildFixedTestAuthorizationV1, distinct_setup = false,
+  mandate_factory = buildOfflineWalletMandateV1, setup_provenance } = {}) {
   const input = fixedTestMandateInputV1(), source = syntheticRuntimeCaptureV1(buildOfflineWalletMandateV1(input));
   const budget = { version: SUPERVISED_BUDGET_VERSION_V1, capture: source.budget,
     simulation: { total_calls: 1, call_timeout_ms: 1000, overall_timeout_ms: 1000, max_response_bytes: 1048576, methods: { simulateTransaction: 1 } },
@@ -24,7 +25,7 @@ export function supervisedRuntimeFixtureV1({ opening_time, authorization_factory
       methods: { getGenesisHash: 1, getSlot: 1, getBlock: 32, getTokenAccountsByOwner: 6, getSignaturesForAddress: 32, getTransaction: 32 } } };
   input.offline_identity.rpc_budget_table_sha256 = sha256CanonicalJson(budget);
   input.unresolved_live_readiness = { ...input.offline_identity, status: 'RESOLVED' }; delete input.unresolved_live_readiness.profile;
-  const mandate = buildOfflineWalletMandateV1(input), authorization = authorization_factory(mandate);
+  const mandate = mandate_factory(input), authorization = authorization_factory(mandate);
   if (opening_time !== undefined) source.time.wall = opening_time;
   const root = mkdtempSync(join(tmpdir(), 'artifact-supervised-fixture-')), stateRoot = join(root, 'authority');
   mkdirSync(stateRoot, { mode: 0o700 });
@@ -34,7 +35,8 @@ export function supervisedRuntimeFixtureV1({ opening_time, authorization_factory
   provisionCrashDurableDecisionAuthorityV1({ state_root: stateRoot, initial_episode_state: state, executor_release_sha256: authorization.executor_release_sha256 });
   provisionSupervisedJournalV1(stateRoot);
   const configuration = { mandate, authorization, executor_release_sha256: authorization.executor_release_sha256,
-    expected_wallet: mandate.wallet_scope.wallet, wallet_key_path: keyPath, state_root: stateRoot, budget, deadline_unix_seconds: 2000000000 };
+    expected_wallet: mandate.wallet_scope.wallet, wallet_key_path: keyPath, state_root: stateRoot, budget, deadline_unix_seconds: 2000000000,
+    ...(setup_provenance === undefined ? {} : { setup_provenance }) };
   let runtime, journal, wire, simulationError = null, handler, phaseOrdinal = 1, acquired = null, visible = true;
   const setupTx = new Transaction({ feePayer: new PublicKey(mandate.wallet_scope.wallet), recentBlockhash: new PublicKey(Buffer.alloc(32, 8)).toBase58() });
   for (const toPubkey of [mandate.wallet_scope.jup_ata, mandate.wallet_scope.usdc_ata]) setupTx.add(SystemProgram.transfer({

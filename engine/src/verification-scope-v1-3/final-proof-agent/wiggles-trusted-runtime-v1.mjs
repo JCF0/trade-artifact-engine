@@ -4,7 +4,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Message, PublicKey } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 import { assertExactFields, canonicalJson, cloneAndFreeze, fail, sha256CanonicalJson } from '../contract.mjs';
-import { OFFLINE_WALLET_PROFILE_V1, assertConfiguredExecutorMandateV1 } from './executor-mandate-profile-v1.mjs';
+import { isOfflineExecutorMandateV1, isRecoveredSetupExecutorMandateV2, assertConfiguredExecutorMandateV1 } from './executor-mandate-profile-v1.mjs';
+import { validateExecutorRecoveredSetupEvidenceV2 as validateRecoveredSetupEvidenceV2 } from './recovered-setup-v2.mjs';
 import { validateHumanEpisodeAuthorizationV1 } from './human-authorization-v1.mjs';
 import { createCrashDurableDecisionAuthorityV1 } from './sqlite-decision-authority-v1.mjs';
 import { createOrcaReadinessCaptureV1 } from './orca-readiness-capture-v1.mjs';
@@ -66,7 +67,7 @@ function privateBytes(path, maximum, durable = false) {
 }
 // Not exported: only the private Orca composition callback can reach key loading.
 // Uses the existing Solana JSON 64-byte secret-key format and tweetnacl Ed25519.
-async function signWithWallet(path, expectedWallet, message, beforeSign) {
+async function signWithWallet(path, expectedWallet, message, beforeSign, atSign) {
   const parsed = Message.from(message);
   if (parsed.header.numRequiredSignatures !== 1 || !Buffer.from(parsed.serialize()).equals(message)
       || parsed.accountKeys[0].toBase58() !== expectedWallet) reject('wallet/message identity mismatch');
@@ -83,6 +84,8 @@ async function signWithWallet(path, expectedWallet, message, beforeSign) {
     // File IO/key derivation may consume freshness. Recheck after loading too;
     // a failure remains durably ambiguous and never reloads or re-signs.
     await beforeSign();
+    // No promise turn or I/O between the final V2 custody check and signature.
+    atSign();
     const signature = nacl.sign.detached(message, secret);
     if (!nacl.sign.detached.verify(message, signature, derived.publicKey)) reject('wallet signature verification failed');
     return Buffer.concat([Buffer.from([1]), Buffer.from(signature), message]);
@@ -128,9 +131,15 @@ function retainEvidence(root, record) {
 }
 export function validateWigglesRuntimeConfigurationV1(configuration, now) {
   const c = cloneAndFreeze(configuration);
-  assertExactFields(c, CONFIG_FIELDS, 'wiggles_runtime_configuration');
+  assertExactFields(c, [...CONFIG_FIELDS, ...(isRecoveredSetupExecutorMandateV2(c.mandate) ? ['setup_provenance'] : [])], 'wiggles_runtime_configuration');
   assertConfiguredExecutorMandateV1(c.mandate);
   validateHumanEpisodeAuthorizationV1(c.authorization, { mandate: c.mandate });
+  if (isRecoveredSetupExecutorMandateV2(c.mandate)) validateRecoveredSetupEvidenceV2({
+    mandate: c.mandate, authorization: c.authorization, evidence: c.setup_provenance, now, mode: 'admission' });
+  if (isRecoveredSetupExecutorMandateV2(c.mandate)
+      && c.deadline_unix_seconds > c.setup_provenance.enrollment.payload.not_after_unix_seconds) {
+    reject('runtime deadline outlives custody enrollment');
+  }
   if (c.executor_release_sha256 !== c.authorization.executor_release_sha256
       || c.executor_release_sha256 !== c.mandate.unresolved_live_readiness.executor_release_sha256
       || c.expected_wallet !== c.mandate.wallet_scope.wallet
@@ -151,7 +160,7 @@ export function validateWigglesRuntimeConfigurationV1(configuration, now) {
 // transport/clock are trusted process construction, NEVER agent channel values.
 export function createOfflineTrustedWigglesRuntimeV1(configuration, { transport, clock, submission }) {
   const c = validateWigglesRuntimeConfigurationV1(configuration, clock.unixSeconds());
-  if (c.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) reject('offline disposable wallet profile required');
+  if (!isOfflineExecutorMandateV1(c.mandate)) reject('offline disposable wallet profile required');
   return createTrustedRuntime(c, { transport, clock, submission });
 }
 // Administrator-private construction, not a launcher or an agent-facing factory.
@@ -163,7 +172,7 @@ export function createPrivateSupervisedWigglesRuntimeV1(configuration, dependenc
 }
 export function createOfflineSupervisedWigglesRuntimeV1(configuration, dependencies) {
   const c = validateWigglesRuntimeConfigurationV1(configuration, dependencies.clock.unixSeconds());
-  if (c.mandate.mandate_profile !== OFFLINE_WALLET_PROFILE_V1) reject('offline disposable wallet profile required');
+  if (!isOfflineExecutorMandateV1(c.mandate)) reject('offline disposable wallet profile required');
   validateSupervisedPhaseBudgetsV1(c.budget);
   return createTrustedRuntime(c, dependencies, true);
 }
@@ -193,6 +202,7 @@ function createTrustedRuntime(c, { transport, clock, submission, supervision }, 
       readiness_challenge_port: capture, build_input_port: capture,
       authenticated_decision_observer: integrated ? record => supervision.retain({ kind: 'authenticated_decision_request', record }) : undefined,
       message_signer_port: { async signExactMessageV1(message, { challenge, admission }) {
+        validateSetupAtDispatch();
         if (integrated) {
           await supervision.claimPhase('simulation', challenge.ordinal);
           const binding = await capture.captureSimulationBindingV1({ challenge });
@@ -206,19 +216,25 @@ function createTrustedRuntime(c, { transport, clock, submission, supervision }, 
             retain: record => supervision.retain({ kind: 'simulation', ordinal: challenge.ordinal, record }) });
         }
         return signWithWallet(c.wallet_key_path, c.expected_wallet, message, async () => {
+          validateSetupAtDispatch();
           const current = await authority.inspectEpisodeV1({ episode_id: episodeId });
           const row = current.ordinals.find(item => item.ordinal === admission.ordinal);
           if (current.revoked || row?.stage !== 'KEY_LOAD_STARTED_AMBIGUOUS'
               || row.admission_digest !== admission.admission_digest) reject('signing checkpoint revoked or changed');
           await capture.assertFreshBeforeSigningV1({ challenge });
-        });
+        }, validateSetupAtDispatch);
       } },
     });
   } catch (error) { authority.closeV1(); throw error; }
   let closed = false;
   function now() { if (closed) reject('runtime closed'); return clock.unixSeconds(); }
+  function validateSetupAtDispatch() {
+    if (isRecoveredSetupExecutorMandateV2(c.mandate)) validateRecoveredSetupEvidenceV2({ mandate: c.mandate,
+      authorization: c.authorization, evidence: c.setup_provenance, now: now(), mode: 'admission' });
+  }
   return Object.freeze({
     agent: Object.freeze({ async submitDecisionBytesV1(decisionBytes) {
+      validateSetupAtDispatch();
       const result = await control.executeAuthenticatedDecisionBytesV1({ decision_bytes: decisionBytes, now_unix_seconds: now() });
       if (integrated) await supervision.retain({ kind: 'decision', decision_bytes_base64: Buffer.from(decisionBytes).toString('base64'), result });
       return Object.freeze({ status: result.admission.status === 'REFUSED' ? 'REFUSED' : 'SIGNED_INTENT_DURABLE',
@@ -226,6 +242,7 @@ function createTrustedRuntime(c, { transport, clock, submission, supervision }, 
     } }),
     supervisor: Object.freeze({
       async issueReadinessChallengeV1(phase) {
+        validateSetupAtDispatch();
         if (integrated) {
           if (!['ACQUISITION', 'DISPOSAL'].includes(phase)) reject('unsupported phase');
           await supervision.claimPhase('capture', phase === 'ACQUISITION' ? 1 : 2);

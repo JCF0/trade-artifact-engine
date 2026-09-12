@@ -32,6 +32,7 @@ artifact-v114-live-validation-report.json
 !engine/src/verification-scope-v1-3/final-proof-agent/reused/REVIEWED-SOURCE.json
 !engine/src/verification-scope-v1-3/final-proof-agent/fixtures/retained-calibration-acquisition-response.json
 !engine/src/verification-scope-v1-3/final-proof-agent/fixtures/retained-calibration-disposal-response.json
+!engine/src/verification-scope-v1-3/final-proof-agent/fixtures/recovered-setup-v2.json
 
 # Track reviewed static display metadata registries
 !engine/assets/
